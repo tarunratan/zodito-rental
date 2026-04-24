@@ -1,0 +1,44 @@
+# Zodito Rentals — Changes Log
+
+> Running log of changes made since the initial build. Newest at top.
+> Every significant change goes here so any AI assistant (or future you)
+> understands why the code looks the way it does.
+
+---
+
+## Format for entries
+
+```
+## YYYY-MM-DD — Short title
+**What changed:** file(s) touched, one-line summary
+**Why:** the reason (bug, feature, deployment issue, feedback)
+**Gotchas:** anything that tripped you up
+```
+
+---
+
+## 2026-04-XX — Live deployment fixes
+
+**What changed:** Various files (document each one here as you recall)
+**Why:** Getting the app deployed to Vercel at zoditorentals.com required several tweaks.
+**Gotchas:** TBD — please fill in based on what you changed during deployment. Common deployment-related tweaks to watch for:
+- Env var naming (NEXT_PUBLIC_* for client-side)
+- Clerk middleware matcher exclusions
+- Webhook URL updates in Clerk & Razorpay dashboards
+- Supabase storage bucket policies
+- next.config.js image domain allowlist
+
+→ **Action item:** Please list each deployment-time change you made here so any future chat knows. Example:
+- "Changed X in file Y because Z was breaking on Vercel"
+
+---
+
+## 2026-04-24 — Initial build complete
+
+**What changed:** Full project scaffolded — customer flow, vendor flow, admin panel, mock mode.
+**Why:** First deliverable.
+**Files:** 73 files across src/ and supabase/migrations/. See PROJECT_BRIEF.md file map.
+**Gotchas:**
+- Activa 5G/4G 30-day pricing is seeded as `6499/4000km` (the rate card shows `40000km` which is suspected OCR typo). Verify with business before launch.
+- Weekend override applies based on booking *start date*. If customer books Fri evening → Sun evening, they get weekday (Friday) pricing.
+- In mock mode, everything is in-memory — no persistence across dev server restarts.
