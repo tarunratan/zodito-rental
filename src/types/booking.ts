@@ -1,5 +1,4 @@
-export type PackageTier = 'hourly' | 'daily' | 'weekly'; // adjust if needed
-
+import type { PackageTier } from '@/lib/pricing';
 export interface Booking {
   id: string;
   booking_number: string;
