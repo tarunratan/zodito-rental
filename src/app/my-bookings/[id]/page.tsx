@@ -5,7 +5,7 @@ import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode, mockBookingsStore, MOCK_BIKES } from '@/lib/mock';
 import { formatINR, formatDateTime } from '@/lib/utils';
 import { TIER_LABELS } from '@/lib/pricing';
-
+import type { Booking } from '@/types/booking';
 async function fetchBooking(id: string, userId: string) {
   if (isMockMode()) {
     const b = mockBookingsStore.find(x => x.id === id);
@@ -33,7 +33,7 @@ async function fetchBooking(id: string, userId: string) {
 export default async function BookingDetailPage({ params }: { params: { id: string } }) {
   const user = await getCurrentAppUser();
   if (!user) notFound();
-  const booking = await fetchBooking(params.id, user.id) as any;
+  const booking = await fetchBooking(params.id, user.id) as Booking;
   if (!booking) notFound();
 
   const bike = booking.bike;
