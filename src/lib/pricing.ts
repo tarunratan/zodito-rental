@@ -24,13 +24,15 @@ export const TIER_HOURS: Record<PackageTier, number> = {
   '30day': 24 * 30,
 };
 
-export const TIER_LABELS: Record<PackageTier, string> = {
+export const TIER_LABELS = {
   '12hr': '12 Hours',
   '24hr': '24 Hours (1 Day)',
   '7day': '7 Days',
   '15day': '15 Days',
   '30day': '30 Days',
-};
+} as const;
+
+export type PackageTier = keyof typeof TIER_LABELS;
 
 /**
  * Is a given date a weekend (Sat or Sun) in IST?
