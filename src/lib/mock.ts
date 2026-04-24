@@ -25,15 +25,34 @@ export function hasClerkKeys(): boolean {
 export const mockBookingsStore: any[] = [];
 
 // ---- Mock user ----
-export const MOCK_USER = {
+type KycStatus = 'pending' | 'approved' | 'rejected';
+
+export const MOCK_USER: {
+  id: string;
+  clerk_id: string;
+  email: string;
+  phone: string;
+  first_name: string;
+  last_name: string;
+  role: 'customer';
+  kyc_status: KycStatus;
+  dl_number: string;
+  dl_photo_url: string | null;
+  aadhaar_photo_url: string | null;
+  selfie_with_dl_photo_url: string | null;
+  kyc_submitted_at: string;
+  kyc_reviewed_at: string;
+  created_at: string;
+  updated_at: string;
+} = {
   id: 'mock-user-id',
   clerk_id: 'mock-clerk-id',
   email: 'dev@zodito.local',
   phone: '+919000000000',
   first_name: 'Dev',
   last_name: 'User',
-  role: 'customer' as const,
-  kyc_status: 'approved' as const,
+  role: 'customer', // keep as is (no need for as const)
+  kyc_status: 'approved', // ✅ now flexible
   dl_number: 'TS0120230001234',
   dl_photo_url: null,
   aadhaar_photo_url: null,
