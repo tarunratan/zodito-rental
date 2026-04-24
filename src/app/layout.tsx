@@ -3,6 +3,7 @@ import { ClerkProvider } from '@clerk/nextjs';
 import { Nav } from '@/components/layout/Nav';
 import { Footer } from '@/components/layout/Footer';
 import { WhatsAppBubble } from '@/components/layout/WhatsAppBubble';
+import { MockDevPanel } from '@/components/dev/MockDevPanel';
 import { hasClerkKeys, isMockMode } from '@/lib/mock';
 import './globals.css';
 
@@ -27,6 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <main className="flex-1">{children}</main>
         <Footer />
         <WhatsAppBubble />
+        {mockBanner && <MockDevPanel />}
       </body>
     </html>
   );

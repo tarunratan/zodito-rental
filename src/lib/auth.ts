@@ -1,16 +1,26 @@
 import { auth, currentUser } from '@clerk/nextjs/server';
+import { cookies } from 'next/headers';
 import { createSupabaseAdmin } from './supabase/server';
-import { isMockMode, MOCK_USER, hasClerkKeys } from './mock';
+import { isMockMode, MOCK_USER, hasClerkKeys, getMockRoleFromCookies } from './mock';
 import type { User } from './supabase/types';
 
 /**
  * Get the current app user (from our users table, not Clerk's).
- * In mock mode: returns MOCK_USER.
+ * In mock mode: returns MOCK_USER with role override from `mock_role` cookie.
  * Otherwise: returns null if not signed in, or the user row from DB.
  */
 export async function getCurrentAppUser(): Promise<User | null> {
   if (isMockMode() || !hasClerkKeys()) {
-    return MOCK_USER as User;
+    // Read role from cookie so we can "impersonate" customer/vendor/admin in dev
+    let role: 'customer' | 'vendor' | 'admin' = 'customer';
+    try {
+      const store = cookies();
+      const c = store.get('mock_role')?.value;
+      if (c === 'customer' || c === 'vendor' || c === 'admin') role = c;
+    } catch {
+      // cookies() throws outside request scope; default to customer
+    }
+    return { ...MOCK_USER, role } as User;
   }
 
   const { userId } = await auth();
