@@ -1,1 +1,0 @@
-# zodito-rental
