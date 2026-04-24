@@ -35,7 +35,6 @@ export default async function BookingDetailPage({ params }: { params: { id: stri
   if (!user) notFound();
   const booking = await fetchBooking(params.id, user.id) as Booking;
   if (!booking) notFound();
-
   const bike = booking.bike;
 
   return (
@@ -105,7 +104,7 @@ export default async function BookingDetailPage({ params }: { params: { id: stri
         <h2 className="font-display font-semibold text-lg mb-4">Payment breakdown</h2>
         <div className="space-y-2 text-sm">
           <Row label={TIER_LABELS[booking.package_tier]} value={formatINR(booking.base_price ?? 0)} />
-          {booking.extra_helmet_count > 0 && (
+          {(booking.extra_helmet_count ?? 0) > 0 && (
             <Row label={`Extra helmet × ${booking.extra_helmet_count}`} value={formatINR(booking.extra_helmet_price ?? 0)} />
           )}
           <Row label="Subtotal" value={formatINR(booking.subtotal ?? 0)} muted />
