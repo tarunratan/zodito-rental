@@ -37,7 +37,7 @@ export function BookingCard({ booking }: { booking: Booking }) {
                 {bike.model.display_name}
               </div>
               <div className="text-xs text-muted mt-0.5">
-                #{booking.booking_number} · {TIER_LABELS[booking.package_tier]}
+                #{booking.booking_number} · {TIER_LABELS[booking.package_tier as keyof typeof TIER_LABELS]}
               </div>
             </div>
             <span className={cn(
