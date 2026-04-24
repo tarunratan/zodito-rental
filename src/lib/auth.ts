@@ -13,7 +13,7 @@ export async function getCurrentAppUser(): Promise<User | null> {
     return MOCK_USER as User;
   }
 
-  const { userId } = auth();
+  const { userId } = await auth();
   if (!userId) return null;
 
   const supabase = createSupabaseAdmin();

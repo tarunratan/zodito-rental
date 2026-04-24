@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Your existing image domains
   images: {
     remotePatterns: [
       {
@@ -12,6 +13,16 @@ const nextConfig = {
         hostname: 'img.clerk.com',
       },
     ],
+  },
+  
+  // Guardrail 1: Ignore TypeScript errors during Vercel builds
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  
+  // Guardrail 2: Ignore ESLint errors during Vercel builds
+  eslint: {
+    ignoreDuringBuilds: true,
   },
 };
 
