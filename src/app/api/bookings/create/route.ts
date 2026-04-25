@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getCurrentAppUser } from '@/lib/auth';
-import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { createSupabaseAdmin, createSupabaseServer } from '@/lib/supabase/server';
 import { createRazorpayOrder } from '@/lib/razorpay';
 import {
   calculatePrice,
@@ -55,8 +55,11 @@ export async function POST(req: NextRequest) {
   }
 
   // --- 5. Real flow: fetch bike + model + packages
-  const supabase = createSupabaseAdmin();
-  const { data: bike, error: bikeErr } = await supabase
+  // admin = read-only ops that need to bypass RLS (public bike catalog)
+  // userClient = write ops that go through RLS with user's session
+  const admin = createSupabaseAdmin();
+  const userClient = await createSupabaseServer();
+  const { data: bike, error: bikeErr } = await admin
     .from('bikes')
     .select(`
       id, owner_type, vendor_id,
@@ -80,7 +83,7 @@ export async function POST(req: NextRequest) {
   const effectiveModelId = effectiveModelIdForDate(model, startTs);
   let packages = model.packages;
   if (effectiveModelId !== model.id) {
-    const { data: weekendPackages } = await supabase
+    const { data: weekendPackages } = await admin
       .from('bike_model_packages')
       .select('tier, price, km_limit')
       .eq('model_id', effectiveModelId);
@@ -112,8 +115,9 @@ export async function POST(req: NextRequest) {
     platform_commission = breakdown.basePrice + breakdown.extraHelmetCharge;
   }
 
-  // --- 9. Insert booking. DB exclusion constraint will reject overlaps atomically.
-  const { data: booking, error: insertErr } = await supabase
+  // --- 9. Insert booking via user session — RLS policy bookings_customer_insert
+  //         checks user_id = auth_user_id(), which works with the user's JWT.
+  const { data: booking, error: insertErr } = await userClient
     .from('bookings')
     .insert({
       user_id: user.id,
@@ -147,7 +151,10 @@ export async function POST(req: NextRequest) {
       );
     }
     console.error('Booking insert error:', insertErr);
-    return NextResponse.json({ error: 'Could not create booking. Please try again.' }, { status: 500 });
+    return NextResponse.json({
+      error: 'Could not create booking. Please try again.',
+      _debug: { code: insertErr.code, message: insertErr.message, details: insertErr.details },
+    }, { status: 500 });
   }
 
   // --- 10. Create Razorpay order
@@ -160,7 +167,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Save the razorpay_order_id back on the booking
-    await supabase
+    await userClient
       .from('bookings')
       .update({ razorpay_order_id: order.id })
       .eq('id', booking.id);
@@ -181,12 +188,15 @@ export async function POST(req: NextRequest) {
     });
   } catch (e: any) {
     // Razorpay order creation failed — mark booking as failed
-    await supabase
+    await userClient
       .from('bookings')
       .update({ status: 'payment_failed', payment_status: 'failed' })
       .eq('id', booking.id);
     console.error('Razorpay order error:', e);
-    return NextResponse.json({ error: 'Payment gateway error. Please try again.' }, { status: 500 });
+    return NextResponse.json({
+      error: 'Payment gateway error. Please try again.',
+      _debug: { message: e.message },
+    }, { status: 500 });
   }
 }
 
