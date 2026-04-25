@@ -16,10 +16,6 @@ export function isMockMode(): boolean {
   return false;
 }
 
-export function hasClerkKeys(): boolean {
-  return !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-}
-
 // ---- In-memory store for mock mode (resets on server restart) ----
 // Bookings created in mock mode end up here so /my-bookings can show them.
 export const mockBookingsStore: any[] = [];
@@ -27,7 +23,7 @@ export const mockBookingsStore: any[] = [];
 // ---- Mock user ----
 export const MOCK_USER = {
   id: 'mock-user-id',
-  clerk_id: 'mock-clerk-id',
+  auth_id: 'mock-auth-id',
   email: 'dev@zodito.local',
   phone: '+919000000000',
   first_name: 'Dev',
@@ -43,16 +39,6 @@ export const MOCK_USER = {
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 };
-
-/**
- * Read role override from cookie (server-side).
- * Use this in server components that need to know the mock role.
- */
-export function getMockRoleFromCookies(cookieHeader: string | null | undefined): 'customer' | 'vendor' | 'admin' {
-  if (!cookieHeader) return 'customer';
-  const m = cookieHeader.match(/mock_role=(customer|vendor|admin)/);
-  return (m?.[1] as any) ?? 'customer';
-}
 
 // ---- Mock bikes ----
 // Shape matches what HomePage fetches from Supabase

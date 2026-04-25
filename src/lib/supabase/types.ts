@@ -23,7 +23,7 @@ export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded' | 'partia
 
 export interface User {
   id: string;
-  clerk_id: string;
+  auth_id: string;          // Supabase auth.users UUID
   email: string | null;
   phone: string | null;
   first_name: string | null;
