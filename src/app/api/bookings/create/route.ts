@@ -21,6 +21,7 @@ const bodySchema = z.object({
   start_ts: z.string(),  // ISO
   extra_helmet_count: z.number().int().min(0).max(3).default(0),
   mobile_holder: z.boolean().default(false),
+  payment_method: z.enum(['online', 'at_pickup']).default('online'),
 });
 
 export async function POST(req: NextRequest) {
@@ -137,7 +138,7 @@ export async function POST(req: NextRequest) {
       total_amount: breakdown.totalAmount,
       platform_commission,
       vendor_payout,
-      status: 'pending_payment',
+      status: body.payment_method === 'at_pickup' ? 'confirmed' : 'pending_payment',
       payment_status: 'pending',
       // payment_deadline defaults to now() + 10 min
     })
@@ -159,7 +160,16 @@ export async function POST(req: NextRequest) {
     }, { status: 500 });
   }
 
-  // --- 10. Create Razorpay order
+  // --- 10. Pay at pickup — booking confirmed, no Razorpay needed
+  if (body.payment_method === 'at_pickup') {
+    return NextResponse.json({
+      booking_id: booking.id,
+      booking_number: booking.booking_number,
+      at_pickup: true,
+    });
+  }
+
+  // --- 11. Create Razorpay order
   try {
     const order = await createRazorpayOrder({
       amountRupees: breakdown.totalAmount,

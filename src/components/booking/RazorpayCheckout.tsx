@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import Script from 'next/script';
 import { useState } from 'react';
+import { cn } from '@/lib/utils';
 import type { PackageTier } from '@/lib/supabase/types';
 
 declare global {
@@ -10,6 +11,8 @@ declare global {
     Razorpay: any;
   }
 }
+
+type PaymentMethod = 'online' | 'at_pickup';
 
 export function RazorpayCheckout({
   bikeId,
@@ -36,38 +39,52 @@ export function RazorpayCheckout({
 }) {
   const router = useRouter();
   const [scriptReady, setScriptReady] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('online');
 
-  async function handleCheckout() {
-    if (!pickupTs) return;
+  async function buildBooking() {
+    if (!pickupTs) return null;
     setError(null);
     setSubmitting(true);
+    const res = await fetch('/api/bookings/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bike_id: bikeId,
+        tier,
+        start_ts: pickupTs.toISOString(),
+        extra_helmet_count: extraHelmets,
+        mobile_holder: mobileHolder,
+        payment_method: paymentMethod,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not create booking');
+    return data;
+  }
 
+  async function handleAtPickup() {
     try {
-      // 1. Create booking + Razorpay order on the server
-      const res = await fetch('/api/bookings/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bike_id: bikeId,
-          tier,
-          start_ts: pickupTs.toISOString(),
-          extra_helmet_count: extraHelmets,
-          mobile_holder: mobileHolder,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Could not create booking');
+      const data = await buildBooking();
+      if (!data) return;
+      if (data.mock || data.at_pickup) {
+        router.push(`/my-bookings?success=${data.booking_id}`);
       }
+    } catch (e: any) {
+      setError(e.message);
+      setSubmitting(false);
+    }
+  }
 
-      // MOCK MODE: server returns { mock: true } and we just go to the bookings page
+  async function handleOnline() {
+    try {
+      const data = await buildBooking();
+      if (!data) return;
+
       if (data.mock) {
         router.push(`/my-bookings?success=${data.booking_id}`);
         return;
       }
 
-      // 2. Open Razorpay checkout
       if (typeof window.Razorpay === 'undefined') {
         throw new Error('Payment gateway not loaded yet. Please try again.');
       }
@@ -82,7 +99,6 @@ export function RazorpayCheckout({
         prefill: data.prefill,
         theme: { color: '#f97316' },
         handler: async (resp: any) => {
-          // Verify payment on server; server also awaits webhook for final confirmation
           await fetch('/api/bookings/verify-payment', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -112,6 +128,8 @@ export function RazorpayCheckout({
     }
   }
 
+  const totalLabel = `₹${Math.round(totalAmount).toLocaleString('en-IN')}`;
+
   return (
     <>
       <Script
@@ -119,13 +137,57 @@ export function RazorpayCheckout({
         onLoad={() => setScriptReady(true)}
         strategy="lazyOnload"
       />
-      <button
-        onClick={handleCheckout}
-        disabled={disabled || submitting}
-        className="btn-accent w-full text-base py-3 mt-4 disabled:bg-border disabled:cursor-not-allowed disabled:text-muted"
-      >
-        {submitting ? 'Processing…' : disabled ? 'Select pickup time' : `Pay & confirm · ₹${Math.round(totalAmount).toLocaleString('en-IN')}`}
-      </button>
+
+      {/* Payment method selector */}
+      <div className="mt-4 grid grid-cols-2 gap-2 p-1 bg-bg rounded-xl border border-border">
+        <button
+          onClick={() => setPaymentMethod('online')}
+          className={cn(
+            'py-2 px-3 rounded-lg text-sm font-medium transition-all',
+            paymentMethod === 'online'
+              ? 'bg-white shadow-sm text-primary'
+              : 'text-muted hover:text-primary'
+          )}
+        >
+          🔒 Pay Online
+        </button>
+        <button
+          onClick={() => setPaymentMethod('at_pickup')}
+          className={cn(
+            'py-2 px-3 rounded-lg text-sm font-medium transition-all',
+            paymentMethod === 'at_pickup'
+              ? 'bg-white shadow-sm text-primary'
+              : 'text-muted hover:text-primary'
+          )}
+        >
+          🏪 Pay at Pickup
+        </button>
+      </div>
+
+      {paymentMethod === 'at_pickup' && (
+        <p className="mt-2 text-[11px] text-muted text-center leading-relaxed">
+          Pay the full amount in cash or UPI when you pick up the bike.
+        </p>
+      )}
+
+      {/* Action button */}
+      {paymentMethod === 'online' ? (
+        <button
+          onClick={handleOnline}
+          disabled={disabled || submitting}
+          className="btn-accent w-full text-base py-3 mt-3 disabled:bg-border disabled:cursor-not-allowed disabled:text-muted"
+        >
+          {submitting ? 'Processing…' : disabled ? 'Select pickup time' : `Pay & Confirm · ${totalLabel}`}
+        </button>
+      ) : (
+        <button
+          onClick={handleAtPickup}
+          disabled={disabled || submitting}
+          className="w-full text-base py-3 mt-3 rounded-xl font-semibold border-2 border-accent text-accent hover:bg-accent hover:text-white transition-all disabled:border-border disabled:text-muted disabled:cursor-not-allowed"
+        >
+          {submitting ? 'Confirming…' : disabled ? 'Select pickup time' : `Confirm Booking · ${totalLabel}`}
+        </button>
+      )}
     </>
   );
 }

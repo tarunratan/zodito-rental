@@ -7,24 +7,34 @@
 @layer base {
   html {
     -webkit-font-smoothing: antialiased;
+    scroll-behavior: smooth;
   }
   body {
     @apply bg-bg text-primary font-sans;
+  }
+  * {
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    transition-duration: 150ms;
+  }
+  /* Don't animate layout properties globally — too expensive */
+  *, *::before, *::after {
+    box-sizing: border-box;
   }
 }
 
 @layer components {
   .btn-accent {
-    @apply bg-accent hover:bg-accent-hover text-white font-semibold px-5 py-2 rounded-lg text-sm transition-colors;
+    @apply bg-accent hover:bg-accent-hover active:scale-[0.97] text-white font-semibold px-5 py-2 rounded-lg text-sm transition-all duration-150;
   }
   .btn-outline-light {
-    @apply border-[1.5px] border-white/30 hover:border-white hover:bg-white/10 text-white font-medium px-5 py-2 rounded-lg text-sm transition-all;
+    @apply border-[1.5px] border-white/30 hover:border-white hover:bg-white/10 active:scale-[0.97] text-white font-medium px-5 py-2 rounded-lg text-sm transition-all duration-150;
   }
   .card {
-    @apply bg-white border border-border rounded-card shadow-card;
+    @apply bg-white border border-border rounded-card shadow-card hover:shadow-md transition-shadow duration-200;
   }
   .chip {
-    @apply px-4 py-1.5 rounded-full text-sm font-medium cursor-pointer border-[1.5px] border-border bg-white text-primary hover:border-accent hover:text-accent transition-all;
+    @apply px-4 py-1.5 rounded-full text-sm font-medium cursor-pointer border-[1.5px] border-border bg-white text-primary hover:border-accent hover:text-accent transition-all duration-150;
   }
   .chip-active {
     @apply bg-accent border-accent text-white;
