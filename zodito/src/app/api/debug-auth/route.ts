@@ -26,18 +26,45 @@ export async function GET() {
     if (userId) {
       const clerkUser = await currentUser();
       result.clerkEmail = clerkUser?.emailAddresses?.[0]?.emailAddress ?? null;
+      result.clerkFirstName = clerkUser?.firstName ?? null;
 
       try {
         const supabase = createSupabaseAdmin();
-        const { data, error } = await supabase
+
+        // 1. Lookup existing user
+        const { data, error: lookupErr } = await supabase
           .from('users')
           .select('id, clerk_id, email, role')
           .eq('clerk_id', userId)
           .maybeSingle();
+
         result.supabaseUser = data;
-        result.supabaseError = error?.message ?? null;
+        result.supabaseLookupError = lookupErr?.message ?? null;
+
+        // 2. If not found, attempt insert and report exact error
+        if (!data && clerkUser) {
+          const { data: inserted, error: insertErr } = await supabase
+            .from('users')
+            .insert({
+              clerk_id: clerkUser.id,
+              email: clerkUser.emailAddresses[0]?.emailAddress ?? null,
+              phone: clerkUser.phoneNumbers[0]?.phoneNumber ?? null,
+              first_name: clerkUser.firstName,
+              last_name: clerkUser.lastName,
+              role: 'customer',
+            })
+            .select('id, clerk_id, email, role')
+            .single();
+
+          result.insertAttempt = {
+            success: !insertErr,
+            error: insertErr?.message ?? null,
+            errorCode: insertErr?.code ?? null,
+            insertedUser: inserted ?? null,
+          };
+        }
       } catch (e: any) {
-        result.supabaseError = e.message;
+        result.supabaseException = e.message;
       }
     }
   } catch (e: any) {
