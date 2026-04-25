@@ -10,6 +10,7 @@ export default function SignUpPage() {
   const [form, setForm] = useState({ email: '', password: '', first_name: '', last_name: '', phone: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
 
   function field(key: keyof typeof form) {
     return (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [key]: e.target.value }));
@@ -20,36 +21,49 @@ export default function SignUpPage() {
     setLoading(true);
     setError('');
 
-    // Step 1: create confirmed user via server API (no email confirmation needed)
-    const res = await fetch('/api/auth/signup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      setError(data.error ?? 'Signup failed. Please try again.');
-      setLoading(false);
-      return;
-    }
-
-    // Step 2: sign in immediately with the same credentials
     const supabase = createSupabaseBrowser();
-    const { error: signInErr } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signUp({
       email: form.email,
       password: form.password,
+      options: {
+        data: {
+          first_name: form.first_name,
+          last_name: form.last_name,
+          phone: form.phone || null,
+        },
+      },
     });
 
-    if (signInErr) {
-      setError('Account created but sign-in failed: ' + signInErr.message);
+    if (error) {
+      setError(error.message);
       setLoading(false);
       return;
     }
 
-    router.push('/');
-    router.refresh();
+    if (data.session) {
+      // Email confirmation is disabled — user is signed in immediately
+      router.push('/');
+      router.refresh();
+      return;
+    }
+
+    // Email confirmation is enabled — show prompt
+    setEmailSent(true);
+    setLoading(false);
+  }
+
+  if (emailSent) {
+    return (
+      <div className="max-w-md mx-auto px-6 py-16 text-center">
+        <div className="text-5xl mb-4">📬</div>
+        <h1 className="font-display font-bold text-2xl tracking-tight mb-2">Check your inbox</h1>
+        <p className="text-muted text-sm mb-6">
+          We sent a confirmation link to <strong>{form.email}</strong>.<br />
+          Click it to activate your account, then sign in.
+        </p>
+        <Link href="/sign-in" className="btn-accent inline-block">Go to Sign in</Link>
+      </div>
+    );
   }
 
   return (

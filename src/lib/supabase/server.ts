@@ -12,35 +12,29 @@ export async function createSupabaseServer() {
   return createServerClient(SUPABASE_URL, SUPABASE_ANON, {
     cookies: {
       getAll: () => cookieStore.getAll(),
-      setAll: () => { /* no-op in server components */ },
+      setAll: (cookiesToSet) => {
+        try {
+          // Works in route handlers; throws (and is caught) in server components
+          cookiesToSet.forEach(({ name, value, options }) =>
+            (cookieStore as any).set(name, value, options)
+          );
+        } catch {
+          // Called from a server component — middleware handles token refresh
+        }
+      },
     },
   });
 }
 
-/**
- * Admin client that bypasses RLS. USE ONLY in trusted server code
- * (API routes, webhooks). Never expose to the browser.
- *
- * In mock mode (no Supabase env), returns a stub that throws clearly if used —
- * callers should check isMockMode() before calling.
- */
 export function createSupabaseAdmin() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE) {
-    // Return a typed shim so callers that accidentally use it get a helpful error.
     return new Proxy({} as any, {
       get() {
-        throw new Error(
-          'Supabase not configured — set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, ' +
-          'or guard the call with isMockMode() first.'
-        );
+        throw new Error('SUPABASE_SERVICE_ROLE_KEY not set — check Vercel env vars');
       },
     });
   }
-
   return createClient(SUPABASE_URL, SUPABASE_SERVICE, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
+    auth: { autoRefreshToken: false, persistSession: false },
   });
 }
