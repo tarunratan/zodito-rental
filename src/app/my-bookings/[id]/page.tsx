@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getCurrentAppUser } from '@/lib/auth';
-import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { createSupabaseServer } from '@/lib/supabase/server';
 import { isMockMode, mockBookingsStore, MOCK_BIKES } from '@/lib/mock';
 import { formatINR, formatDateTime } from '@/lib/utils';
 import { TIER_LABELS } from '@/lib/pricing';
@@ -13,7 +13,7 @@ async function fetchBooking(id: string, userId: string) {
     return { ...b, bike: MOCK_BIKES.find(k => k.id === b.bike_id) };
   }
 
-  const supabase = createSupabaseAdmin();
+  const supabase = await createSupabaseServer();
   const { data } = await supabase
     .from('bookings')
     .select(`
@@ -25,7 +25,6 @@ async function fetchBooking(id: string, userId: string) {
       )
     `)
     .eq('id', id)
-    .eq('user_id', userId)
     .maybeSingle();
   return data;
 }

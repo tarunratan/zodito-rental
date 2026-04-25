@@ -1,22 +1,23 @@
 import Link from 'next/link';
 import { getCurrentAppUser } from '@/lib/auth';
-import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { createSupabaseServer } from '@/lib/supabase/server';
 import { isMockMode, mockBookingsStore, MOCK_BIKES } from '@/lib/mock';
 import { BookingCard } from '@/components/bookings/BookingCard';
 import { SuccessToast } from '@/components/bookings/SuccessToast';
 
 export const dynamic = 'force-dynamic';
 
-async function fetchBookings(userId: string) {
+async function fetchBookings() {
   if (isMockMode()) {
-    // Hydrate mock bookings with their bike info
     return mockBookingsStore.map(b => ({
       ...b,
       bike: MOCK_BIKES.find(k => k.id === b.bike_id),
     }));
   }
 
-  const supabase = createSupabaseAdmin();
+  // Use the user's own session — bookings_customer_read RLS policy filters to their rows.
+  // This avoids any dependency on the service role key.
+  const supabase = await createSupabaseServer();
   const { data, error } = await supabase
     .from('bookings')
     .select(`
@@ -29,7 +30,6 @@ async function fetchBookings(userId: string) {
         vendor:vendors(business_name, pickup_area, pickup_address, contact_phone)
       )
     `)
-    .eq('user_id', userId)
     .order('start_ts', { ascending: false });
 
   if (error) {
@@ -51,7 +51,7 @@ export default async function MyBookingsPage({
     );
   }
 
-  const bookings = await fetchBookings(user.id) as any[];
+  const bookings = await fetchBookings() as any[];
 
   const upcoming = bookings.filter(b => ['pending_payment', 'confirmed', 'ongoing'].includes(b.status));
   const past = bookings.filter(b => ['completed', 'cancelled', 'payment_failed'].includes(b.status));
