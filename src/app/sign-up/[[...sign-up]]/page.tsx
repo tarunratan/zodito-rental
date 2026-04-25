@@ -19,25 +19,37 @@ export default function SignUpPage() {
     e.preventDefault();
     setLoading(true);
     setError('');
+
+    // Step 1: create confirmed user via server API (no email confirmation needed)
+    const res = await fetch('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      setError(data.error ?? 'Signup failed. Please try again.');
+      setLoading(false);
+      return;
+    }
+
+    // Step 2: sign in immediately with the same credentials
     const supabase = createSupabaseBrowser();
-    const { error } = await supabase.auth.signUp({
+    const { error: signInErr } = await supabase.auth.signInWithPassword({
       email: form.email,
       password: form.password,
-      options: {
-        data: {
-          first_name: form.first_name,
-          last_name: form.last_name,
-          phone: form.phone || null,
-        },
-      },
     });
-    if (error) {
-      setError(error.message);
+
+    if (signInErr) {
+      setError('Account created but sign-in failed: ' + signInErr.message);
       setLoading(false);
-    } else {
-      router.push('/');
-      router.refresh();
+      return;
     }
+
+    router.push('/');
+    router.refresh();
   }
 
   return (
