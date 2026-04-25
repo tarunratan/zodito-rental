@@ -5,69 +5,41 @@ import type { User } from './supabase/types';
 export async function getCurrentAppUser(): Promise<User | null> {
   if (isMockMode()) return MOCK_USER as User;
 
-  let supabase: Awaited<ReturnType<typeof createSupabaseServer>>;
   try {
-    supabase = await createSupabaseServer();
-  } catch {
-    return null;
-  }
+    const supabase = await createSupabaseServer();
 
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+    // Verify session with Supabase Auth
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    if (!authUser) return null;
 
-  // Read own row using the user's own session — RLS allows this without admin.
-  // This works even when SUPABASE_SERVICE_ROLE_KEY is wrong/missing.
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('auth_id', user.id)
-    .maybeSingle();
-
-  if (data) return data as User;
-
-  // Row missing (e.g. trigger didn't fire) — create it on the fly.
-  // Try admin first, fall back to user session with INSERT policy.
-  try {
-    const admin = createSupabaseAdmin();
-    const { data: inserted, error: insertErr } = await admin
-      .from('users')
-      .insert({
-        auth_id: user.id,
-        email: user.email ?? null,
-        phone: user.user_metadata?.phone ?? null,
-        first_name: user.user_metadata?.first_name ?? null,
-        last_name: user.user_metadata?.last_name ?? null,
-        role: 'customer',
-      })
-      .select('*')
-      .single();
-
-    if (!insertErr && inserted) return inserted as User;
-
-    // Admin insert failed — try with user session (needs INSERT policy in DB)
-    const { data: selfInserted } = await supabase
-      .from('users')
-      .insert({
-        auth_id: user.id,
-        email: user.email ?? null,
-        phone: user.user_metadata?.phone ?? null,
-        first_name: user.user_metadata?.first_name ?? null,
-        last_name: user.user_metadata?.last_name ?? null,
-        role: 'customer',
-      })
-      .select('*')
-      .single();
-
-    return selfInserted as User | null;
-  } catch (e) {
-    console.error('[auth] user row creation failed:', e);
-    // Last resort: refetch in case a concurrent request created the row
-    const { data: refetched } = await supabase
+    // Read own users-table row — user's session satisfies the self-read RLS policy
+    const { data: existing } = await supabase
       .from('users')
       .select('*')
-      .eq('auth_id', user.id)
+      .eq('auth_id', authUser.id)
       .maybeSingle();
-    return refetched as User | null;
+
+    if (existing) return existing as User;
+
+    // No row yet (first login after account creation) — create it.
+    // INSERT policy allows users to insert their own row.
+    const { data: created } = await supabase
+      .from('users')
+      .insert({
+        auth_id: authUser.id,
+        email: authUser.email ?? null,
+        phone: authUser.user_metadata?.phone ?? null,
+        first_name: authUser.user_metadata?.first_name ?? null,
+        last_name: authUser.user_metadata?.last_name ?? null,
+        role: 'customer',
+      })
+      .select('*')
+      .single();
+
+    return (created as User) ?? null;
+  } catch (err) {
+    console.error('[auth] getCurrentAppUser error:', err);
+    return null;
   }
 }
 
