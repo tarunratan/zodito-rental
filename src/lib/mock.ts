@@ -92,7 +92,7 @@ export const MOCK_BIKES = [
     rating_count: 22,
     owner_type: 'platform',
     model: {
-      id: 'm-activa6g', name: 'activa_6g', display_name: 'Honda Activa 6G', category: 'scooter', cc: 110,
+      id: 'm-dio', name: 'dio', display_name: 'Honda Dio', category: 'scooter', cc: 110,
       packages: [
         { tier: '12hr', price: 349,  km_limit: 100 },
         { tier: '24hr', price: 499,  km_limit: 140 },
@@ -115,7 +115,7 @@ export const MOCK_BIKES = [
     rating_count: 134,
     owner_type: 'platform',
     model: {
-      id: 'm-activa5g', name: 'activa_5g_4g', display_name: 'Honda Activa 5G / 4G', category: 'scooter', cc: 110,
+      id: 'm-activa5g', name: 'activa_5g', display_name: 'Honda Activa 5G', category: 'scooter', cc: 110,
       packages: [
         { tier: '12hr', price: 349,  km_limit: 100 },
         { tier: '24hr', price: 449,  km_limit: 140 },
@@ -230,7 +230,7 @@ export const MOCK_BIKES = [
     rating_count: 28,
     owner_type: 'vendor',
     model: {
-      id: 'm-shine', name: 'shine_glamour', display_name: 'Honda Shine / Glamour / HF Deluxe', category: 'scooter', cc: 125,
+      id: 'm-shine', name: 'shine_glamour', display_name: 'Honda CB Shine / Glamour', category: 'scooter', cc: 125,
       packages: [
         { tier: '12hr', price: 349,  km_limit: 100 },
         { tier: '24hr', price: 499,  km_limit: 140 },
