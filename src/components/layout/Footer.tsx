@@ -40,10 +40,22 @@ export function Footer() {
           <h4 className="text-white font-semibold text-sm uppercase tracking-wide mb-4">
             Contact
           </h4>
-          <ul className="space-y-2 text-sm">
-            <li>📞 <a href="tel:+919392912953" className="hover:text-accent transition-colors">+91 93929 12953</a></li>
-            <li>📍 KPHB, Hyderabad</li>
-            <li>🕐 6:00 AM – 10:30 PM</li>
+          <ul className="space-y-3 text-sm">
+            <li>
+              📞{' '}
+              <a href="tel:+919392912953" className="hover:text-accent transition-colors">
+                +91 93929 12953
+              </a>
+            </li>
+            <li className="flex gap-2">
+              <span className="shrink-0">📍</span>
+              <span className="leading-snug">
+                436, Sri Sai Vamshi Residency,<br />
+                Gokul Plots, KPHB, Kukatpally,<br />
+                Hyderabad – 500 085
+              </span>
+            </li>
+            <li>🕐 6:00 AM – 10:30 PM, all days</li>
           </ul>
         </div>
       </div>
