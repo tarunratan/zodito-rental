@@ -72,10 +72,17 @@ export function Nav() {
                 My Bookings
               </Link>
             </li>
-            {kyc && kyc !== 'approved' && (
+            {kyc === 'not_submitted' && (
               <li>
                 <Link href="/kyc" className="text-accent hover:text-accent-hover text-sm font-medium transition-colors">
-                  ⚠ Complete KYC
+                  Verify ID
+                </Link>
+              </li>
+            )}
+            {kyc === 'rejected' && (
+              <li>
+                <Link href="/kyc" className="text-warning hover:text-warning/80 text-sm font-medium transition-colors">
+                  ⚠ Re-submit KYC
                 </Link>
               </li>
             )}

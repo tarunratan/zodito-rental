@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { PackagePicker } from './PackagePicker';
 import { PickupTimePicker } from './PickupTimePicker';
 import { AddonPicker } from './AddonPicker';
@@ -12,7 +13,7 @@ import type { PackageTier } from '@/lib/supabase/types';
 
 type Bike = any;
 
-export function BookingFlow({ bike }: { bike: Bike }) {
+export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: string | null }) {
   const [tier, setTier] = useState<PackageTier>('24hr');
   const [pickupTs, setPickupTs] = useState<Date | null>(null);
   const [extraHelmets, setExtraHelmets] = useState(0);
@@ -37,9 +38,43 @@ export function BookingFlow({ bike }: { bike: Bike }) {
   const pickupValid = pickupTs ? isWithinStoreHours(pickupTs) && pickupTs > new Date() : false;
   const canProceed = !!pickupTs && pickupValid && !!breakdown;
 
+  const showKycNudge = kycStatus && kycStatus !== 'approved';
+
   return (
     <div className="grid md:grid-cols-[1fr_380px] gap-6">
       <div className="space-y-5">
+        {showKycNudge && (
+          <div className={`flex items-start gap-3 px-4 py-3 rounded-lg border text-sm ${
+            kycStatus === 'rejected'
+              ? 'bg-danger/5 border-danger/30 text-danger'
+              : 'bg-warning/8 border-warning/30 text-warning-700'
+          }`}>
+            <span className="mt-0.5 text-base">{kycStatus === 'rejected' ? '⚠️' : '📋'}</span>
+            <div>
+              {kycStatus === 'not_submitted' && (
+                <>
+                  <span className="font-medium">Complete KYC before pickup</span>
+                  <span className="text-muted ml-1">— you can book now and upload docs anytime.</span>
+                  <Link href="/kyc" className="ml-2 underline font-medium">Upload now →</Link>
+                </>
+              )}
+              {kycStatus === 'pending' && (
+                <>
+                  <span className="font-medium">KYC under review</span>
+                  <span className="text-muted ml-1">— you're good to book. We'll verify before handover.</span>
+                </>
+              )}
+              {kycStatus === 'rejected' && (
+                <>
+                  <span className="font-medium">KYC rejected — please re-submit</span>
+                  <span className="text-muted ml-1">before your pickup.</span>
+                  <Link href="/kyc" className="ml-2 underline font-medium">Re-submit →</Link>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         <Section number={1} title="Choose your package">
           <PackagePicker
             packages={bike.model.packages}

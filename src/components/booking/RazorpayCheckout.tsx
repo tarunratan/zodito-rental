@@ -55,10 +55,6 @@ export function RazorpayCheckout({
 
       const data = await res.json();
       if (!res.ok) {
-        if (data.code === 'kyc_required') {
-          router.push('/kyc');
-          return;
-        }
         throw new Error(data.error || 'Could not create booking');
       }
 

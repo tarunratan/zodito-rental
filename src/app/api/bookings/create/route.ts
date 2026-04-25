@@ -29,18 +29,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Please sign in to book' }, { status: 401 });
   }
 
-  // --- 1b. KYC check (skipped in mock mode, which returns an approved user)
-  if (user.kyc_status !== 'approved') {
-    return NextResponse.json(
-      {
-        error: 'KYC verification required before booking',
-        code: 'kyc_required',
-        kyc_status: user.kyc_status,
-      },
-      { status: 403 }
-    );
-  }
-
   // --- 2. Parse & validate request
   const parse = bodySchema.safeParse(await req.json());
   if (!parse.success) {

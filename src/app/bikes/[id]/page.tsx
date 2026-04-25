@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { BookingFlow } from '@/components/booking/BookingFlow';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { getCurrentAppUser } from '@/lib/auth';
 import { isMockMode, MOCK_BIKES } from '@/lib/mock';
 import { formatINR } from '@/lib/utils';
 
@@ -36,8 +37,9 @@ async function fetchBike(id: string) {
 }
 
 export default async function BikeDetailPage({ params }: { params: { id: string } }) {
-  const bike = await fetchBike(params.id) as any;
+  const [bike, user] = await Promise.all([fetchBike(params.id), getCurrentAppUser()]);
   if (!bike) notFound();
+  const kycStatus = user?.kyc_status ?? null;
 
   const pkg24 = bike.model.packages.find((p: any) => p.tier === '24hr');
   const isVendor = bike.owner_type === 'vendor';
@@ -139,7 +141,7 @@ export default async function BikeDetailPage({ params }: { params: { id: string 
       </div>
 
       {/* Booking flow */}
-      <BookingFlow bike={bike} />
+      <BookingFlow bike={bike} kycStatus={kycStatus} />
     </div>
   );
 }
