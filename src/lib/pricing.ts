@@ -38,7 +38,7 @@ export const TIER_LABELS: Record<PackageTier, string> = {
  */
 export function isWeekendIST(d: Date): boolean {
   // Convert to IST (UTC+5:30)
-  const istMs = d.getTime() + (5.5 * 60 - d.getTimezoneOffset()) * 60 * 1000;
+  const istMs = d.getTime() + 5.5 * 60 * 60 * 1000; // fixed UTC→IST offset (+5:30)
   const ist = new Date(istMs);
   const day = ist.getUTCDay(); // 0 = Sun, 6 = Sat
   return day === 0 || day === 6;
@@ -168,7 +168,7 @@ export const STORE_CLOSE_MIN = 30;
 
 export function isWithinStoreHours(d: Date): boolean {
   // Convert to IST
-  const istMs = d.getTime() + (5.5 * 60 - d.getTimezoneOffset()) * 60 * 1000;
+  const istMs = d.getTime() + 5.5 * 60 * 60 * 1000; // fixed UTC→IST offset (+5:30)
   const ist = new Date(istMs);
   const h = ist.getUTCHours();
   const m = ist.getUTCMinutes();

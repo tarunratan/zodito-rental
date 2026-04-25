@@ -14,13 +14,11 @@ const nextConfig = {
       },
     ],
   },
-  
-  // Guardrail 1: Ignore TypeScript errors during Vercel builds
+
   typescript: {
     ignoreBuildErrors: true,
   },
-  
-  // Guardrail 2: Ignore ESLint errors during Vercel builds
+
   eslint: {
     ignoreDuringBuilds: true,
   },

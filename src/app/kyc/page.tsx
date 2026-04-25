@@ -27,7 +27,7 @@ export default async function KycPage() {
         Upload these once — we&apos;ll verify and you&apos;re set for all future bookings.
       </p>
 
-      <StatusBanner status={user.kyc_status} />
+      <StatusBanner status={user.kyc_status} rejectionReason={user.kyc_rejection_reason ?? undefined} />
 
       {user.kyc_status !== 'approved' && (
         <KycForm currentStatus={user.kyc_status} />
@@ -42,12 +42,12 @@ export default async function KycPage() {
   );
 }
 
-function StatusBanner({ status }: { status: string }) {
+function StatusBanner({ status, rejectionReason }: { status: string; rejectionReason?: string }) {
   const configs = {
     not_submitted: { bg: 'bg-warning/10', border: 'border-warning/30', text: 'text-warning', icon: '📋', title: 'Not submitted yet', desc: 'Complete verification to book rides' },
     pending: { bg: 'bg-info/10', border: 'border-info/30', text: 'text-info', icon: '⏱', title: 'Under review', desc: 'We usually approve within 2-4 hours during business hours' },
     approved: { bg: 'bg-success/10', border: 'border-success/30', text: 'text-success', icon: '✓', title: 'Verified', desc: "You're all set. Go book a ride!" },
-    rejected: { bg: 'bg-danger/10', border: 'border-danger/30', text: 'text-danger', icon: '✗', title: 'Rejected — please re-submit', desc: 'Check the notes below and upload clearer photos' },
+    rejected: { bg: 'bg-danger/10', border: 'border-danger/30', text: 'text-danger', icon: '✗', title: 'Rejected — please re-submit', desc: rejectionReason || 'Upload clearer photos and try again' },
   } as const;
 
   const c = configs[status as keyof typeof configs] ?? configs.not_submitted;

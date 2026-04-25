@@ -53,25 +53,14 @@ export async function POST(req: NextRequest) {
         dl_number: dlNumber,
         dl_photo_url: dlPath,
         aadhaar_photo_url: aadhaarPath,
-        // We'll need a selfie column for this — add it in a follow-up migration
-        // For now storing selfie path in kyc_rejection_reason field would be wrong;
-        // better: use a jsonb "kyc_docs" column. But to ship, we use a simple pattern.
+        selfie_with_dl_photo_url: selfiePath,
         kyc_status: 'pending',
         kyc_submitted_at: new Date().toISOString(),
+        kyc_rejection_reason: null,  // clear any previous rejection
       })
       .eq('id', user.id);
 
     if (updateErr) throw updateErr;
-
-    // Store the selfie path separately — we'll add a column for this in the migration below
-    await supabase
-      .from('users')
-      .update({ kyc_rejection_reason: null })  // clear any old rejection notes
-      .eq('id', user.id);
-
-    // If the selfie column doesn't exist yet, the admin will see DL+Aadhaar; once
-    // you run the follow-up migration (see 005_kyc_selfie.sql), selfie is stored too.
-    await supabase.rpc('set_kyc_selfie', { p_user_id: user.id, p_path: selfiePath }).then(() => {}, () => {});
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {

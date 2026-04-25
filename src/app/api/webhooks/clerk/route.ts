@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
 
   if (evt.type === 'user.created' || evt.type === 'user.updated') {
     const d = evt.data;
-    await supabase.from('users').upsert(
+    const { error: upsertErr } = await supabase.from('users').upsert(
       {
         clerk_id: d.id,
         email: d.email_addresses?.[0]?.email_address ?? null,
@@ -62,8 +62,16 @@ export async function POST(req: NextRequest) {
       },
       { onConflict: 'clerk_id' }
     );
+    if (upsertErr) {
+      console.error('Clerk webhook: user upsert failed', upsertErr);
+      return NextResponse.json({ error: 'user sync failed' }, { status: 500 });
+    }
   } else if (evt.type === 'user.deleted') {
-    await supabase.from('users').delete().eq('clerk_id', evt.data.id);
+    const { error: deleteErr } = await supabase.from('users').delete().eq('clerk_id', evt.data.id);
+    if (deleteErr) {
+      console.error('Clerk webhook: user delete failed', deleteErr);
+      return NextResponse.json({ error: 'user delete failed' }, { status: 500 });
+    }
   }
 
   return NextResponse.json({ ok: true });
