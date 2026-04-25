@@ -15,6 +15,7 @@ export const GST_RATE = 0.18; // 18%
 export const DEFAULT_SECURITY_DEPOSIT = 500;
 export const NO_DL_EXTRA_DEPOSIT = 500; // added on top at pickup if no original DL
 export const EXTRA_HELMET_PRICE = 50;
+export const MOBILE_HOLDER_PRICE = 49;
 
 export const TIER_HOURS: Record<PackageTier, number> = {
   '12hr': 12,
@@ -63,8 +64,9 @@ export interface PriceBreakdown {
   kmLimit: number;
   extraHelmetCount: number;
   extraHelmetCharge: number;
+  mobileHolderCharge: number;
   securityDeposit: number;
-  subtotal: number;           // base + helmet (before tax)
+  subtotal: number;           // base + helmet + mobile holder (before tax)
   gstAmount: number;
   totalAmount: number;        // subtotal + gst + deposit  (what customer pays)
   tier: PackageTier;
@@ -81,8 +83,9 @@ export function calculatePrice(params: {
   tier: PackageTier;
   extraHelmetCount?: number;
   hasOriginalDL?: boolean;
+  includeMobileHolder?: boolean;
 }): PriceBreakdown {
-  const { packages, tier, extraHelmetCount = 0, hasOriginalDL = true } = params;
+  const { packages, tier, extraHelmetCount = 0, hasOriginalDL = true, includeMobileHolder = false } = params;
 
   const pkg = packages.find(p => p.tier === tier);
   if (!pkg) {
@@ -92,10 +95,11 @@ export function calculatePrice(params: {
   const basePrice = Number(pkg.price);
   const kmLimit = pkg.km_limit;
   const extraHelmetCharge = extraHelmetCount * EXTRA_HELMET_PRICE;
+  const mobileHolderCharge = includeMobileHolder ? MOBILE_HOLDER_PRICE : 0;
   const securityDeposit =
     DEFAULT_SECURITY_DEPOSIT + (hasOriginalDL ? 0 : NO_DL_EXTRA_DEPOSIT);
 
-  const subtotal = basePrice + extraHelmetCharge;
+  const subtotal = basePrice + extraHelmetCharge + mobileHolderCharge;
   const gstAmount = round2(subtotal * GST_RATE);
   const totalAmount = round2(subtotal + gstAmount + securityDeposit);
 
@@ -104,6 +108,7 @@ export function calculatePrice(params: {
     kmLimit,
     extraHelmetCount,
     extraHelmetCharge,
+    mobileHolderCharge,
     securityDeposit,
     subtotal,
     gstAmount,

@@ -5,9 +5,13 @@ import { cn } from '@/lib/utils';
 export function AddonPicker({
   extraHelmets,
   onHelmetsChange,
+  mobileHolder,
+  onMobileHolderChange,
 }: {
   extraHelmets: number;
   onHelmetsChange: (n: number) => void;
+  mobileHolder: boolean;
+  onMobileHolderChange: (v: boolean) => void;
 }) {
   return (
     <div className="space-y-3">
@@ -40,6 +44,30 @@ export function AddonPicker({
           </StepButton>
         </div>
       </div>
+
+      <button
+        onClick={() => onMobileHolderChange(!mobileHolder)}
+        className={cn(
+          'w-full flex items-center justify-between p-3 border rounded-lg transition-all text-left',
+          mobileHolder
+            ? 'border-accent bg-accent/5'
+            : 'border-border hover:border-accent/40'
+        )}
+      >
+        <div className="flex items-center gap-3">
+          <div className="text-2xl">📱</div>
+          <div>
+            <div className="font-semibold text-sm">Mobile holder</div>
+            <div className="text-xs text-muted">Handlebar mount — ₹49</div>
+          </div>
+        </div>
+        <div className={cn(
+          'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0',
+          mobileHolder ? 'border-accent bg-accent' : 'border-border'
+        )}>
+          {mobileHolder && <div className="w-2 h-2 rounded-full bg-white" />}
+        </div>
+      </button>
 
       <div className="text-[11px] text-muted p-3 bg-bg rounded-lg leading-relaxed">
         💡 Helmets must be returned in original condition. Loss or damage incurs replacement charges.

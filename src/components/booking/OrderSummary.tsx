@@ -52,9 +52,12 @@ export function OrderSummary({
               value={formatINR(breakdown.extraHelmetCharge)}
             />
           )}
+          {breakdown.mobileHolderCharge > 0 && (
+            <Row label="Mobile holder" value={formatINR(breakdown.mobileHolderCharge)} />
+          )}
           <Row label="Subtotal" value={formatINR(breakdown.subtotal)} muted />
           <Row label="GST (18%)" value={formatINR(breakdown.gstAmount)} muted />
-          <Row label="Security deposit" value={formatINR(breakdown.securityDeposit)} muted note="refundable" />
+          <Row label="Security deposit" value={formatINR(breakdown.securityDeposit)} muted note="cash/UPI at pickup" />
         </div>
       )}
 

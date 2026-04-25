@@ -20,6 +20,7 @@ const bodySchema = z.object({
   tier: z.enum(['12hr', '24hr', '7day', '15day', '30day']),
   start_ts: z.string(),  // ISO
   extra_helmet_count: z.number().int().min(0).max(3).default(0),
+  mobile_holder: z.boolean().default(false),
 });
 
 export async function POST(req: NextRequest) {
@@ -96,6 +97,7 @@ export async function POST(req: NextRequest) {
     tier: body.tier as PackageTier,
     extraHelmetCount: body.extra_helmet_count,
     hasOriginalDL: true,  // assume yes at booking; adjusted at pickup if no
+    includeMobileHolder: body.mobile_holder,
   });
 
   // --- 8. Commission split (only for vendor bikes)
@@ -128,7 +130,7 @@ export async function POST(req: NextRequest) {
       base_price: breakdown.basePrice,
       km_limit: breakdown.kmLimit,
       extra_helmet_count: breakdown.extraHelmetCount,
-      extra_helmet_price: breakdown.extraHelmetCharge,
+      extra_helmet_price: breakdown.extraHelmetCharge + breakdown.mobileHolderCharge,
       security_deposit: breakdown.securityDeposit,
       subtotal: breakdown.subtotal,
       gst_amount: breakdown.gstAmount,

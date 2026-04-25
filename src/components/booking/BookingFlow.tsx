@@ -7,16 +7,31 @@ import { PickupTimePicker } from './PickupTimePicker';
 import { AddonPicker } from './AddonPicker';
 import { OrderSummary } from './OrderSummary';
 import { RazorpayCheckout } from './RazorpayCheckout';
-import { calculatePrice, tierEndTs, isWithinStoreHours, TIER_LABELS } from '@/lib/pricing';
+import { calculatePrice, tierEndTs, isWithinStoreHours, TIER_LABELS, STORE_OPEN_HOUR, STORE_CLOSE_HOUR, STORE_CLOSE_MIN } from '@/lib/pricing';
 import { formatDateTime } from '@/lib/utils';
 import type { PackageTier } from '@/lib/supabase/types';
 
 type Bike = any;
 
+function defaultPickupTime(): Date | null {
+  const now = new Date();
+  const target = new Date(now.getTime() + 60 * 60 * 1000); // +1hr
+  const rawMin = target.getMinutes();
+  let h = target.getHours();
+  let m = 0;
+  if (rawMin === 0) { m = 0; }
+  else if (rawMin <= 30) { m = 30; }
+  else { h = h + 1; m = 0; }
+  if (h < STORE_OPEN_HOUR) { h = STORE_OPEN_HOUR; m = 0; }
+  if (h > STORE_CLOSE_HOUR || (h === STORE_CLOSE_HOUR && m > STORE_CLOSE_MIN)) return null;
+  return new Date(target.getFullYear(), target.getMonth(), target.getDate(), h, m, 0, 0);
+}
+
 export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: string | null }) {
   const [tier, setTier] = useState<PackageTier>('24hr');
-  const [pickupTs, setPickupTs] = useState<Date | null>(null);
+  const [pickupTs, setPickupTs] = useState<Date | null>(defaultPickupTime);
   const [extraHelmets, setExtraHelmets] = useState(0);
+  const [mobileHolder, setMobileHolder] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,11 +44,12 @@ export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: strin
         tier,
         extraHelmetCount: extraHelmets,
         hasOriginalDL: true,
+        includeMobileHolder: mobileHolder,
       });
     } catch {
       return null;
     }
-  }, [bike.model.packages, tier, extraHelmets]);
+  }, [bike.model.packages, tier, extraHelmets, mobileHolder]);
 
   const pickupValid = pickupTs ? isWithinStoreHours(pickupTs) && pickupTs > new Date() : false;
   const canProceed = !!pickupTs && pickupValid && !!breakdown;
@@ -44,34 +60,34 @@ export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: strin
     <div className="grid md:grid-cols-[1fr_380px] gap-6">
       <div className="space-y-5">
         {showKycNudge && (
-          <div className={`flex items-start gap-3 px-4 py-3 rounded-lg border text-sm ${
+          <div className={`rounded-xl border-2 p-4 ${
             kycStatus === 'rejected'
-              ? 'bg-danger/5 border-danger/30 text-danger'
-              : 'bg-warning/8 border-warning/30 text-warning-700'
+              ? 'bg-danger/8 border-danger text-danger'
+              : 'bg-amber-50 border-amber-400 text-amber-900'
           }`}>
-            <span className="mt-0.5 text-base">{kycStatus === 'rejected' ? '⚠️' : '📋'}</span>
-            <div>
+            <div className="flex items-center gap-2 font-bold text-sm mb-1">
+              <span className="text-lg">{kycStatus === 'rejected' ? '🚫' : '⚠️'}</span>
+              {kycStatus === 'rejected' ? 'KYC Rejected — Action Required' : 'KYC Verification Needed'}
+            </div>
+            <p className="text-sm leading-snug">
               {kycStatus === 'not_submitted' && (
-                <>
-                  <span className="font-medium">Complete KYC before pickup</span>
-                  <span className="text-muted ml-1">— you can book now and upload docs anytime.</span>
-                  <Link href="/kyc" className="ml-2 underline font-medium">Upload now →</Link>
-                </>
+                <>You can book now, but <strong>upload your documents before pickup</strong> — bike won't be released without verified KYC.</>
               )}
               {kycStatus === 'pending' && (
-                <>
-                  <span className="font-medium">KYC under review</span>
-                  <span className="text-muted ml-1">— you're good to book. We'll verify before handover.</span>
-                </>
+                <>Your documents are under review. You&apos;re good to book — we&apos;ll verify before handover.</>
               )}
               {kycStatus === 'rejected' && (
-                <>
-                  <span className="font-medium">KYC rejected — please re-submit</span>
-                  <span className="text-muted ml-1">before your pickup.</span>
-                  <Link href="/kyc" className="ml-2 underline font-medium">Re-submit →</Link>
-                </>
+                <>Your previous submission was rejected. <strong>Re-submit before pickup</strong> or your booking may be cancelled.</>
               )}
-            </div>
+            </p>
+            {(kycStatus === 'not_submitted' || kycStatus === 'rejected') && (
+              <Link
+                href="/kyc"
+                className={`inline-block mt-2 text-sm font-semibold underline ${kycStatus === 'rejected' ? 'text-danger' : 'text-amber-800'}`}
+              >
+                {kycStatus === 'rejected' ? 'Re-submit KYC →' : 'Upload documents →'}
+              </Link>
+            )}
           </div>
         )}
 
@@ -108,6 +124,8 @@ export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: strin
           <AddonPicker
             extraHelmets={extraHelmets}
             onHelmetsChange={setExtraHelmets}
+            mobileHolder={mobileHolder}
+            onMobileHolderChange={setMobileHolder}
           />
         </Section>
       </div>
@@ -134,6 +152,7 @@ export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: strin
             tier={tier}
             pickupTs={pickupTs}
             extraHelmets={extraHelmets}
+            mobileHolder={mobileHolder}
             disabled={!canProceed}
             submitting={submitting}
             setSubmitting={setSubmitting}
@@ -142,8 +161,7 @@ export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: strin
           />
 
           <p className="text-[11px] text-muted text-center mt-3 leading-relaxed">
-            By booking, you agree to our rental policy. Security deposit is
-            refunded after drop-off.
+            By booking, you agree to our rental policy. Security deposit is paid by cash/UPI at pickup and refunded after drop-off.
           </p>
         </div>
       </div>

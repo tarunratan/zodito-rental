@@ -64,8 +64,8 @@ export function KycForm({ currentStatus }: { currentStatus: string }) {
         onChange={setAadhaar}
       />
       <UploadTile
-        title="Selfie holding your DL"
-        hint="Face + DL visible in same photo (fraud check)"
+        title="Selfie"
+        hint="Clear photo of your face"
         icon="🤳"
         state={selfie}
         onChange={setSelfie}

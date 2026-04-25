@@ -11,7 +11,6 @@ export function PickupTimePicker({
   value: Date | null;
   onChange: (d: Date) => void;
 }) {
-  // Month shown in calendar
   const [monthCursor, setMonthCursor] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -20,23 +19,49 @@ export function PickupTimePicker({
   const days = useMemo(() => buildMonthDays(monthCursor), [monthCursor]);
 
   const selectedDayKey = value ? ymd(value) : null;
+  const today = startOfDay(new Date());
 
   function selectDay(d: Date) {
-    // preserve the time if already picked, else default to 10:00 AM
-    const base = value ?? new Date();
-    const next = new Date(d.getFullYear(), d.getMonth(), d.getDate(),
-      value ? value.getHours() : 10,
-      value ? value.getMinutes() : 0, 0, 0);
-    onChange(next);
+    const isSelectingToday = ymd(d) === ymd(new Date());
+
+    let hour: number;
+    let minute: number;
+
+    if (isSelectingToday) {
+      // Default to 1 hour from now, rounded up to next 30-min slot
+      const now = new Date();
+      const target = new Date(now.getTime() + 60 * 60 * 1000);
+      const rawMinute = target.getMinutes();
+      if (rawMinute === 0) {
+        hour = target.getHours();
+        minute = 0;
+      } else if (rawMinute <= 30) {
+        hour = target.getHours();
+        minute = 30;
+      } else {
+        hour = target.getHours() + 1;
+        minute = 0;
+      }
+      // Clamp to store hours
+      if (hour < STORE_OPEN_HOUR) { hour = STORE_OPEN_HOUR; minute = 0; }
+      if (hour > STORE_CLOSE_HOUR || (hour === STORE_CLOSE_HOUR && minute > STORE_CLOSE_MIN)) {
+        hour = STORE_CLOSE_HOUR; minute = STORE_CLOSE_MIN;
+      }
+    } else {
+      // For future days, preserve existing time or default 10:00 AM
+      hour = value ? value.getHours() : 10;
+      minute = value ? value.getMinutes() : 0;
+    }
+
+    onChange(new Date(d.getFullYear(), d.getMonth(), d.getDate(), hour, minute, 0, 0));
   }
 
   function selectTime(hour: number, minute: number) {
     const base = value ?? new Date();
-    const next = new Date(base.getFullYear(), base.getMonth(), base.getDate(), hour, minute, 0, 0);
-    onChange(next);
+    onChange(new Date(base.getFullYear(), base.getMonth(), base.getDate(), hour, minute, 0, 0));
   }
 
-  const today = startOfDay(new Date());
+  const selectedIsToday = value ? ymd(value) === ymd(new Date()) : false;
 
   return (
     <div className="grid md:grid-cols-[1fr_220px] gap-5">
@@ -100,15 +125,20 @@ export function PickupTimePicker({
         <div className="grid grid-cols-3 gap-1.5 max-h-[280px] overflow-y-auto pr-1">
           {buildTimeSlots().map(slot => {
             const isSelected = value && value.getHours() === slot.hour && value.getMinutes() === slot.minute;
+            const isPast = selectedIsToday && isPastSlot(slot.hour, slot.minute);
+
             return (
               <button
                 key={slot.label}
-                onClick={() => selectTime(slot.hour, slot.minute)}
+                disabled={isPast}
+                onClick={() => !isPast && selectTime(slot.hour, slot.minute)}
                 className={cn(
                   'px-2 py-2 rounded-md text-xs font-medium border transition-all',
-                  isSelected
-                    ? 'bg-accent text-white border-accent'
-                    : 'bg-white border-border hover:border-accent/50'
+                  isPast
+                    ? 'bg-bg border-border text-border cursor-not-allowed'
+                    : isSelected
+                      ? 'bg-accent text-white border-accent'
+                      : 'bg-white border-border hover:border-accent/50'
                 )}
               >
                 {slot.label}
@@ -124,12 +154,17 @@ export function PickupTimePicker({
   );
 }
 
+function isPastSlot(hour: number, minute: number): boolean {
+  const now = new Date();
+  return hour < now.getHours() || (hour === now.getHours() && minute <= now.getMinutes());
+}
+
 function buildMonthDays(monthStart: Date): (Date | null)[] {
   const year = monthStart.getFullYear();
   const month = monthStart.getMonth();
   const first = new Date(year, month, 1);
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const leading = first.getDay(); // 0 = Sun
+  const leading = first.getDay();
   const cells: (Date | null)[] = [];
   for (let i = 0; i < leading; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
@@ -139,7 +174,6 @@ function buildMonthDays(monthStart: Date): (Date | null)[] {
 
 function buildTimeSlots() {
   const slots: { hour: number; minute: number; label: string }[] = [];
-  // Every 30 min from STORE_OPEN_HOUR to STORE_CLOSE_HOUR:STORE_CLOSE_MIN
   for (let h = STORE_OPEN_HOUR; h <= STORE_CLOSE_HOUR; h++) {
     for (const m of [0, 30]) {
       if (h === STORE_CLOSE_HOUR && m > STORE_CLOSE_MIN) continue;
