@@ -13,7 +13,7 @@ export async function getCurrentAppUser(): Promise<User | null> {
     return MOCK_USER as User;
   }
 
-  const { userId } = auth();
+  const { userId } = await auth();
   if (!userId) return null;
 
   const supabase = createSupabaseAdmin();
@@ -29,7 +29,7 @@ export async function getCurrentAppUser(): Promise<User | null> {
     const clerkUser = await currentUser();
     if (!clerkUser) return null;
 
-    const { data: inserted } = await supabase
+    const { data: inserted, error: insertErr } = await supabase
       .from('users')
       .insert({
         clerk_id: clerkUser.id,
@@ -41,6 +41,16 @@ export async function getCurrentAppUser(): Promise<User | null> {
       })
       .select('*')
       .single();
+
+    if (insertErr) {
+      console.error('[auth] on-the-fly user insert failed:', insertErr.message);
+      const { data: refetched } = await supabase
+        .from('users')
+        .select('*')
+        .eq('clerk_id', userId)
+        .maybeSingle();
+      return refetched as User | null;
+    }
 
     return inserted as User | null;
   }
