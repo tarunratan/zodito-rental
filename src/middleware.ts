@@ -15,8 +15,8 @@ const isProtectedRoute = createRouteMatcher([
 // Everything is accessible — great for UI tuning but obviously not for prod.
 const hasClerk = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
-const clerkHandler = clerkMiddleware((auth, req) => {
-  if (isProtectedRoute(req)) auth().protect();
+const clerkHandler = clerkMiddleware(async (auth, req) => {
+  if (isProtectedRoute(req)) await auth.protect();
 });
 
 export default function middleware(req: NextRequest, evt: any) {

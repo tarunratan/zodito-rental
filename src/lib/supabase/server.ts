@@ -28,7 +28,7 @@ export async function createSupabaseServer() {
   // Only try to fetch a Clerk JWT if Clerk is configured
   if (HAS_CLERK) {
     try {
-      const { getToken } = auth();
+      const { getToken } = await auth();
       supabaseToken = await getToken({ template: 'supabase' });
     } catch {
       // getToken can throw if not in an auth context; ignore and proceed as anon

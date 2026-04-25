@@ -2,72 +2,93 @@
 
 Production-grade bike rental platform for Hyderabad. Next.js 14 + Supabase + Clerk + Razorpay.
 
-> **This is Chunks 1 + 2** — foundation, customer booking, payments, KYC. Chunk 3 (vendor + admin panels) is next.
+> **Complete build (all 3 chunks)** — customer flow + vendor dashboard + admin panel. Ready to deploy.
 
 ---
 
 ## What's included
 
-### Chunk 1 — Foundation
-✅ Next.js 14 (App Router) + TypeScript + Tailwind scaffold
-✅ Complete Supabase schema — users, vendors, bikes, bookings, pricing
-✅ Master pricing seeded from Zodito rate card (8 models × 5 tiers)
-✅ Row Level Security policies for customer / vendor / admin
-✅ Atomic double-booking prevention (Postgres exclusion constraint)
-✅ Clerk auth integration + webhook for user sync
-✅ Pricing engine with weekend override logic + commission splits
+### Customer flow
 ✅ Home page with hero + filterable browse grid
-✅ Nav, Footer, WhatsApp bubble — all matching prototype theme
-✅ Mock Mode — run with zero config
-
-### Chunk 2 — Customer booking + payments
-✅ Bike detail page with full specs + pricing display
-✅ 5-tier package picker (12hr / 24hr / 7day / 15day / 30day)
-✅ Calendar date picker + time slot picker (respects 6 AM – 10:30 PM store hours)
-✅ Add-on picker (extra helmets)
-✅ Live order summary with full breakdown (base / GST / deposit / total)
-✅ Booking creation API with atomic slot-conflict protection
-✅ Razorpay Checkout integration (client widget + server order creation)
-✅ Payment verification API (signature check)
-✅ Razorpay webhook handler (authoritative payment status)
-✅ My Bookings page with Upcoming / Past sections
-✅ Booking detail page with vendor pickup info post-payment
-✅ Cancel booking flow
-✅ KYC upload (DL + Aadhaar + selfie-with-DL for fraud check)
+✅ Bike detail page with full specs + 5 tier pricing
+✅ Booking flow — tier picker, date/time picker, helmet add-ons
+✅ Live order summary with GST + deposit breakdown
+✅ Razorpay Checkout integration
+✅ Payment webhook with signature verification
+✅ My Bookings page with Upcoming/Past sections + cancel flow
+✅ KYC upload (DL + Aadhaar + selfie-with-DL)
 ✅ KYC enforcement — blocks checkout until admin approves
 
-### Chunk 3 — Coming next
-- Vendor signup + dashboard + bike listing
-- Admin panels (approve vendors / bikes / KYC / refunds)
-- Vendor earnings view
+### Vendor flow
+✅ Public vendor signup with full application form
+✅ Vendor dashboard with earnings KPIs
+✅ Bookings table showing customer contact info (post-payment)
+✅ Net earnings breakdown (gross − commission = payout)
+✅ List-a-bike form (pick model from master list)
+✅ Status tracking (pending / approved / rejected / inactive)
+
+### Admin panel (one screen, 4 tabs)
+✅ KPI strip (pending vendors, bikes, KYC, active rentals)
+✅ **Vendors tab** — approve / reject applications with notes
+✅ **Bikes tab** — approve / reject vendor bike listings
+✅ **KYC tab** — review 3 documents side-by-side, click to zoom, approve/reject
+✅ **Bookings tab** — filter by status, search, mark picked-up/returned/refunded
+
+### Foundation
+✅ Next.js 14 (App Router) + TypeScript + Tailwind
+✅ Complete Supabase schema with master pricing (8 models × 5 tiers)
+✅ Row Level Security policies for customer / vendor / admin
+✅ Atomic double-booking prevention (Postgres exclusion constraint)
+✅ Clerk auth + user sync webhook
+✅ Pricing engine with weekend override + commission splits
+✅ Nav, Footer, WhatsApp bubble matching prototype theme
+✅ **Mock Mode** — run with zero config, switch roles via Dev Panel
 
 ---
 
-## End-to-end testing checklist (mock mode)
+## Test everything in Mock Mode (no setup required)
 
-Once `npm run dev` is running with no env vars:
+```bash
+unzip zodito-chunk3.zip
+cd zodito
+npm install
+npm run dev
+```
 
-1. **Browse** — home page loads, 8 bikes visible, filters + search work
-2. **Click any bike** — detail page shows model info + pricing + all 5 tiers
-3. **Pick a tier + date/time + add helmets** — order summary updates live
-4. **Click "Pay & confirm"** — mock booking created, redirects to `/my-bookings`
-5. **My Bookings** — your new booking appears in Upcoming with "Confirmed" status
-6. **Click the booking** — detail page shows the full breakdown
-7. **Cancel it** — confirm dialog, then it moves to Past as "Cancelled"
+Open `localhost:3000`. You'll see the yellow **"Mock Mode"** banner and a **🛠 Dev Panel** in the bottom-right.
 
-In mock mode, no real DB writes happen — bookings reset when the dev server restarts. That's expected.
+**Switch roles with the Dev Panel** to test different flows:
 
-## End-to-end testing (real backend)
+| Role | What you can test |
+|------|-------------------|
+| **Customer** (default) | Browse → Book → Pay (mock) → See booking → Cancel |
+| **Vendor** | Dashboard with earnings, pending bikes, list a new bike |
+| **Admin** | Approve vendors, approve bikes, review KYC, manage bookings |
 
-Once Supabase + Clerk + Razorpay are configured:
+Mock data resets when the dev server restarts — expected.
 
-1. Sign up via Clerk → webhook creates user row
-2. Visit `/kyc` → upload 3 docs → status = `pending`
-3. As admin (SQL: `update users set kyc_status='approved' where id=...`), approve
-4. Book any bike → real Razorpay widget opens → pay with test card `4111 1111 1111 1111` → booking confirmed via webhook
-5. Check `bookings` table in Supabase — row exists with `status='confirmed'`
+### Full end-to-end test
 
-Razorpay test mode cards: [docs.razorpay.com/docs/payments/payments/test-card-upi-details/](https://docs.razorpay.com/docs/payments/payments/test-card-upi-details)
+1. Start as **customer** — browse, click a bike, pick 24hr tier, pick tomorrow at 10 AM, add 1 helmet, click Pay → you're taken to My Bookings with a success toast
+2. Visit `/kyc` — upload 3 dummy images, submit → status = pending
+3. Switch to **admin** → KYC tab → see your submission → click approve
+4. Switch to **vendor** → visit `/vendor/signup` → fill the form → submit → you become pending
+5. Switch to **admin** → Vendors tab → approve your application
+6. Switch back to **vendor** → `/vendor` dashboard → click "+ List a bike" → pick a model → submit
+7. Switch to **admin** → Bikes tab → approve your listing
+8. Switch to **customer** → your new bike appears in browse!
+
+---
+
+## Full setup (real backend)
+
+### 1. Install
+
+```bash
+npm install
+```
+
+### 2. Supabase
 
 ---
 
