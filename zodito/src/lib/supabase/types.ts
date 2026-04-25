@@ -1,10 +1,3 @@
-// ============================================================================
-// DATABASE TYPES
-// ============================================================================
-// Mirrors the types from 001_schema.sql. In a larger project you'd generate
-// these with `supabase gen types typescript` — for now, hand-written is fine.
-// ============================================================================
-
 export type UserRole = 'customer' | 'vendor' | 'admin';
 export type KycStatus = 'not_submitted' | 'pending' | 'approved' | 'rejected';
 export type VendorStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
@@ -23,7 +16,7 @@ export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded' | 'partia
 
 export interface User {
   id: string;
-  clerk_id: string;
+  auth_id: string;          // Supabase auth.users UUID (was clerk_id)
   email: string | null;
   phone: string | null;
   first_name: string | null;
@@ -102,7 +95,6 @@ export interface Bike {
   updated_at: string;
 }
 
-// Convenience shape when joining bike + model + packages + vendor
 export interface BikeWithDetails extends Bike {
   model: BikeModel & { packages: BikeModelPackage[] };
   vendor?: Pick<Vendor, 'id' | 'business_name' | 'pickup_area'> | null;
