@@ -28,7 +28,7 @@ export const MOCK_USER = {
   phone: '+919000000000',
   first_name: 'Dev',
   last_name: 'User',
-  role: 'customer' as 'customer' | 'vendor' | 'admin',
+  role: 'admin' as 'customer' | 'vendor' | 'admin',
   kyc_status: 'approved' as const,
   dl_number: 'TS0120230001234',
   dl_photo_url: null,

@@ -57,7 +57,7 @@ export function AdminTabs({ data }: { data: any }) {
 
       {/* Panel content */}
       {tab === 'vendors' && <VendorsTab vendors={data.vendors} />}
-      {tab === 'bikes' && <BikesTab bikes={data.pending_bikes} />}
+      {tab === 'bikes' && <BikesTab pendingBikes={data.pending_bikes} allBikes={data.all_bikes ?? []} models={data.bike_models ?? []} />}
       {tab === 'kyc' && <KycTab users={data.pending_kyc} />}
       {tab === 'bookings' && <BookingsTab bookings={data.bookings} />}
     </>

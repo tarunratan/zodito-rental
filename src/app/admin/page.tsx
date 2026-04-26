@@ -37,7 +37,7 @@ async function fetchAdminData() {
 
   const supabase = createSupabaseAdmin();
 
-  const [statsData, vendors, bikes, kyc, bookings] = await Promise.all([
+  const [statsData, vendors, pendingBikes, allBikes, kyc, bookings, models] = await Promise.all([
     supabase.rpc('admin_stats').maybeSingle().then(r => r.data).catch(() => null),
     supabase
       .from('vendors')
@@ -46,9 +46,13 @@ async function fetchAdminData() {
       .limit(50),
     supabase
       .from('bikes')
-      .select('*, model:bike_models!inner(display_name, cc), vendor:vendors(business_name)')
+      .select('*, model:bike_models!inner(id, display_name, cc), vendor:vendors(business_name)')
       .eq('listing_status', 'pending_approval')
       .order('created_at', { ascending: true }),
+    supabase
+      .from('bikes')
+      .select('*, model:bike_models!inner(id, display_name, name, category, cc), vendor:vendors(id, business_name, pickup_area)')
+      .order('created_at', { ascending: false }),
     supabase
       .from('users')
       .select('id, first_name, last_name, email, phone, dl_number, kyc_status, kyc_submitted_at, dl_photo_url, aadhaar_photo_url, selfie_with_dl_photo_url, kyc_rejection_reason')
@@ -63,12 +67,16 @@ async function fetchAdminData() {
       `)
       .order('created_at', { ascending: false })
       .limit(100),
+    supabase
+      .from('bike_models')
+      .select('id, name, display_name, category, cc')
+      .order('category').order('cc'),
   ]);
 
   // Fallback stats if RPC doesn't exist
   const stats = statsData ?? {
     pending_vendors: vendors.data?.filter(v => v.status === 'pending').length ?? 0,
-    pending_bikes: bikes.data?.length ?? 0,
+    pending_bikes: pendingBikes.data?.length ?? 0,
     pending_kyc: kyc.data?.length ?? 0,
     active_bookings: bookings.data?.filter(b => ['confirmed', 'ongoing'].includes(b.status)).length ?? 0,
   };
@@ -76,7 +84,9 @@ async function fetchAdminData() {
   return {
     stats,
     vendors: vendors.data ?? [],
-    pending_bikes: bikes.data ?? [],
+    pending_bikes: pendingBikes.data ?? [],
+    all_bikes: allBikes.data ?? [],
+    bike_models: models.data ?? [],
     pending_kyc: kyc.data ?? [],
     bookings: bookings.data ?? [],
   };
