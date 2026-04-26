@@ -13,6 +13,9 @@ const schema = z.object({
   color_hex: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   year: z.number().int().min(2000).max(2030),
   emoji: z.string().max(4),
+  image_url: z.string().url().optional().nullable(),
+  image_url_2: z.string().url().optional().nullable(),
+  image_url_3: z.string().url().optional().nullable(),
 });
 
 export async function POST(req: NextRequest) {
@@ -52,8 +55,11 @@ export async function POST(req: NextRequest) {
     color_hex: body.color_hex || null,
     year: body.year,
     emoji: body.emoji,
+    image_url: body.image_url || null,
+    image_url_2: body.image_url_2 || null,
+    image_url_3: body.image_url_3 || null,
     listing_status: 'pending_approval',
-    is_active: false,  // goes live when admin approves
+    is_active: false,
   });
 
   if (error) {

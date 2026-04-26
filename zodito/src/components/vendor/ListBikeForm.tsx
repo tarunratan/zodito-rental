@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { ImageUpload } from '@/components/shared/ImageUpload';
 
 type Model = {
   id: string;
@@ -20,6 +21,9 @@ export function ListBikeForm({ models }: { models: Model[] }) {
     color_hex: '#1a1a1a',
     year: new Date().getFullYear(),
     emoji: '🏍️',
+    image_url: null as string | null,
+    image_url_2: null as string | null,
+    image_url_3: null as string | null,
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,13 +47,13 @@ export function ListBikeForm({ models }: { models: Model[] }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
       router.push('/vendor');
+      router.refresh();
     } catch (e: any) {
       setError(e.message);
       setSubmitting(false);
     }
   }
 
-  // Group models by category
   const grouped = models.reduce<Record<string, Model[]>>((acc, m) => {
     (acc[m.category] ??= []).push(m);
     return acc;
@@ -151,6 +155,7 @@ export function ListBikeForm({ models }: { models: Model[] }) {
             {['🛵', '🏍️', '🏁'].map(em => (
               <button
                 key={em}
+                type="button"
                 onClick={() => update('emoji', em)}
                 className={`text-3xl p-2 rounded-lg border transition-all ${
                   form.emoji === em ? 'border-accent bg-accent/5' : 'border-border hover:border-accent/50'
@@ -161,6 +166,31 @@ export function ListBikeForm({ models }: { models: Model[] }) {
             ))}
           </div>
         </Field>
+      </div>
+
+      <div className="card p-5 space-y-3">
+        <h3 className="font-display font-semibold text-base">Photos</h3>
+        <p className="text-xs text-muted">Upload up to 3 photos. First photo is the cover image.</p>
+        <div className="grid grid-cols-3 gap-3">
+          <ImageUpload
+            label="Photo 1 (cover)"
+            currentUrl={form.image_url}
+            onUploaded={url => update('image_url', url)}
+            onRemoved={() => update('image_url', null)}
+          />
+          <ImageUpload
+            label="Photo 2"
+            currentUrl={form.image_url_2}
+            onUploaded={url => update('image_url_2', url)}
+            onRemoved={() => update('image_url_2', null)}
+          />
+          <ImageUpload
+            label="Photo 3"
+            currentUrl={form.image_url_3}
+            onUploaded={url => update('image_url_3', url)}
+            onRemoved={() => update('image_url_3', null)}
+          />
+        </div>
       </div>
 
       {error && (
@@ -178,6 +208,7 @@ export function ListBikeForm({ models }: { models: Model[] }) {
       </div>
 
       <button
+        type="button"
         onClick={onSubmit}
         disabled={!canSubmit}
         className="btn-accent w-full text-base py-3 disabled:bg-border disabled:text-muted disabled:cursor-not-allowed"

@@ -1,16 +1,34 @@
-export default function AdminPlaceholder() {
+import { redirect } from 'next/navigation';
+import { getCurrentAppUser } from '@/lib/auth';
+import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { AdminBikeManager } from './AdminBikeManager';
+
+export const dynamic = 'force-dynamic';
+
+export default async function AdminPage() {
+  const user = await getCurrentAppUser();
+  if (!user || user.role !== 'admin') redirect('/');
+
+  const supabase = createSupabaseAdmin();
+  const [{ data: bikes }, { data: models }] = await Promise.all([
+    supabase
+      .from('bikes')
+      .select('*, model:bike_models(id, display_name, name, category, cc), vendor:vendors(id, business_name, pickup_area)')
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('bike_models')
+      .select('id, display_name, name, category, cc')
+      .order('category')
+      .order('cc'),
+  ]);
+
   return (
-    <section className="max-w-3xl mx-auto px-6 py-20 text-center">
-      <div className="text-7xl mb-6">🛠️</div>
-      <h1 className="font-display font-bold text-3xl md:text-4xl tracking-tight mb-3">
-        Admin Panel
-      </h1>
-      <p className="text-muted text-base leading-relaxed max-w-md mx-auto">
-        Coming in Chunk 3. Approve bikes, vendors, KYC &amp; manage bookings here.
-      </p>
-      <div className="mt-8 inline-flex items-center gap-2 bg-warning/10 border border-warning/30 rounded-full px-4 py-2 text-xs font-semibold text-warning">
-        🚧 Under construction
+    <div className="max-w-6xl mx-auto px-4 py-8">
+      <div className="mb-6">
+        <h1 className="font-display font-bold text-2xl tracking-tight">Admin Panel</h1>
+        <p className="text-muted text-sm mt-1">Manage bikes, vendors, and listings</p>
       </div>
-    </section>
+      <AdminBikeManager initialBikes={bikes ?? []} models={models ?? []} />
+    </div>
   );
 }
