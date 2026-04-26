@@ -4,6 +4,7 @@ import { formatINR, formatDateTime } from '@/lib/utils';
 import { TIER_LABELS } from '@/lib/pricing';
 import type { PriceBreakdown } from '@/lib/pricing';
 import type { PackageTier } from '@/lib/supabase/types';
+import { CouponInput, type AppliedCoupon } from './CouponInput';
 
 type Bike = any;
 
@@ -13,12 +14,16 @@ export function OrderSummary({
   pickupTs,
   endTs,
   tier,
+  appliedCoupon,
+  onCouponApply,
 }: {
   bike: Bike;
   breakdown: PriceBreakdown | null;
   pickupTs: Date | null;
   endTs: Date | null;
   tier: PackageTier;
+  appliedCoupon: AppliedCoupon | null;
+  onCouponApply: (coupon: AppliedCoupon | null) => void;
 }) {
   return (
     <div className="card p-5">
@@ -54,12 +59,31 @@ export function OrderSummary({
           )}
           <Row label="Subtotal" value={formatINR(breakdown.subtotal)} muted />
           <Row label="GST (18%)" value={formatINR(breakdown.gstAmount)} muted />
+          {breakdown.couponDiscount > 0 && (
+            <Row
+              label={appliedCoupon ? `Coupon (${appliedCoupon.code})` : 'Coupon discount'}
+              value={`−${formatINR(breakdown.couponDiscount)}`}
+              highlight
+            />
+          )}
           <Row label="Security deposit" value={formatINR(breakdown.securityDeposit)} muted note="refundable" />
         </div>
       )}
 
+      {/* Coupon input — only show when a breakdown exists */}
       {breakdown && (
-        <div className="pt-3 border-t border-border flex items-baseline justify-between">
+        <div className="pb-3 border-b border-border">
+          <CouponInput
+            subtotal={breakdown.subtotal}
+            gstAmount={breakdown.gstAmount}
+            applied={appliedCoupon}
+            onApply={onCouponApply}
+          />
+        </div>
+      )}
+
+      {breakdown && (
+        <div className="pt-3 flex items-baseline justify-between">
           <span className="font-display font-semibold">Total payable</span>
           <span className="font-display font-bold text-xl text-accent">
             {formatINR(breakdown.totalAmount)}
@@ -84,15 +108,17 @@ export function OrderSummary({
 }
 
 function Row({
-  label, value, small, muted, note,
-}: { label: string; value: string; small?: boolean; muted?: boolean; note?: string }) {
+  label, value, small, muted, highlight, note,
+}: { label: string; value: string; small?: boolean; muted?: boolean; highlight?: boolean; note?: string }) {
   return (
     <div className={`flex justify-between items-baseline ${small ? 'text-xs' : ''}`}>
-      <span className={muted ? 'text-muted' : 'text-primary'}>
+      <span className={highlight ? 'text-success font-medium' : muted ? 'text-muted' : 'text-primary'}>
         {label}
         {note && <span className="text-[10px] text-muted ml-1">({note})</span>}
       </span>
-      <span className={muted ? 'text-muted' : 'font-semibold'}>{value}</span>
+      <span className={highlight ? 'text-success font-semibold' : muted ? 'text-muted' : 'font-semibold'}>
+        {value}
+      </span>
     </div>
   );
 }

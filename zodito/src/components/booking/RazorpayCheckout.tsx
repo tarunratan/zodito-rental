@@ -16,6 +16,7 @@ export function RazorpayCheckout({
   tier,
   pickupTs,
   extraHelmets,
+  couponCode,
   disabled,
   submitting,
   setSubmitting,
@@ -26,6 +27,7 @@ export function RazorpayCheckout({
   tier: PackageTier;
   pickupTs: Date | null;
   extraHelmets: number;
+  couponCode: string | null;
   disabled: boolean;
   submitting: boolean;
   setSubmitting: (b: boolean) => void;
@@ -50,6 +52,7 @@ export function RazorpayCheckout({
           tier,
           start_ts: pickupTs.toISOString(),
           extra_helmet_count: extraHelmets,
+          ...(couponCode ? { coupon_code: couponCode } : {}),
         }),
       });
 

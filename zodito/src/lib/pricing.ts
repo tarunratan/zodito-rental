@@ -66,7 +66,8 @@ export interface PriceBreakdown {
   securityDeposit: number;
   subtotal: number;           // base + helmet (before tax)
   gstAmount: number;
-  totalAmount: number;        // subtotal + gst + deposit  (what customer pays)
+  couponDiscount: number;     // 0 if no coupon
+  totalAmount: number;        // subtotal + gst - couponDiscount + deposit
   tier: PackageTier;
 }
 
@@ -81,8 +82,9 @@ export function calculatePrice(params: {
   tier: PackageTier;
   extraHelmetCount?: number;
   hasOriginalDL?: boolean;
+  couponDiscount?: number;
 }): PriceBreakdown {
-  const { packages, tier, extraHelmetCount = 0, hasOriginalDL = true } = params;
+  const { packages, tier, extraHelmetCount = 0, hasOriginalDL = true, couponDiscount: rawDiscount = 0 } = params;
 
   const pkg = packages.find(p => p.tier === tier);
   if (!pkg) {
@@ -97,7 +99,9 @@ export function calculatePrice(params: {
 
   const subtotal = basePrice + extraHelmetCharge;
   const gstAmount = round2(subtotal * GST_RATE);
-  const totalAmount = round2(subtotal + gstAmount + securityDeposit);
+  // Coupon can only reduce the taxable portion, never the deposit
+  const couponDiscount = Math.min(round2(rawDiscount), round2(subtotal + gstAmount));
+  const totalAmount = round2(subtotal + gstAmount - couponDiscount + securityDeposit);
 
   return {
     basePrice,
@@ -107,9 +111,24 @@ export function calculatePrice(params: {
     securityDeposit,
     subtotal,
     gstAmount,
+    couponDiscount,
     totalAmount,
     tier,
   };
+}
+
+/** Compute coupon discount amount given coupon type, value, and the price breakdown. */
+export function computeCouponDiscount(params: {
+  discount_type: 'percent' | 'fixed' | 'gst_waiver';
+  discount_value: number;
+  subtotal: number;
+  gstAmount: number;
+}): number {
+  const { discount_type, discount_value, subtotal, gstAmount } = params;
+  if (discount_type === 'gst_waiver') return round2(gstAmount);
+  if (discount_type === 'percent') return round2(subtotal * discount_value / 100);
+  // fixed — cap at taxable portion
+  return round2(Math.min(discount_value, subtotal + gstAmount));
 }
 
 /**

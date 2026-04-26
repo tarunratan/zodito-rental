@@ -1,27 +1,20 @@
 import { redirect } from 'next/navigation';
 import { getCurrentAppUser } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
-import { AdminBikeManager } from './AdminBikeManager';
-import { AdminNav } from './AdminNav';
+import { AdminCouponManager } from './AdminCouponManager';
+import { AdminNav } from '../AdminNav';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AdminPage() {
+export default async function AdminCouponsPage() {
   const user = await getCurrentAppUser();
   if (!user || user.role !== 'admin') redirect('/');
 
   const supabase = createSupabaseAdmin();
-  const [{ data: bikes }, { data: models }] = await Promise.all([
-    supabase
-      .from('bikes')
-      .select('*, model:bike_models(id, display_name, name, category, cc), vendor:vendors(id, business_name, pickup_area)')
-      .order('created_at', { ascending: false }),
-    supabase
-      .from('bike_models')
-      .select('id, display_name, name, category, cc')
-      .order('category')
-      .order('cc'),
-  ]);
+  const { data: coupons } = await supabase
+    .from('coupons')
+    .select('*')
+    .order('created_at', { ascending: false });
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
@@ -30,7 +23,7 @@ export default async function AdminPage() {
         <p className="text-muted text-sm mt-1">Manage bikes, vendors, and listings</p>
       </div>
       <AdminNav />
-      <AdminBikeManager initialBikes={bikes ?? []} models={models ?? []} />
+      <AdminCouponManager initialCoupons={coupons ?? []} />
     </div>
   );
 }

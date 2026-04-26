@@ -9,6 +9,7 @@ import {
   isWithinStoreHours,
   effectiveModelIdForDate,
   splitCommission,
+  computeCouponDiscount,
 } from '@/lib/pricing';
 import { isMockMode, mockBookingsStore } from '@/lib/mock';
 import type { PackageTier } from '@/lib/supabase/types';
@@ -20,6 +21,7 @@ const bodySchema = z.object({
   tier: z.enum(['12hr', '24hr', '7day', '15day', '30day']),
   start_ts: z.string(),  // ISO
   extra_helmet_count: z.number().int().min(0).max(3).default(0),
+  coupon_code: z.string().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -99,15 +101,60 @@ export async function POST(req: NextRequest) {
     if (weekendPackages) packages = weekendPackages;
   }
 
-  // --- 7. Price calculation (server-side; authoritative)
-  const breakdown = calculatePrice({
+  // --- 7. Resolve coupon (server-side re-validation; authoritative)
+  let couponRow: { id: string; code: string; discount_type: string; discount_value: number } | null = null;
+  if (body.coupon_code) {
+    const { data: c } = await supabase
+      .from('coupons')
+      .select('id, code, discount_type, discount_value, max_uses, used_count, expires_at, is_active')
+      .eq('code', body.coupon_code.toUpperCase().trim())
+      .maybeSingle();
+
+    if (c && c.is_active &&
+        !(c.expires_at && new Date(c.expires_at) < new Date()) &&
+        !(c.max_uses !== null && c.used_count >= c.max_uses)) {
+      // Check user hasn't used it already
+      const { data: used } = await supabase
+        .from('coupon_uses')
+        .select('id')
+        .eq('coupon_id', c.id)
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (!used) {
+        couponRow = { id: c.id, code: c.code, discount_type: c.discount_type, discount_value: Number(c.discount_value) };
+      }
+    }
+  }
+
+  // --- 8. Price calculation (server-side; authoritative)
+  // First compute without coupon to get gstAmount, then apply coupon
+  const rawBreakdown = calculatePrice({
     packages,
     tier: body.tier as PackageTier,
     extraHelmetCount: body.extra_helmet_count,
-    hasOriginalDL: true,  // assume yes at booking; adjusted at pickup if no
+    hasOriginalDL: true,
   });
 
-  // --- 8. Commission split (only for vendor bikes)
+  const couponDiscountAmount = couponRow
+    ? computeCouponDiscount({
+        discount_type: couponRow.discount_type as any,
+        discount_value: couponRow.discount_value,
+        subtotal: rawBreakdown.subtotal,
+        gstAmount: rawBreakdown.gstAmount,
+      })
+    : 0;
+
+  const breakdown = couponDiscountAmount > 0
+    ? calculatePrice({
+        packages,
+        tier: body.tier as PackageTier,
+        extraHelmetCount: body.extra_helmet_count,
+        hasOriginalDL: true,
+        couponDiscount: couponDiscountAmount,
+      })
+    : rawBreakdown;
+
+  // --- 9. Commission split (only for vendor bikes)
   let platform_commission = breakdown.extraHelmetCharge;  // platform keeps all helmet revenue
   let vendor_payout = 0;
   if (bike.owner_type === 'vendor') {
@@ -124,7 +171,7 @@ export async function POST(req: NextRequest) {
     platform_commission = breakdown.basePrice + breakdown.extraHelmetCharge;
   }
 
-  // --- 9. Insert booking. DB exclusion constraint will reject overlaps atomically.
+  // --- 10. Insert booking. DB exclusion constraint will reject overlaps atomically.
   const { data: booking, error: insertErr } = await supabase
     .from('bookings')
     .insert({
@@ -140,6 +187,9 @@ export async function POST(req: NextRequest) {
       security_deposit: breakdown.securityDeposit,
       subtotal: breakdown.subtotal,
       gst_amount: breakdown.gstAmount,
+      coupon_id: couponRow?.id ?? null,
+      coupon_code: couponRow?.code ?? null,
+      coupon_discount: breakdown.couponDiscount,
       total_amount: breakdown.totalAmount,
       platform_commission,
       vendor_payout,
@@ -151,7 +201,6 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (insertErr) {
-    // 23P01 = exclusion violation (overlap). Friendly message.
     if (insertErr.code === '23P01') {
       return NextResponse.json(
         { error: 'This bike is already booked for that time slot. Try a different time.' },
@@ -162,7 +211,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Could not create booking. Please try again.' }, { status: 500 });
   }
 
-  // --- 10. Create Razorpay order
+  // --- 11. Record coupon usage (fire-and-forget)
+  if (couponRow && breakdown.couponDiscount > 0) {
+    supabase.from('coupon_uses').insert({
+      coupon_id: couponRow.id,
+      user_id: user.id,
+      booking_id: booking.id,
+      discount_amount: breakdown.couponDiscount,
+    }).then(() =>
+      supabase.rpc('increment_coupon_used_count', { p_coupon_id: couponRow!.id })
+    ).catch(e => console.error('Coupon usage tracking error:', e));
+  }
+
+  // --- 12. Create Razorpay order
   try {
     const order = await createRazorpayOrder({
       amountRupees: breakdown.totalAmount,
