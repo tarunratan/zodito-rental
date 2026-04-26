@@ -24,6 +24,7 @@ export default function SignUpPage() {
       email: form.email,
       password: form.password,
       options: {
+        emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://zoditorentals.com'}/`,
         data: {
           first_name: form.first_name,
           last_name: form.last_name,
