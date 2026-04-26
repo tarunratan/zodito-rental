@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode } from '@/lib/mock';
+import { sendKycApproved, sendKycRejected } from '@/lib/email';
 
 export const runtime = 'nodejs';
 
@@ -23,6 +24,12 @@ export async function POST(req: NextRequest) {
     if (isMockMode()) return NextResponse.json({ ok: true, mock: true });
 
     const supabase = createSupabaseAdmin();
+    const { data: targetUser } = await supabase
+      .from('users')
+      .select('email, first_name, last_name')
+      .eq('id', user_id)
+      .maybeSingle();
+
     const { error } = await supabase
       .from('users')
       .update({
@@ -34,6 +41,18 @@ export async function POST(req: NextRequest) {
       .eq('id', user_id);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    // Send email notification (fire-and-forget)
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://zoditorentals.com';
+    const name = [targetUser?.first_name, targetUser?.last_name].filter(Boolean).join(' ') || '';
+    if (targetUser?.email) {
+      if (action === 'approve') {
+        sendKycApproved({ to: targetUser.email, name, appUrl }).catch(console.error);
+      } else {
+        sendKycRejected({ to: targetUser.email, name, reason: reason || 'Documents were unclear or incomplete', appUrl }).catch(console.error);
+      }
+    }
+
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: 'Admin only' }, { status: 403 });

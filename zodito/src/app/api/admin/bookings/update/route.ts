@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode, mockBookingsStore } from '@/lib/mock';
+import { sendBookingStatusUpdate } from '@/lib/email';
 
 export const runtime = 'nodejs';
 
@@ -46,19 +47,38 @@ export async function POST(req: NextRequest) {
         if (reason) updates.cancellation_reason = reason;
         break;
       case 'refunded':
-        // Refund only changes payment_status, not booking status
         updates.payment_status = 'refunded';
         updates.deposit_refunded_at = now;
         if (reason) updates.notes = reason;
         break;
     }
 
-    const { error } = await supabase
-      .from('bookings')
-      .update(updates)
-      .eq('id', booking_id);
-
+    const { error } = await supabase.from('bookings').update(updates).eq('id', booking_id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    // Send email (fire-and-forget)
+    const { data: booking } = await supabase
+      .from('bookings')
+      .select('booking_number, user:users(email, first_name, last_name)')
+      .eq('id', booking_id)
+      .maybeSingle();
+
+    if (booking) {
+      const user = booking.user as any;
+      if (user?.email) {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://zoditorentals.com';
+        const name = [user.first_name, user.last_name].filter(Boolean).join(' ') || '';
+        sendBookingStatusUpdate({
+          to: user.email,
+          name,
+          bookingNumber: booking.booking_number,
+          status,
+          notes: reason,
+          appUrl,
+        }).catch(console.error);
+      }
+    }
+
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: 'Admin only' }, { status: 403 });

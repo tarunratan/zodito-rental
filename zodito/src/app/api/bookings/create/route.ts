@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
   const { data: bike, error: bikeErr } = await supabase
     .from('bikes')
     .select(`
-      id, owner_type, vendor_id,
+      id, owner_type, vendor_id, frozen_from, frozen_until,
       model:bike_models!inner(
         id, has_weekend_override, weekend_override_model_id,
         packages:bike_model_packages(tier, price, km_limit)
@@ -87,6 +87,17 @@ export async function POST(req: NextRequest) {
 
   if (bikeErr || !bike) {
     return NextResponse.json({ error: 'Bike not available for booking' }, { status: 404 });
+  }
+
+  // Check freeze window
+  if (bike.frozen_until && new Date(bike.frozen_until) > startTs) {
+    const frozenFrom = bike.frozen_from ? new Date(bike.frozen_from) : null;
+    if (!frozenFrom || frozenFrom <= endTs) {
+      return NextResponse.json(
+        { error: 'This bike is currently under maintenance and unavailable for the selected dates.' },
+        { status: 409 }
+      );
+    }
   }
 
   // --- 6. Resolve effective packages (weekend override)

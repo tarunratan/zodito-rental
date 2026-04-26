@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode } from '@/lib/mock';
+import { sendVendorApproved, sendVendorRejected } from '@/lib/email';
 
 export const runtime = 'nodejs';
 
@@ -27,7 +28,6 @@ export async function POST(req: NextRequest) {
 
   const supabase = createSupabaseAdmin();
 
-  // Update vendor row
   const { data: vendor, error } = await supabase
     .from('vendors')
     .update({
@@ -36,19 +36,36 @@ export async function POST(req: NextRequest) {
       approved_at: action === 'approve' ? new Date().toISOString() : null,
     })
     .eq('id', vendor_id)
-    .select('user_id')
+    .select('user_id, business_name')
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // If approving, promote the user to 'vendor' role
   if (action === 'approve' && vendor) {
     await supabase
       .from('users')
       .update({ role: 'vendor' })
       .eq('id', vendor.user_id)
-      // don't downgrade admins
       .neq('role', 'admin');
+  }
+
+  // Send email (fire-and-forget)
+  if (vendor?.user_id) {
+    const { data: u } = await supabase
+      .from('users')
+      .select('email, first_name, last_name')
+      .eq('id', vendor.user_id)
+      .maybeSingle();
+    if (u?.email) {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://zoditorentals.com';
+      const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || '';
+      const businessName = vendor.business_name;
+      if (action === 'approve') {
+        sendVendorApproved({ to: u.email, name, businessName, appUrl }).catch(console.error);
+      } else {
+        sendVendorRejected({ to: u.email, name, businessName, notes: notes || '', appUrl }).catch(console.error);
+      }
+    }
   }
 
   return NextResponse.json({ ok: true });

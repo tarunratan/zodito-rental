@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { verifyPaymentSignature } from '@/lib/razorpay';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode } from '@/lib/mock';
+import { sendBookingConfirmation } from '@/lib/email';
 
 export const runtime = 'nodejs';
 
@@ -22,8 +23,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, mock: true });
   }
 
-  // Verify signature. If this fails, the webhook will never confirm it either,
-  // so we mark the booking as failed right here.
   const valid = verifyPaymentSignature({
     razorpay_order_id: body.razorpay_order_id,
     razorpay_payment_id: body.razorpay_payment_id,
@@ -40,9 +39,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid payment signature' }, { status: 400 });
   }
 
-  // Mark booking confirmed. The webhook is the authoritative source and will
-  // overwrite this if anything changes, but for UX we flip immediately so the
-  // user sees "Confirmed" right away.
   const { error } = await supabase
     .from('bookings')
     .update({
@@ -56,6 +52,36 @@ export async function POST(req: NextRequest) {
   if (error) {
     console.error('verify-payment update error:', error);
     return NextResponse.json({ error: 'Update failed' }, { status: 500 });
+  }
+
+  // Send booking confirmation email (fire-and-forget)
+  const { data: booking } = await supabase
+    .from('bookings')
+    .select(`
+      booking_number, total_amount, package_tier, start_ts, end_ts,
+      user:users(email, first_name, last_name),
+      bike:bikes(emoji, model:bike_models(display_name))
+    `)
+    .eq('id', body.booking_id)
+    .maybeSingle();
+
+  if (booking) {
+    const user = booking.user as any;
+    const bike = booking.bike as any;
+    if (user?.email) {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://zoditorentals.com';
+      sendBookingConfirmation({
+        to: user.email,
+        name: [user.first_name, user.last_name].filter(Boolean).join(' ') || '',
+        bookingNumber: booking.booking_number,
+        bikeName: `${bike?.emoji ?? '🏍️'} ${bike?.model?.display_name ?? 'Bike'}`,
+        tier: booking.package_tier,
+        startTs: booking.start_ts,
+        endTs: booking.end_ts,
+        total: Number(booking.total_amount),
+        appUrl,
+      }).catch(console.error);
+    }
   }
 
   return NextResponse.json({ ok: true });

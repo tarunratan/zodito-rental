@@ -19,6 +19,9 @@ type Bike = {
   image_url_2: string | null;
   image_url_3: string | null;
   rejection_reason: string | null;
+  frozen_from: string | null;
+  frozen_until: string | null;
+  freeze_reason: string | null;
   created_at: string;
   model: Model | null;
   vendor: { id: string; business_name: string; pickup_area: string } | null;
@@ -54,6 +57,8 @@ export function AdminBikeManager({ initialBikes, models }: { initialBikes: Bike[
   const [rejectModal, setRejectModal] = useState<{ id: string } | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [freezeModal, setFreezeModal] = useState<{ id: string; name: string; frozen: boolean } | null>(null);
+  const [freezeForm, setFreezeForm] = useState({ frozen_from: '', frozen_until: '', freeze_reason: '' });
 
   function upd<K extends keyof typeof form>(k: K, v: any) {
     setForm(f => ({ ...f, [k]: v }));
@@ -128,6 +133,24 @@ export function AdminBikeManager({ initialBikes, models }: { initialBikes: Bike[
     if (res.ok) await refreshBikes();
     setRejectModal(null);
     setRejectReason('');
+  }
+
+  async function toggleFreeze(bike_id: string, unfreeze: boolean) {
+    const body = unfreeze
+      ? { unfreeze: true }
+      : {
+          frozen_from: freezeForm.frozen_from || new Date().toISOString(),
+          frozen_until: freezeForm.frozen_until,
+          freeze_reason: freezeForm.freeze_reason,
+        };
+    const res = await fetch(`/api/admin/bikes/${bike_id}/freeze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) await refreshBikes();
+    setFreezeModal(null);
+    setFreezeForm({ frozen_from: '', frozen_until: '', freeze_reason: '' });
   }
 
   async function refreshBikes() {
@@ -219,9 +242,16 @@ export function AdminBikeManager({ initialBikes, models }: { initialBikes: Bike[
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${STATUS_COLORS[bike.listing_status] ?? ''}`}>
-                        {bike.listing_status.replace('_', ' ')}
-                      </span>
+                      <div className="flex flex-col gap-1">
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full w-fit ${STATUS_COLORS[bike.listing_status] ?? ''}`}>
+                          {bike.listing_status.replace('_', ' ')}
+                        </span>
+                        {bike.frozen_until && new Date(bike.frozen_until) > new Date() && (
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full w-fit bg-info/10 text-info">
+                            🔒 frozen
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-2">
@@ -247,6 +277,28 @@ export function AdminBikeManager({ initialBikes, models }: { initialBikes: Bike[
                         >
                           Edit
                         </button>
+                        {bike.listing_status === 'approved' && (
+                          bike.frozen_until && new Date(bike.frozen_until) > new Date() ? (
+                            <button
+                              onClick={() => toggleFreeze(bike.id, true)}
+                              className="text-xs px-2 py-1 bg-success/10 text-success rounded hover:bg-success/20 transition-colors"
+                            >
+                              Unfreeze
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                const today = new Date().toISOString().split('T')[0];
+                                const nextWeek = new Date(Date.now() + 7 * 864e5).toISOString().split('T')[0];
+                                setFreezeForm({ frozen_from: today, frozen_until: nextWeek + 'T23:59', freeze_reason: '' });
+                                setFreezeModal({ id: bike.id, name: bike.model?.display_name ?? 'Bike', frozen: false });
+                              }}
+                              className="text-xs px-2 py-1 bg-info/10 text-info rounded hover:bg-info/20 transition-colors"
+                            >
+                              Freeze
+                            </button>
+                          )
+                        )}
                         <button
                           onClick={() => setDeleteConfirm(bike.id)}
                           className="text-xs px-2 py-1 bg-danger/10 text-danger rounded hover:bg-danger/20 transition-colors"
@@ -427,6 +479,38 @@ export function AdminBikeManager({ initialBikes, models }: { initialBikes: Bike[
                 className="px-4 py-2 text-sm bg-danger text-white rounded-lg hover:bg-danger/90"
               >
                 Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Freeze modal */}
+      {freezeModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-primary rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-4">
+            <h3 className="font-semibold">Freeze — {freezeModal.name}</h3>
+            <p className="text-sm text-muted">Block bookings for this bike during the specified period (maintenance, repair, etc.).</p>
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">From *</label>
+              <input type="datetime-local" value={freezeForm.frozen_from} onChange={e => setFreezeForm(f => ({ ...f, frozen_from: e.target.value }))} className="input-field w-full" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">Until *</label>
+              <input type="datetime-local" value={freezeForm.frozen_until} onChange={e => setFreezeForm(f => ({ ...f, frozen_until: e.target.value }))} className="input-field w-full" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">Reason *</label>
+              <input value={freezeForm.freeze_reason} onChange={e => setFreezeForm(f => ({ ...f, freeze_reason: e.target.value }))} className="input-field w-full" placeholder="e.g. Tyre replacement" />
+            </div>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setFreezeModal(null)} className="border border-border rounded-lg hover:bg-border/40 text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={() => toggleFreeze(freezeModal.id, false)}
+                disabled={!freezeForm.frozen_until || !freezeForm.freeze_reason}
+                className="px-4 py-2 text-sm bg-info text-white rounded-lg hover:bg-info/90 disabled:opacity-50"
+              >
+                Freeze Bike
               </button>
             </div>
           </div>

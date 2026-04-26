@@ -43,12 +43,12 @@ create policy "Active coupons readable by all" on coupons
 
 create policy "Admin full access to coupons" on coupons
   for all using (
-    exists (select 1 from users where clerk_id = (auth.jwt() ->> 'sub') and role = 'admin')
+    exists (select 1 from users where auth_id = auth.uid()::text and role = 'admin')
   );
 
 create policy "Users read own coupon uses" on coupon_uses
   for select using (
-    user_id = (select id from users where clerk_id = (auth.jwt() ->> 'sub'))
+    user_id = (select id from users where auth_id = auth.uid()::text)
   );
 
 -- Helper function to safely increment used_count
