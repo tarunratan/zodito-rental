@@ -34,7 +34,7 @@ const STATUS_PILL: Record<string, string> = {
 };
 
 const CAT_LABELS: Record<string, string> = {
-  scooter:      'Scooters',
+  scooter:      'Scooters (≤125cc)',
   bike_sub150:  '125–150cc',
   bike_plus150: '150cc+',
 };
@@ -43,47 +43,71 @@ function emojiForCategory(cat: string) {
   return cat === 'scooter' ? '🛵' : cat === 'bike_plus150' ? '🏁' : '🏍️';
 }
 
-const EMPTY_FORM = {
-  model_id: '',
+const EMPTY_BIKE_FORM = {
+  model_id:            '',
   registration_number: '',
-  color: '',
-  year: new Date().getFullYear(),
-  notes: '',
+  color:               '',
+  year:                new Date().getFullYear(),
+  notes:               '',
   image_url:   null as string | null,
   image_url_2: null as string | null,
   image_url_3: null as string | null,
 };
 
+const EMPTY_MODEL_FORM = {
+  display_name: '',
+  category:     'scooter' as 'scooter' | 'bike_sub150' | 'bike_plus150',
+  cc:           110,
+  price_12hr:   349,
+  price_24hr:   499,
+  price_7day:   2200,
+};
+
 export function BikesTab({
   pendingBikes,
   allBikes,
-  models,
+  models: initialModels,
 }: {
   pendingBikes: Bike[];
   allBikes: Bike[];
   models: Model[];
 }) {
   const router = useRouter();
-  const [subTab, setSubTab]         = useState<'all' | 'pending'>('all');
-  const [showForm, setShowForm]     = useState(false);
-  const [editBike, setEditBike]     = useState<Bike | null>(null);
-  const [form, setForm]             = useState({ ...EMPTY_FORM });
-  const [saving, setSaving]         = useState(false);
-  const [formError, setFormError]   = useState<string | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-  const [rejectTarget, setRejectTarget]   = useState<string | null>(null);
-  const [rejectReason, setRejectReason]   = useState('');
+
+  // local models list so newly created models appear without a page reload
+  const [models, setModels]       = useState<Model[]>(initialModels);
+
+  const [subTab, setSubTab]       = useState<'all' | 'pending'>('all');
+  const [showForm, setShowForm]   = useState(false);
+  const [editBike, setEditBike]   = useState<Bike | null>(null);
+  const [form, setForm]           = useState({ ...EMPTY_BIKE_FORM });
+  const [saving, setSaving]       = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // New-model inline panel state
+  const [showNewModel, setShowNewModel]       = useState(false);
+  const [modelForm, setModelForm]             = useState({ ...EMPTY_MODEL_FORM });
+  const [savingModel, setSavingModel]         = useState(false);
+  const [modelError, setModelError]           = useState<string | null>(null);
+
+  const [deleteConfirm, setDeleteConfirm]     = useState<string | null>(null);
+  const [rejectTarget, setRejectTarget]       = useState<string | null>(null);
+  const [rejectReason, setRejectReason]       = useState('');
 
   const selectedModel = models.find(m => m.id === form.model_id) ?? null;
 
   function upd<K extends keyof typeof form>(k: K, v: any) {
     setForm(f => ({ ...f, [k]: v }));
   }
+  function updModel<K extends keyof typeof modelForm>(k: K, v: any) {
+    setModelForm(f => ({ ...f, [k]: v }));
+  }
 
   function openAdd() {
     setEditBike(null);
-    setForm({ ...EMPTY_FORM });
+    setForm({ ...EMPTY_BIKE_FORM });
     setFormError(null);
+    setShowNewModel(false);
     setShowForm(true);
   }
 
@@ -100,7 +124,36 @@ export function BikesTab({
       image_url_3: bike.image_url_3,
     });
     setFormError(null);
+    setShowNewModel(false);
     setShowForm(true);
+  }
+
+  async function saveNewModel() {
+    if (!modelForm.display_name.trim() || !modelForm.cc) {
+      setModelError('Name and CC are required.');
+      return;
+    }
+    setSavingModel(true);
+    setModelError(null);
+    try {
+      const res = await fetch('/api/admin/models', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(modelForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed');
+      // Add new model to local list and auto-select it
+      const newModel: Model = data.model;
+      setModels(prev => [...prev, newModel]);
+      upd('model_id', newModel.id);
+      setShowNewModel(false);
+      setModelForm({ ...EMPTY_MODEL_FORM });
+    } catch (e: any) {
+      setModelError(e.message);
+    } finally {
+      setSavingModel(false);
+    }
   }
 
   async function saveBike() {
@@ -125,12 +178,8 @@ export function BikesTab({
       };
       const url    = editBike ? `/api/admin/bikes/${editBike.id}` : '/api/admin/bikes';
       const method = editBike ? 'PATCH' : 'POST';
-      const res    = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(payload),
-      });
-      const data = await res.json();
+      const res    = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data   = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
       setShowForm(false);
       router.refresh();
@@ -160,12 +209,25 @@ export function BikesTab({
 
   const displayBikes = subTab === 'pending' ? pendingBikes : allBikes;
 
+  // Group models by category for the select
   const grouped = models.reduce<Record<string, Model[]>>((acc, m) => {
     (acc[m.category] ??= []).push(m);
     return acc;
   }, {});
 
-  const canSave = !!form.model_id && form.color.trim().length >= 2 && !saving;
+  // Default price hints based on selected category
+  const priceSuggestions: Record<string, { p12: number; p24: number; p7: number }> = {
+    scooter:      { p12: 349,  p24: 499,  p7: 2200 },
+    bike_sub150:  { p12: 499,  p24: 799,  p7: 3000 },
+    bike_plus150: { p12: 799,  p24: 1299, p7: 5999 },
+  };
+
+  function onCategoryChange(cat: 'scooter' | 'bike_sub150' | 'bike_plus150') {
+    const s = priceSuggestions[cat];
+    setModelForm(f => ({ ...f, category: cat, price_12hr: s.p12, price_24hr: s.p24, price_7day: s.p7 }));
+  }
+
+  const canSaveBike = !!form.model_id && form.color.trim().length >= 2 && !saving;
 
   return (
     <div>
@@ -201,12 +263,9 @@ export function BikesTab({
             <div key={bike.id} className="card p-4">
               <div className="flex items-center gap-4">
                 <div className="w-14 h-14 rounded-lg overflow-hidden bg-gradient-to-br from-primary/5 to-accent/5 flex items-center justify-center shrink-0">
-                  {bike.image_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={bike.image_url} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="text-3xl">{bike.emoji}</span>
-                  )}
+                  {bike.image_url
+                    ? <img src={bike.image_url} alt="" className="w-full h-full object-cover" /> // eslint-disable-line @next/next/no-img-element
+                    : <span className="text-3xl">{bike.emoji}</span>}
                 </div>
 
                 <div className="flex-1 min-w-0">
@@ -234,20 +293,12 @@ export function BikesTab({
                 <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                   {bike.listing_status === 'pending_approval' && (
                     <>
-                      <button onClick={() => reviewBike(bike.id, 'approve')} className="text-xs px-3 py-1.5 bg-success/10 text-success rounded-lg hover:bg-success/20 font-medium">
-                        Approve
-                      </button>
-                      <button onClick={() => { setRejectTarget(bike.id); setRejectReason(''); }} className="text-xs px-3 py-1.5 bg-danger/10 text-danger rounded-lg hover:bg-danger/20 font-medium">
-                        Reject
-                      </button>
+                      <button onClick={() => reviewBike(bike.id, 'approve')} className="text-xs px-3 py-1.5 bg-success/10 text-success rounded-lg hover:bg-success/20 font-medium">Approve</button>
+                      <button onClick={() => { setRejectTarget(bike.id); setRejectReason(''); }} className="text-xs px-3 py-1.5 bg-danger/10 text-danger rounded-lg hover:bg-danger/20 font-medium">Reject</button>
                     </>
                   )}
-                  <button onClick={() => openEdit(bike)} className="text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-border/50 font-medium">
-                    Edit
-                  </button>
-                  <button onClick={() => setDeleteConfirm(bike.id)} className="text-xs px-3 py-1.5 bg-danger/10 text-danger rounded-lg hover:bg-danger/20 font-medium">
-                    Delete
-                  </button>
+                  <button onClick={() => openEdit(bike)} className="text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-border/50 font-medium">Edit</button>
+                  <button onClick={() => setDeleteConfirm(bike.id)} className="text-xs px-3 py-1.5 bg-danger/10 text-danger rounded-lg hover:bg-danger/20 font-medium">Delete</button>
                 </div>
               </div>
             </div>
@@ -255,51 +306,140 @@ export function BikesTab({
         </div>
       )}
 
-      {/* ── Add / Edit modal ─────────────────────────────────────── */}
+      {/* ── Add / Edit modal ─────────────────────────────── */}
       {showForm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-4 overflow-y-auto">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md my-8">
-            {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <h3 className="font-display font-semibold text-lg">{editBike ? 'Edit Bike' : 'Add New Bike'}</h3>
               <button onClick={() => setShowForm(false)} className="text-muted hover:text-primary text-xl leading-none">✕</button>
             </div>
 
-            <div className="p-5 space-y-4">
-              {/* Model dropdown */}
+            <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+
+              {/* ── Model select ───────────────────────── */}
               <div>
                 <label className="block text-sm font-medium mb-1">
                   Model <span className="text-danger">*</span>
                 </label>
                 <select
                   value={form.model_id}
-                  onChange={e => upd('model_id', e.target.value)}
+                  onChange={e => { upd('model_id', e.target.value); setShowNewModel(false); }}
                   className="input-field"
                 >
                   <option value="">Select a model…</option>
                   {Object.entries(grouped).map(([cat, catModels]) => (
                     <optgroup key={cat} label={CAT_LABELS[cat] ?? cat}>
                       {catModels.map(m => (
-                        <option key={m.id} value={m.id}>
-                          {m.display_name} ({m.cc}cc)
-                        </option>
+                        <option key={m.id} value={m.id}>{m.display_name} ({m.cc}cc)</option>
                       ))}
                     </optgroup>
                   ))}
                 </select>
-                {/* Show selected model info */}
-                {selectedModel && (
+
+                {selectedModel && !showNewModel && (
                   <p className="text-xs text-muted mt-1.5">
-                    {CAT_LABELS[selectedModel.category] ?? selectedModel.category} · {selectedModel.cc}cc · pricing follows Zodito rate card
+                    {CAT_LABELS[selectedModel.category]} · {selectedModel.cc}cc · pricing follows Zodito rate card
                   </p>
+                )}
+
+                {/* Toggle new-model panel */}
+                {!showNewModel ? (
+                  <button
+                    type="button"
+                    onClick={() => { setShowNewModel(true); setModelError(null); setModelForm({ ...EMPTY_MODEL_FORM }); }}
+                    className="mt-2 text-xs text-accent hover:underline font-medium"
+                  >
+                    + Model not listed? Add it here
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowNewModel(false)}
+                    className="mt-2 text-xs text-muted hover:text-primary"
+                  >
+                    ✕ Cancel new model
+                  </button>
                 )}
               </div>
 
-              {/* Color */}
+              {/* ── Inline new-model panel ─────────────── */}
+              {showNewModel && (
+                <div className="bg-bg rounded-xl border border-border p-4 space-y-3">
+                  <p className="text-xs font-semibold text-muted uppercase tracking-wide">New model details</p>
+
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Model name <span className="text-danger">*</span></label>
+                    <input
+                      value={modelForm.display_name}
+                      onChange={e => updModel('display_name', e.target.value)}
+                      className="input-field text-sm"
+                      placeholder="e.g. TVS Apache RTR 160, Honda CB300R"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium mb-1">Category <span className="text-danger">*</span></label>
+                      <select
+                        value={modelForm.category}
+                        onChange={e => onCategoryChange(e.target.value as any)}
+                        className="input-field text-sm"
+                      >
+                        <option value="scooter">Scooter (≤125cc)</option>
+                        <option value="bike_sub150">125–150cc</option>
+                        <option value="bike_plus150">150cc+</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium mb-1">Engine CC <span className="text-danger">*</span></label>
+                      <input
+                        type="number"
+                        value={modelForm.cc}
+                        onChange={e => updModel('cc', parseInt(e.target.value) || 0)}
+                        className="input-field text-sm"
+                        placeholder="160"
+                        min={50}
+                        max={2000}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Rental pricing (₹)</label>
+                    <p className="text-[11px] text-muted mb-2">Set your prices — 15-day and 30-day are auto-calculated from 7-day.</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <p className="text-[11px] text-muted mb-1">12 hrs</p>
+                        <input type="number" value={modelForm.price_12hr} onChange={e => updModel('price_12hr', parseInt(e.target.value) || 0)} className="input-field text-sm" min={1} />
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-muted mb-1">24 hrs</p>
+                        <input type="number" value={modelForm.price_24hr} onChange={e => updModel('price_24hr', parseInt(e.target.value) || 0)} className="input-field text-sm" min={1} />
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-muted mb-1">7 days</p>
+                        <input type="number" value={modelForm.price_7day} onChange={e => updModel('price_7day', parseInt(e.target.value) || 0)} className="input-field text-sm" min={1} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {modelError && <p className="text-xs text-danger bg-danger/10 px-3 py-2 rounded-lg">{modelError}</p>}
+
+                  <button
+                    type="button"
+                    onClick={saveNewModel}
+                    disabled={savingModel || !modelForm.display_name.trim() || !modelForm.cc}
+                    className="btn-accent w-full text-sm py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {savingModel ? 'Creating model…' : 'Create model & select it'}
+                  </button>
+                </div>
+              )}
+
+              {/* ── Bike details ───────────────────────── */}
               <div>
-                <label className="block text-sm font-medium mb-1">
-                  Color <span className="text-danger">*</span>
-                </label>
+                <label className="block text-sm font-medium mb-1">Color <span className="text-danger">*</span></label>
                 <input
                   value={form.color}
                   onChange={e => upd('color', e.target.value)}
@@ -308,7 +448,6 @@ export function BikesTab({
                 />
               </div>
 
-              {/* Registration + Year */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium mb-1">Registration no.</label>
@@ -320,9 +459,7 @@ export function BikesTab({
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Year <span className="text-danger">*</span>
-                  </label>
+                  <label className="block text-sm font-medium mb-1">Year <span className="text-danger">*</span></label>
                   <input
                     type="number"
                     value={form.year}
@@ -334,20 +471,18 @@ export function BikesTab({
                 </div>
               </div>
 
-              {/* Photos */}
               <div>
                 <label className="block text-sm font-medium mb-1">Photos</label>
-                <p className="text-xs text-muted mb-2">Upload up to 3 photos. First one is the cover shown on listings.</p>
+                <p className="text-xs text-muted mb-2">First photo is the cover shown on listings.</p>
                 <div className="grid grid-cols-3 gap-2">
-                  <ImageUpload label="Cover photo" url={form.image_url}   onUploaded={url => upd('image_url',   url)} onRemoved={() => upd('image_url',   null)} />
-                  <ImageUpload label="Photo 2"     url={form.image_url_2} onUploaded={url => upd('image_url_2', url)} onRemoved={() => upd('image_url_2', null)} />
-                  <ImageUpload label="Photo 3"     url={form.image_url_3} onUploaded={url => upd('image_url_3', url)} onRemoved={() => upd('image_url_3', null)} />
+                  <ImageUpload label="Cover" url={form.image_url}   onUploaded={url => upd('image_url',   url)} onRemoved={() => upd('image_url',   null)} />
+                  <ImageUpload label="Photo 2" url={form.image_url_2} onUploaded={url => upd('image_url_2', url)} onRemoved={() => upd('image_url_2', null)} />
+                  <ImageUpload label="Photo 3" url={form.image_url_3} onUploaded={url => upd('image_url_3', url)} onRemoved={() => upd('image_url_3', null)} />
                 </div>
               </div>
 
-              {/* Notes */}
               <div>
-                <label className="block text-sm font-medium mb-1">Internal notes <span className="text-muted font-normal">(optional)</span></label>
+                <label className="block text-sm font-medium mb-1">Notes <span className="text-muted font-normal text-xs">(internal, optional)</span></label>
                 <textarea
                   value={form.notes}
                   onChange={e => upd('notes', e.target.value)}
@@ -356,23 +491,18 @@ export function BikesTab({
                 />
               </div>
 
-              {formError && (
-                <p className="text-sm text-danger bg-danger/10 px-3 py-2 rounded-lg">{formError}</p>
-              )}
+              {formError && <p className="text-sm text-danger bg-danger/10 px-3 py-2 rounded-lg">{formError}</p>}
             </div>
 
-            {/* Footer */}
             <div className="px-5 py-4 border-t border-border flex items-center justify-between">
               <p className="text-xs text-muted">
-                {editBike ? 'Changes go live immediately.' : 'Bike goes live immediately as Zodito Fleet.'}
+                {editBike ? 'Changes go live immediately.' : 'Goes live immediately as Zodito Fleet.'}
               </p>
               <div className="flex gap-3">
-                <button onClick={() => setShowForm(false)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-border/50">
-                  Cancel
-                </button>
+                <button onClick={() => setShowForm(false)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-border/50">Cancel</button>
                 <button
                   onClick={saveBike}
-                  disabled={!canSave}
+                  disabled={!canSaveBike}
                   className="btn-accent px-5 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {saving ? 'Saving…' : editBike ? 'Save changes' : 'Add bike'}
@@ -383,17 +513,12 @@ export function BikesTab({
         </div>
       )}
 
-      {/* ── Reject modal ─────────────────────────────────────────── */}
+      {/* ── Reject modal ─────────────────────────────────── */}
       {rejectTarget && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-4">
             <h3 className="font-semibold">Reason for rejection</h3>
-            <textarea
-              value={rejectReason}
-              onChange={e => setRejectReason(e.target.value)}
-              className="input-field h-20 resize-none"
-              placeholder="Shown to the vendor (optional)"
-            />
+            <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} className="input-field h-20 resize-none" placeholder="Shown to the vendor (optional)" />
             <div className="flex justify-end gap-3">
               <button onClick={() => setRejectTarget(null)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-border/50">Cancel</button>
               <button onClick={() => reviewBike(rejectTarget, 'reject', rejectReason)} className="px-4 py-2 text-sm bg-danger text-white rounded-lg hover:bg-danger/90">Reject</button>
@@ -402,7 +527,7 @@ export function BikesTab({
         </div>
       )}
 
-      {/* ── Delete confirm ───────────────────────────────────────── */}
+      {/* ── Delete confirm ───────────────────────────────── */}
       {deleteConfirm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-4">
@@ -421,17 +546,7 @@ export function BikesTab({
 
 // ─── Inline image uploader ───────────────────────────────────────────────────
 
-function ImageUpload({
-  label,
-  url,
-  onUploaded,
-  onRemoved,
-}: {
-  label: string;
-  url: string | null;
-  onUploaded: (u: string) => void;
-  onRemoved: () => void;
-}) {
+function ImageUpload({ label, url, onUploaded, onRemoved }: { label: string; url: string | null; onUploaded: (u: string) => void; onRemoved: () => void }) {
   const [uploading, setUploading] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
 
@@ -463,27 +578,18 @@ function ImageUpload({
       >
         {url ? (
           <>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={url} alt="" className="w-full h-full object-cover" />
-            <button
-              type="button"
-              onClick={e => { e.stopPropagation(); onRemoved(); }}
-              className="absolute top-1 right-1 bg-black/60 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center leading-none"
-            >✕</button>
+            <img src={url} alt="" className="w-full h-full object-cover" /> {/* eslint-disable-line @next/next/no-img-element */}
+            <button type="button" onClick={e => { e.stopPropagation(); onRemoved(); }}
+              className="absolute top-1 right-1 bg-black/60 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center leading-none">
+              ✕
+            </button>
           </>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-muted text-xs gap-0.5 select-none">
-            {uploading
-              ? <span>Uploading…</span>
-              : <><span className="text-lg">📷</span><span>Upload</span></>
-            }
+            {uploading ? <span>Uploading…</span> : <><span className="text-lg">📷</span><span>Upload</span></>}
           </div>
         )}
-        {uploading && (
-          <div className="absolute inset-0 bg-white/70 flex items-center justify-center">
-            <span className="text-xs font-medium">Uploading…</span>
-          </div>
-        )}
+        {uploading && <div className="absolute inset-0 bg-white/70 flex items-center justify-center"><span className="text-xs font-medium">Uploading…</span></div>}
       </div>
       <input ref={ref} type="file" accept="image/*" onChange={handleFile} className="hidden" />
     </div>
