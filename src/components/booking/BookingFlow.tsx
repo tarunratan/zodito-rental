@@ -10,6 +10,7 @@ import { RazorpayCheckout } from './RazorpayCheckout';
 import { calculatePrice, tierEndTs, isWithinStoreHours, TIER_LABELS, STORE_OPEN_HOUR, STORE_CLOSE_HOUR, STORE_CLOSE_MIN } from '@/lib/pricing';
 import { formatDateTime } from '@/lib/utils';
 import type { PackageTier } from '@/lib/supabase/types';
+import type { AppliedCoupon } from './CouponInput';
 
 type Bike = any;
 
@@ -32,6 +33,7 @@ export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: strin
   const [pickupTs, setPickupTs] = useState<Date | null>(defaultPickupTime);
   const [extraHelmets, setExtraHelmets] = useState(0);
   const [mobileHolder, setMobileHolder] = useState(false);
+  const [appliedCoupon, setAppliedCoupon] = useState<AppliedCoupon | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,11 +47,12 @@ export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: strin
         extraHelmetCount: extraHelmets,
         hasOriginalDL: true,
         includeMobileHolder: mobileHolder,
+        couponDiscount: appliedCoupon?.discountAmount ?? 0,
       });
     } catch {
       return null;
     }
-  }, [bike.model.packages, tier, extraHelmets, mobileHolder]);
+  }, [bike.model.packages, tier, extraHelmets, mobileHolder, appliedCoupon]);
 
   const pickupValid = pickupTs ? isWithinStoreHours(pickupTs) && pickupTs > new Date() : false;
   const canProceed = !!pickupTs && pickupValid && !!breakdown;
@@ -139,6 +142,8 @@ export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: strin
             pickupTs={pickupTs}
             endTs={endTs}
             tier={tier}
+            appliedCoupon={appliedCoupon}
+            onCouponApply={setAppliedCoupon}
           />
 
           {error && (
@@ -153,6 +158,7 @@ export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: strin
             pickupTs={pickupTs}
             extraHelmets={extraHelmets}
             mobileHolder={mobileHolder}
+            couponCode={appliedCoupon?.code ?? null}
             disabled={!canProceed}
             submitting={submitting}
             setSubmitting={setSubmitting}

@@ -68,7 +68,8 @@ export interface PriceBreakdown {
   securityDeposit: number;
   subtotal: number;           // base + helmet + mobile holder (before tax)
   gstAmount: number;
-  totalAmount: number;        // subtotal + gst + deposit  (what customer pays)
+  couponDiscount: number;     // 0 if no coupon applied
+  totalAmount: number;        // subtotal + gst - couponDiscount + deposit
   tier: PackageTier;
 }
 
@@ -84,8 +85,9 @@ export function calculatePrice(params: {
   extraHelmetCount?: number;
   hasOriginalDL?: boolean;
   includeMobileHolder?: boolean;
+  couponDiscount?: number;
 }): PriceBreakdown {
-  const { packages, tier, extraHelmetCount = 0, hasOriginalDL = true, includeMobileHolder = false } = params;
+  const { packages, tier, extraHelmetCount = 0, hasOriginalDL = true, includeMobileHolder = false, couponDiscount: rawDiscount = 0 } = params;
 
   const pkg = packages.find(p => p.tier === tier);
   if (!pkg) {
@@ -101,7 +103,8 @@ export function calculatePrice(params: {
 
   const subtotal = basePrice + extraHelmetCharge + mobileHolderCharge;
   const gstAmount = round2(subtotal * GST_RATE);
-  const totalAmount = round2(subtotal + gstAmount + securityDeposit);
+  const couponDiscount = Math.min(round2(rawDiscount), round2(subtotal + gstAmount));
+  const totalAmount = round2(subtotal + gstAmount - couponDiscount + securityDeposit);
 
   return {
     basePrice,
@@ -112,9 +115,22 @@ export function calculatePrice(params: {
     securityDeposit,
     subtotal,
     gstAmount,
+    couponDiscount,
     totalAmount,
     tier,
   };
+}
+
+export function computeCouponDiscount(params: {
+  discount_type: 'percent' | 'fixed' | 'gst_waiver';
+  discount_value: number;
+  subtotal: number;
+  gstAmount: number;
+}): number {
+  const { discount_type, discount_value, subtotal, gstAmount } = params;
+  if (discount_type === 'gst_waiver') return round2(gstAmount);
+  if (discount_type === 'percent') return round2(subtotal * discount_value / 100);
+  return round2(Math.min(discount_value, subtotal + gstAmount));
 }
 
 /**

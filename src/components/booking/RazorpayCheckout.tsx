@@ -20,6 +20,7 @@ export function RazorpayCheckout({
   pickupTs,
   extraHelmets,
   mobileHolder,
+  couponCode,
   disabled,
   submitting,
   setSubmitting,
@@ -31,6 +32,7 @@ export function RazorpayCheckout({
   pickupTs: Date | null;
   extraHelmets: number;
   mobileHolder: boolean;
+  couponCode: string | null;
   disabled: boolean;
   submitting: boolean;
   setSubmitting: (b: boolean) => void;
@@ -55,6 +57,7 @@ export function RazorpayCheckout({
         extra_helmet_count: extraHelmets,
         mobile_holder: mobileHolder,
         payment_method: paymentMethod,
+        ...(couponCode ? { coupon_code: couponCode } : {}),
       }),
     });
     const data = await res.json();

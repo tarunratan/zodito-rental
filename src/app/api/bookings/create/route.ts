@@ -9,6 +9,7 @@ import {
   isWithinStoreHours,
   effectiveModelIdForDate,
   splitCommission,
+  computeCouponDiscount,
 } from '@/lib/pricing';
 import { isMockMode, mockBookingsStore } from '@/lib/mock';
 import type { PackageTier } from '@/lib/supabase/types';
@@ -22,6 +23,7 @@ const bodySchema = z.object({
   extra_helmet_count: z.number().int().min(0).max(3).default(0),
   mobile_holder: z.boolean().default(false),
   payment_method: z.enum(['online', 'at_pickup']).default('online'),
+  coupon_code: z.string().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -92,16 +94,47 @@ export async function POST(req: NextRequest) {
     if (weekendPackages) packages = weekendPackages;
   }
 
-  // --- 7. Price calculation (server-side; authoritative)
-  const breakdown = calculatePrice({
+  // --- 7. Resolve coupon (server-side re-validation)
+  let couponRow: { id: string; code: string; discount_type: string; discount_value: number } | null = null;
+  if (body.coupon_code) {
+    const { data: c } = await admin
+      .from('coupons')
+      .select('id, code, discount_type, discount_value, max_uses, used_count, expires_at, is_active')
+      .eq('code', body.coupon_code.toUpperCase().trim())
+      .maybeSingle();
+    if (c && c.is_active &&
+        !(c.expires_at && new Date(c.expires_at) < new Date()) &&
+        !(c.max_uses !== null && c.used_count >= c.max_uses)) {
+      const { data: used } = await admin
+        .from('coupon_uses')
+        .select('id').eq('coupon_id', c.id).eq('user_id', user.id).maybeSingle();
+      if (!used) {
+        couponRow = { id: c.id, code: c.code, discount_type: c.discount_type, discount_value: Number(c.discount_value) };
+      }
+    }
+  }
+
+  // --- 8. Price calculation (server-side; authoritative)
+  const rawBreakdown = calculatePrice({
     packages,
     tier: body.tier as PackageTier,
     extraHelmetCount: body.extra_helmet_count,
-    hasOriginalDL: true,  // assume yes at booking; adjusted at pickup if no
+    hasOriginalDL: true,
     includeMobileHolder: body.mobile_holder,
   });
+  const couponDiscountAmount = couponRow
+    ? computeCouponDiscount({
+        discount_type: couponRow.discount_type as any,
+        discount_value: couponRow.discount_value,
+        subtotal: rawBreakdown.subtotal,
+        gstAmount: rawBreakdown.gstAmount,
+      })
+    : 0;
+  const breakdown = couponDiscountAmount > 0
+    ? calculatePrice({ packages, tier: body.tier as PackageTier, extraHelmetCount: body.extra_helmet_count, hasOriginalDL: true, includeMobileHolder: body.mobile_holder, couponDiscount: couponDiscountAmount })
+    : rawBreakdown;
 
-  // --- 8. Commission split (only for vendor bikes)
+  // --- 9. Commission split (only for vendor bikes)
   let platform_commission = breakdown.extraHelmetCharge;  // platform keeps all helmet revenue
   let vendor_payout = 0;
   if (bike.owner_type === 'vendor') {
@@ -118,7 +151,7 @@ export async function POST(req: NextRequest) {
     platform_commission = breakdown.basePrice + breakdown.extraHelmetCharge;
   }
 
-  // --- 9. Insert booking via user session — RLS policy bookings_customer_insert
+  // --- 10. Insert booking via user session — RLS policy bookings_customer_insert
   //         checks user_id = auth_user_id(), which works with the user's JWT.
   const { data: booking, error: insertErr } = await userClient
     .from('bookings')
@@ -135,6 +168,9 @@ export async function POST(req: NextRequest) {
       security_deposit: breakdown.securityDeposit,
       subtotal: breakdown.subtotal,
       gst_amount: breakdown.gstAmount,
+      coupon_id: couponRow?.id ?? null,
+      coupon_code: couponRow?.code ?? null,
+      coupon_discount: breakdown.couponDiscount,
       total_amount: breakdown.totalAmount,
       platform_commission,
       vendor_payout,
@@ -160,7 +196,16 @@ export async function POST(req: NextRequest) {
     }, { status: 500 });
   }
 
-  // --- 10. Pay at pickup — booking confirmed, no Razorpay needed
+  // --- 11. Record coupon usage (fire-and-forget)
+  if (couponRow && breakdown.couponDiscount > 0) {
+    admin.from('coupon_uses').insert({
+      coupon_id: couponRow.id, user_id: user.id, booking_id: booking.id, discount_amount: breakdown.couponDiscount,
+    }).then(() =>
+      admin.rpc('increment_coupon_used_count', { p_coupon_id: couponRow!.id })
+    ).catch(e => console.error('Coupon tracking error:', e));
+  }
+
+  // --- 12. Pay at pickup — booking confirmed, no Razorpay needed
   if (body.payment_method === 'at_pickup') {
     return NextResponse.json({
       booking_id: booking.id,
@@ -169,7 +214,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // --- 11. Create Razorpay order
+  // --- 13. Create Razorpay order
   try {
     const order = await createRazorpayOrder({
       amountRupees: breakdown.totalAmount,

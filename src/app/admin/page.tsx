@@ -121,7 +121,12 @@ export default async function AdminPage() {
           </h1>
           <p className="text-muted text-sm mt-1">Manage vendors, listings, KYC, and bookings</p>
         </div>
-        <Link href="/" className="text-sm text-muted hover:text-primary">Exit →</Link>
+        <div className="flex items-center gap-3">
+          <Link href="/admin/coupons" className="text-sm font-medium text-accent hover:text-accent-hover border border-accent/30 px-3 py-1.5 rounded-lg hover:bg-accent/5 transition-colors">
+            🏷 Coupons
+          </Link>
+          <Link href="/" className="text-sm text-muted hover:text-primary">Exit →</Link>
+        </div>
       </div>
 
       <AdminTabs data={data} />
