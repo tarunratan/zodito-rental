@@ -32,15 +32,22 @@ const DURATIONS = [
   { label: '30 days', hrs: 720 },
 ];
 
+// datetime-local inputs are LOCAL time strings — never use toISOString() (UTC) for them
+function toLocalStr(d: Date): string {
+  const z = (n: number) => n.toString().padStart(2, '0');
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`;
+}
+
 function defaultFrom() {
   const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getMinutes() % 30 + 30, 0, 0); // round up to next 30-min
-  return d.toISOString().slice(0, 16);
+  // round up to next 30-min slot
+  const mins = d.getMinutes();
+  d.setMinutes(mins <= 30 ? 30 : 60, 0, 0);
+  return toLocalStr(d);
 }
-function defaultTo(from: string) {
-  const d = new Date(from);
-  d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0, 16);
+
+function defaultTo(from: string, hrs = 24) {
+  return toLocalStr(new Date(new Date(from).getTime() + hrs * 60 * 60 * 1000));
 }
 
 export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
@@ -108,7 +115,7 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
     return list;
   }, [bikes, cat, sort, query, ownerFilter]);
 
-  const nowStr = new Date().toISOString().slice(0, 16);
+  const nowStr = toLocalStr(new Date());
 
   // Which duration chip is active (null if user manually set a custom range)
   const activeDurationHrs = useMemo(() => {
@@ -119,8 +126,7 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
 
   function applyDuration(hrs: number) {
     if (!fromVal) return;
-    const to = new Date(new Date(fromVal).getTime() + hrs * 60 * 60 * 1000);
-    setToVal(to.toISOString().slice(0, 16));
+    setToVal(defaultTo(fromVal, hrs));
   }
 
   return (
@@ -143,9 +149,7 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
                 setFromVal(newFrom);
                 if (newFrom) {
                   if (activeDurationHrs) {
-                    // keep same duration
-                    const to = new Date(new Date(newFrom).getTime() + activeDurationHrs * 60 * 60 * 1000);
-                    setToVal(to.toISOString().slice(0, 16));
+                    setToVal(defaultTo(newFrom, activeDurationHrs));
                   } else if (toVal && new Date(toVal) <= new Date(newFrom)) {
                     setToVal(defaultTo(newFrom));
                   }
