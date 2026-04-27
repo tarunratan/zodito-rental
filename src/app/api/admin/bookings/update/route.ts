@@ -10,7 +10,7 @@ export const runtime = 'nodejs';
 const schema = z.object({
   booking_id: z.string(),
   status: z.enum(['ongoing', 'completed', 'cancelled', 'refunded']),
-  reason: z.string().optional(),
+  reason: z.string().nullish(),  // accepts string | null | undefined
 });
 
 export async function POST(req: NextRequest) {

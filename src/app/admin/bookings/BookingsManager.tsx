@@ -77,6 +77,7 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
   const [actionModal, setActionModal] = useState<{ id: string; action: string } | null>(null);
   const [actionNotes, setActionNotes] = useState('');
   const [loading, setLoading] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const [showManual, setShowManual] = useState(false);
   const [manualForm, setManualForm] = useState({ ...EMPTY_MANUAL });
@@ -109,25 +110,35 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
 
   async function updateStatus(booking_id: string, status: string, notes?: string) {
     setLoading(booking_id);
-    const res = await fetch('/api/admin/bookings/update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ booking_id, status, reason: notes || null }),
-    });
-    if (res.ok) {
-      setBookings(prev => prev.map(b => {
-        if (b.id !== booking_id) return b;
-        const now = new Date().toISOString();
-        if (status === 'ongoing') return { ...b, status: 'ongoing', picked_up_at: now };
-        if (status === 'completed') return { ...b, status: 'completed', returned_at: now };
-        if (status === 'cancelled') return { ...b, status: 'cancelled', cancelled_at: now, cancellation_reason: notes || null };
-        if (status === 'refunded') return { ...b, payment_status: 'refunded' };
-        return b;
-      }));
+    setActionError(null);
+    try {
+      const res = await fetch('/api/admin/bookings/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // undefined is omitted by JSON.stringify — never sends null to the server
+        body: JSON.stringify({ booking_id, status, reason: notes || undefined }),
+      });
+      if (res.ok) {
+        setBookings(prev => prev.map(b => {
+          if (b.id !== booking_id) return b;
+          const now = new Date().toISOString();
+          if (status === 'ongoing') return { ...b, status: 'ongoing', picked_up_at: now };
+          if (status === 'completed') return { ...b, status: 'completed', returned_at: now };
+          if (status === 'cancelled') return { ...b, status: 'cancelled', cancelled_at: now, cancellation_reason: notes || null };
+          if (status === 'refunded') return { ...b, payment_status: 'refunded' };
+          return b;
+        }));
+        setActionModal(null);
+        setActionNotes('');
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setActionError(data.error ?? `Failed to update booking (${res.status})`);
+      }
+    } catch {
+      setActionError('Network error — please check your connection and try again');
+    } finally {
+      setLoading(null);
     }
-    setLoading(null);
-    setActionModal(null);
-    setActionNotes('');
   }
 
   async function createManualBooking() {
@@ -278,25 +289,25 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1.5" onClick={e => e.stopPropagation()}>
                           {b.status === 'confirmed' && (
-                            <button onClick={() => setActionModal({ id: b.id, action: 'ongoing' })} disabled={loading === b.id}
+                            <button onClick={() => { setActionModal({ id: b.id, action: 'ongoing' }); setActionError(null); }} disabled={loading === b.id}
                               className="text-xs px-2 py-1 bg-orange-50 text-orange-600 rounded hover:bg-orange-100 transition-colors disabled:opacity-50">
                               Mark Pickup
                             </button>
                           )}
                           {b.status === 'ongoing' && (
-                            <button onClick={() => setActionModal({ id: b.id, action: 'completed' })} disabled={loading === b.id}
+                            <button onClick={() => { setActionModal({ id: b.id, action: 'completed' }); setActionError(null); }} disabled={loading === b.id}
                               className="text-xs px-2 py-1 bg-green-50 text-green-600 rounded hover:bg-green-100 transition-colors disabled:opacity-50">
                               Mark Return
                             </button>
                           )}
                           {['confirmed', 'ongoing', 'pending_payment'].includes(b.status) && (
-                            <button onClick={() => { setActionModal({ id: b.id, action: 'cancelled' }); setActionNotes(''); }}
+                            <button onClick={() => { setActionModal({ id: b.id, action: 'cancelled' }); setActionNotes(''); setActionError(null); }}
                               className="text-xs px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 transition-colors">
                               Cancel
                             </button>
                           )}
                           {b.status === 'cancelled' && b.payment_status === 'paid' && (
-                            <button onClick={() => setActionModal({ id: b.id, action: 'refunded' })}
+                            <button onClick={() => { setActionModal({ id: b.id, action: 'refunded' }); setActionError(null); }}
                               className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors">
                               Refund
                             </button>
@@ -364,11 +375,24 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                 className="input-field w-full h-20 resize-none"
                 placeholder={actionModal.action === 'cancelled' ? 'Cancellation reason (optional)' : 'Return notes (optional)'} />
             )}
+            {actionError && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {actionError}
+              </p>
+            )}
             <div className="flex justify-end gap-3">
-              <button onClick={() => setActionModal(null)} className="border border-border rounded-lg hover:bg-border/40 text-sm px-4 py-2">Cancel</button>
-              <button onClick={() => updateStatus(actionModal.id, actionModal.action, actionNotes)}
-                className={`px-4 py-2 text-sm text-white rounded-lg ${actionModal.action === 'cancelled' ? 'bg-red-500 hover:bg-red-600' : 'bg-accent hover:bg-accent-hover'}`}>
-                Confirm
+              <button
+                onClick={() => { setActionModal(null); setActionError(null); }}
+                className="border border-border rounded-lg hover:bg-border/40 text-sm px-4 py-2"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => updateStatus(actionModal.id, actionModal.action, actionNotes)}
+                disabled={loading === actionModal.id}
+                className={`px-4 py-2 text-sm text-white rounded-lg disabled:opacity-60 ${actionModal.action === 'cancelled' ? 'bg-red-500 hover:bg-red-600' : 'bg-accent hover:bg-accent-hover'}`}
+              >
+                {loading === actionModal.id ? 'Updating…' : 'Confirm'}
               </button>
             </div>
           </div>
