@@ -20,6 +20,18 @@ const SORTS = [
   { id: 'price_desc', label: 'Price: High → Low' },
 ];
 
+const DURATIONS = [
+  { label: '3 hrs',  hrs: 3 },
+  { label: '6 hrs',  hrs: 6 },
+  { label: '12 hrs', hrs: 12 },
+  { label: '1 day',  hrs: 24 },
+  { label: '2 days', hrs: 48 },
+  { label: '3 days', hrs: 72 },
+  { label: '7 days', hrs: 168 },
+  { label: '15 days', hrs: 360 },
+  { label: '30 days', hrs: 720 },
+];
+
 function defaultFrom() {
   const d = new Date();
   d.setMinutes(d.getMinutes() - d.getMinutes() % 30 + 30, 0, 0); // round up to next 30-min
@@ -98,6 +110,19 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
 
   const nowStr = new Date().toISOString().slice(0, 16);
 
+  // Which duration chip is active (null if user manually set a custom range)
+  const activeDurationHrs = useMemo(() => {
+    if (!fromVal || !toVal) return null;
+    const diff = Math.round((new Date(toVal).getTime() - new Date(fromVal).getTime()) / (1000 * 60 * 60));
+    return DURATIONS.find(d => d.hrs === diff)?.hrs ?? null;
+  }, [fromVal, toVal]);
+
+  function applyDuration(hrs: number) {
+    if (!fromVal) return;
+    const to = new Date(new Date(fromVal).getTime() + hrs * 60 * 60 * 1000);
+    setToVal(to.toISOString().slice(0, 16));
+  }
+
   return (
     <section id="browse" className="max-w-7xl mx-auto px-4 md:px-6 py-10">
 
@@ -114,9 +139,16 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
               value={fromVal}
               min={nowStr}
               onChange={e => {
-                setFromVal(e.target.value);
-                if (e.target.value && toVal && new Date(toVal) <= new Date(e.target.value)) {
-                  setToVal(defaultTo(e.target.value));
+                const newFrom = e.target.value;
+                setFromVal(newFrom);
+                if (newFrom) {
+                  if (activeDurationHrs) {
+                    // keep same duration
+                    const to = new Date(new Date(newFrom).getTime() + activeDurationHrs * 60 * 60 * 1000);
+                    setToVal(to.toISOString().slice(0, 16));
+                  } else if (toVal && new Date(toVal) <= new Date(newFrom)) {
+                    setToVal(defaultTo(newFrom));
+                  }
                 }
               }}
               className="w-full rounded-xl border border-white/20 bg-white/10 text-white placeholder-white/40 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent [color-scheme:dark]"
@@ -149,6 +181,24 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
             )}
           </div>
         </div>
+        {/* Duration quick-select */}
+        <div className="flex gap-2 mt-3 overflow-x-auto pb-0.5 -mx-1 px-1" style={{ scrollbarWidth: 'none' }}>
+          {DURATIONS.map(d => (
+            <button
+              key={d.hrs}
+              onClick={() => applyDuration(d.hrs)}
+              className={cn(
+                'shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border',
+                activeDurationHrs === d.hrs
+                  ? 'bg-accent border-accent text-white'
+                  : 'bg-white/10 border-white/15 text-white/75 hover:bg-white/20 hover:text-white'
+              )}
+            >
+              {d.label}
+            </button>
+          ))}
+        </div>
+
         {dateError && <p className="text-red-300 text-xs mt-2">{dateError}</p>}
         {searched && !loading && (
           <div className="mt-3 text-sm text-white/80">
