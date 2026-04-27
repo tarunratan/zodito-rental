@@ -37,32 +37,35 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createSupabaseAdmin();
+  const startIso = startTs.toISOString();
+  const endIso = endTs.toISOString();
 
-  // Check booking overlap
-  const { data: overlap } = await supabase
-    .from('bookings')
-    .select('id, booking_number')
-    .eq('bike_id', bike_id)
-    .not('status', 'in', '(cancelled,payment_failed)')
-    .lt('start_ts', endTs.toISOString())
-    .gt('end_ts', startTs.toISOString())
-    .limit(1)
-    .maybeSingle();
+  // Parallel: check booking overlap + freeze window — independent reads
+  const [overlapRes, bikeRes] = await Promise.all([
+    supabase
+      .from('bookings')
+      .select('id, booking_number')
+      .eq('bike_id', bike_id)
+      .not('status', 'in', '(cancelled,payment_failed)')
+      .lt('start_ts', endIso)
+      .gt('end_ts', startIso)
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from('bikes')
+      .select('id, frozen_from, frozen_until, freeze_reason')
+      .eq('id', bike_id)
+      .maybeSingle(),
+  ]);
 
-  if (overlap) {
+  if (overlapRes.data) {
     return NextResponse.json(
-      { error: `Bike already booked (#${overlap.booking_number}) for that period` },
+      { error: `Bike already booked (#${overlapRes.data.booking_number}) for that period` },
       { status: 409 }
     );
   }
 
-  // Check freeze overlap
-  const { data: bike } = await supabase
-    .from('bikes')
-    .select('id, frozen_from, frozen_until, freeze_reason')
-    .eq('id', bike_id)
-    .maybeSingle();
-
+  const bike = bikeRes.data;
   if (bike?.frozen_until && bike?.frozen_from) {
     const ff = new Date(bike.frozen_from);
     const fu = new Date(bike.frozen_until);
@@ -82,8 +85,9 @@ export async function POST(req: NextRequest) {
       bike_id,
       customer_name,
       customer_phone,
-      start_ts: startTs.toISOString(),
-      end_ts: endTs.toISOString(),
+      customer_email: customer_email || null,
+      start_ts: startIso,
+      end_ts: endIso,
       status: 'confirmed',
       payment_status: 'paid',
       source: 'manual',

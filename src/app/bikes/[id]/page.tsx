@@ -3,6 +3,9 @@ import { notFound } from 'next/navigation';
 import { BookingFlow } from '@/components/booking/BookingFlow';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { getCurrentAppUser } from '@/lib/auth';
+
+// Bike details change infrequently — serve from cache, regenerate in background every hour
+export const revalidate = 3600;
 import { isMockMode, MOCK_BIKES } from '@/lib/mock';
 import { formatINR } from '@/lib/utils';
 

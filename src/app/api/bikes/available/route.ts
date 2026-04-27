@@ -23,29 +23,30 @@ export async function GET(req: NextRequest) {
   }
 
   const supabase = createSupabaseAdmin();
+  const fromIso = fromTs.toISOString();
+  const toIso = toTs.toISOString();
 
-  // Step 1: find bike_ids unavailable due to booking overlap
-  const { data: bookedRows } = await supabase
-    .from('bookings')
-    .select('bike_id')
-    .not('status', 'in', '(cancelled,payment_failed)')
-    .lt('start_ts', toTs.toISOString())
-    .gt('end_ts', fromTs.toISOString());
-
-  // Step 2: find bike_ids unavailable due to freeze overlap
-  const { data: frozenRows } = await supabase
-    .from('bikes')
-    .select('id')
-    .not('frozen_until', 'is', null)
-    .not('frozen_from', 'is', null)
-    .lt('frozen_from', toTs.toISOString())
-    .gt('frozen_until', fromTs.toISOString());
+  // Parallel: bookings overlap + freeze overlap — independent reads
+  const [bookedRes, frozenRes] = await Promise.all([
+    supabase
+      .from('bookings')
+      .select('bike_id')
+      .not('status', 'in', '(cancelled,payment_failed)')
+      .lt('start_ts', toIso)
+      .gt('end_ts', fromIso),
+    supabase
+      .from('bikes')
+      .select('id')
+      .not('frozen_until', 'is', null)
+      .not('frozen_from', 'is', null)
+      .lt('frozen_from', toIso)
+      .gt('frozen_until', fromIso),
+  ]);
 
   const unavailableIds = new Set<string>();
-  (bookedRows ?? []).forEach((r: any) => unavailableIds.add(r.bike_id));
-  (frozenRows ?? []).forEach((r: any) => unavailableIds.add(r.id));
+  (bookedRes.data ?? []).forEach((r: any) => unavailableIds.add(r.bike_id));
+  (frozenRes.data ?? []).forEach((r: any) => unavailableIds.add(r.id));
 
-  // Step 3: fetch available bikes
   let query = supabase
     .from('bikes')
     .select(`
@@ -69,5 +70,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to fetch bikes' }, { status: 500 });
   }
 
-  return NextResponse.json({ bikes: data ?? [], unavailable_count: unavailableIds.size });
+  return NextResponse.json(
+    { bikes: data ?? [], unavailable_count: unavailableIds.size },
+    { headers: { 'Cache-Control': 'no-store' } },
+  );
 }

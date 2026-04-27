@@ -109,30 +109,30 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // --- 6. Resolve effective packages (weekend override)
+  // --- 6 & 7. Resolve weekend override packages + check coupon usage — parallel
   const model = (bike as any).model as any;
   const effectiveModelId = effectiveModelIdForDate(model, startTs);
-  let packages = model.packages;
-  if (effectiveModelId !== model.id) {
-    const { data: weekendPackages } = await admin
-      .from('bike_model_packages')
-      .select('tier, price, km_limit')
-      .eq('model_id', effectiveModelId);
-    if (weekendPackages) packages = weekendPackages;
-  }
 
-  // --- 7. Resolve coupon (data already fetched in parallel above)
-  let couponRow: { id: string; code: string; discount_type: string; discount_value: number } | null = null;
   const c = couponData as any;
-  if (c && c.is_active &&
-      !(c.expires_at && new Date(c.expires_at) < new Date()) &&
-      !(c.max_uses !== null && c.used_count >= c.max_uses)) {
-    const { data: used } = await admin
-      .from('coupon_uses')
-      .select('id').eq('coupon_id', c.id).eq('user_id', user.id).maybeSingle();
-    if (!used) {
-      couponRow = { id: c.id, code: c.code, discount_type: c.discount_type, discount_value: Number(c.discount_value) };
-    }
+  const couponValid = c && c.is_active &&
+    !(c.expires_at && new Date(c.expires_at) < new Date()) &&
+    !(c.max_uses !== null && c.used_count >= c.max_uses);
+
+  const [weekendResult, couponUsedResult] = await Promise.all([
+    effectiveModelId !== model.id
+      ? admin.from('bike_model_packages').select('tier, price, km_limit').eq('model_id', effectiveModelId)
+      : Promise.resolve({ data: null }),
+    couponValid
+      ? admin.from('coupon_uses').select('id').eq('coupon_id', c.id).eq('user_id', user.id).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+
+  let packages = model.packages;
+  if (weekendResult.data) packages = weekendResult.data;
+
+  let couponRow: { id: string; code: string; discount_type: string; discount_value: number } | null = null;
+  if (couponValid && !couponUsedResult.data) {
+    couponRow = { id: c.id, code: c.code, discount_type: c.discount_type, discount_value: Number(c.discount_value) };
   }
 
   // --- 8. Price calculation (server-side; authoritative)
