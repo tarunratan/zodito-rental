@@ -58,50 +58,59 @@ export async function POST(req: NextRequest) {
     return handleMockBooking({ user, body, startTs, endTs });
   }
 
-  // --- 5. Real flow: fetch bike + model + packages
-  // admin = read-only ops that need to bypass RLS (public bike catalog)
-  // userClient = write ops that go through RLS with user's session
+  // --- 5. Fetch bike + freeze + model (single query) AND coupon in parallel
   const admin = createSupabaseAdmin();
-  const userClient = await createSupabaseServer();
-  const { data: bike, error: bikeErr } = await admin
-    .from('bikes')
-    .select(`
-      id, owner_type, vendor_id,
-      model:bike_models!inner(
-        id, has_weekend_override, weekend_override_model_id,
-        packages:bike_model_packages(tier, price, km_limit)
-      ),
-      vendor:vendors(commission_pct)
-    `)
-    .eq('id', body.bike_id)
-    .eq('is_active', true)
-    .eq('listing_status', 'approved')
-    .maybeSingle();
+  // Create user client in parallel — only needed for the insert later
+  const userClientPromise = createSupabaseServer();
+
+  // Coupon validation runs in parallel with bike fetch — no sequential dependency
+  const couponPromise = body.coupon_code
+    ? admin
+        .from('coupons')
+        .select('id, code, discount_type, discount_value, max_uses, used_count, expires_at, is_active')
+        .eq('code', body.coupon_code.toUpperCase().trim())
+        .maybeSingle()
+    : Promise.resolve({ data: null });
+
+  const [{ data: bike, error: bikeErr }, { data: couponData }, userClient] = await Promise.all([
+    admin
+      .from('bikes')
+      .select(`
+        id, owner_type, vendor_id,
+        frozen_from, frozen_until, freeze_reason,
+        model:bike_models!inner(
+          id, has_weekend_override, weekend_override_model_id,
+          packages:bike_model_packages(tier, price, km_limit)
+        ),
+        vendor:vendors(commission_pct)
+      `)
+      .eq('id', body.bike_id)
+      .eq('is_active', true)
+      .eq('listing_status', 'approved')
+      .maybeSingle(),
+    couponPromise,
+    userClientPromise,
+  ]);
 
   if (bikeErr || !bike) {
     return NextResponse.json({ error: 'Bike not available for booking' }, { status: 404 });
   }
 
-  // --- 5b. Check freeze window overlap
-  const { data: bikeFreeze } = await admin
-    .from('bikes')
-    .select('frozen_from, frozen_until, freeze_reason')
-    .eq('id', body.bike_id)
-    .maybeSingle();
-
-  if (bikeFreeze?.frozen_until && bikeFreeze?.frozen_from) {
-    const frozenFrom = new Date(bikeFreeze.frozen_from);
-    const frozenUntil = new Date(bikeFreeze.frozen_until);
+  // --- 5b. Check freeze window overlap (data already in bike row)
+  const b = bike as any;
+  if (b.frozen_until && b.frozen_from) {
+    const frozenFrom = new Date(b.frozen_from);
+    const frozenUntil = new Date(b.frozen_until);
     if (frozenFrom < endTs && frozenUntil > startTs) {
       return NextResponse.json(
-        { error: `This bike is under maintenance until ${frozenUntil.toLocaleString('en-IN')}${bikeFreeze.freeze_reason ? '. Reason: ' + bikeFreeze.freeze_reason : ''}` },
+        { error: `This bike is under maintenance until ${frozenUntil.toLocaleString('en-IN')}${b.freeze_reason ? '. Reason: ' + b.freeze_reason : ''}` },
         { status: 409 }
       );
     }
   }
 
   // --- 6. Resolve effective packages (weekend override)
-  const model = bike.model as any;
+  const model = (bike as any).model as any;
   const effectiveModelId = effectiveModelIdForDate(model, startTs);
   let packages = model.packages;
   if (effectiveModelId !== model.id) {
@@ -112,23 +121,17 @@ export async function POST(req: NextRequest) {
     if (weekendPackages) packages = weekendPackages;
   }
 
-  // --- 7. Resolve coupon (server-side re-validation)
+  // --- 7. Resolve coupon (data already fetched in parallel above)
   let couponRow: { id: string; code: string; discount_type: string; discount_value: number } | null = null;
-  if (body.coupon_code) {
-    const { data: c } = await admin
-      .from('coupons')
-      .select('id, code, discount_type, discount_value, max_uses, used_count, expires_at, is_active')
-      .eq('code', body.coupon_code.toUpperCase().trim())
-      .maybeSingle();
-    if (c && c.is_active &&
-        !(c.expires_at && new Date(c.expires_at) < new Date()) &&
-        !(c.max_uses !== null && c.used_count >= c.max_uses)) {
-      const { data: used } = await admin
-        .from('coupon_uses')
-        .select('id').eq('coupon_id', c.id).eq('user_id', user.id).maybeSingle();
-      if (!used) {
-        couponRow = { id: c.id, code: c.code, discount_type: c.discount_type, discount_value: Number(c.discount_value) };
-      }
+  const c = couponData as any;
+  if (c && c.is_active &&
+      !(c.expires_at && new Date(c.expires_at) < new Date()) &&
+      !(c.max_uses !== null && c.used_count >= c.max_uses)) {
+    const { data: used } = await admin
+      .from('coupon_uses')
+      .select('id').eq('coupon_id', c.id).eq('user_id', user.id).maybeSingle();
+    if (!used) {
+      couponRow = { id: c.id, code: c.code, discount_type: c.discount_type, discount_value: Number(c.discount_value) };
     }
   }
 

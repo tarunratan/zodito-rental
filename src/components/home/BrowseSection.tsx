@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useCallback, useRef } from 'react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
 import { BikeCard } from './BikeCard';
 import { cn } from '@/lib/utils';
 import type { BikeCategory } from '@/lib/supabase/types';
@@ -87,6 +87,11 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
   function handleSearch() {
     fetchAvailable(fromVal, toVal);
   }
+
+  // Auto-search on mount so homepage never shows already-booked bikes
+  useEffect(() => {
+    fetchAvailable(fromVal, toVal);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleClear() {
     setAvailableBikes(null);
