@@ -53,7 +53,11 @@ function rupee(n: number) {
   return `₹${Number(n).toLocaleString('en-IN')}`;
 }
 
-export function BookingsManager({ initialBookings }: { initialBookings: Booking[] }) {
+type BikeOption = { id: string; emoji: string; registration_number: string | null; model: { display_name: string } | null };
+
+const EMPTY_MANUAL = { bike_id: '', customer_name: '', customer_phone: '', start_ts: '', end_ts: '', notes: '' };
+
+export function BookingsManager({ initialBookings, allBikes = [] }: { initialBookings: Booking[]; allBikes?: BikeOption[] }) {
   const [bookings, setBookings] = useState<Booking[]>(initialBookings);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -61,6 +65,11 @@ export function BookingsManager({ initialBookings }: { initialBookings: Booking[
   const [actionModal, setActionModal] = useState<{ id: string; action: string } | null>(null);
   const [actionNotes, setActionNotes] = useState('');
   const [loading, setLoading] = useState<string | null>(null);
+
+  const [showManual, setShowManual] = useState(false);
+  const [manualForm, setManualForm] = useState({ ...EMPTY_MANUAL });
+  const [manualLoading, setManualLoading] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
 
   const allStatuses = ['all', 'confirmed', 'ongoing', 'pending_payment', 'completed', 'cancelled', 'payment_failed'];
   const counts = allStatuses.reduce<Record<string, number>>((acc, s) => {
@@ -106,11 +115,44 @@ export function BookingsManager({ initialBookings }: { initialBookings: Booking[
     setActionNotes('');
   }
 
+  async function createManualBooking() {
+    setManualError(null);
+    if (!manualForm.bike_id || !manualForm.customer_name || !manualForm.customer_phone || !manualForm.start_ts || !manualForm.end_ts) {
+      setManualError('All fields are required');
+      return;
+    }
+    setManualLoading(true);
+    const res = await fetch('/api/admin/bookings/manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bike_id: manualForm.bike_id,
+        customer_name: manualForm.customer_name,
+        customer_phone: manualForm.customer_phone,
+        start_ts: new Date(manualForm.start_ts).toISOString(),
+        end_ts: new Date(manualForm.end_ts).toISOString(),
+        notes: manualForm.notes || undefined,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setManualError(data.error ?? 'Failed to create booking');
+    } else {
+      setShowManual(false);
+      setManualForm({ ...EMPTY_MANUAL });
+      window.location.reload();
+    }
+    setManualLoading(false);
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <h2 className="font-semibold text-lg">All Bookings</h2>
-        <span className="text-sm text-muted">{filtered.length} of {bookings.length}</span>
+        <button onClick={() => { setShowManual(true); setManualForm({ ...EMPTY_MANUAL }); setManualError(null); }}
+          className="text-sm px-3 py-1.5 bg-accent text-white rounded-lg hover:bg-accent/90 font-medium">
+          + Manual Booking
+        </button>
       </div>
 
       <div className="flex flex-wrap gap-2 mb-3">
@@ -295,6 +337,72 @@ export function BookingsManager({ initialBookings }: { initialBookings: Booking[
               <button onClick={() => updateStatus(actionModal.id, actionModal.action, actionNotes)}
                 className={`px-4 py-2 text-sm text-white rounded-lg ${actionModal.action === 'cancelled' ? 'bg-red-500 hover:bg-red-600' : 'bg-accent hover:bg-accent-hover'}`}>
                 Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual booking modal */}
+      {showManual && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-primary rounded-xl shadow-2xl w-full max-w-md p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-lg">Manual / Offline Booking</h3>
+              <button onClick={() => setShowManual(false)} className="text-muted hover:text-primary text-xl">✕</button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium mb-1">Bike <span className="text-danger">*</span></label>
+              <select value={manualForm.bike_id} onChange={e => setManualForm(f => ({ ...f, bike_id: e.target.value }))} className="input-field w-full">
+                <option value="">Select a bike…</option>
+                {allBikes.map(b => (
+                  <option key={b.id} value={b.id}>
+                    {b.emoji} {b.model?.display_name ?? 'Unknown'}{b.registration_number ? ` · ${b.registration_number}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium mb-1">Customer name <span className="text-danger">*</span></label>
+                <input value={manualForm.customer_name} onChange={e => setManualForm(f => ({ ...f, customer_name: e.target.value }))}
+                  className="input-field w-full" placeholder="Full name" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Phone <span className="text-danger">*</span></label>
+                <input value={manualForm.customer_phone} onChange={e => setManualForm(f => ({ ...f, customer_phone: e.target.value }))}
+                  className="input-field w-full" placeholder="+91 XXXXX XXXXX" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium mb-1">Pickup <span className="text-danger">*</span></label>
+                <input type="datetime-local" value={manualForm.start_ts} onChange={e => setManualForm(f => ({ ...f, start_ts: e.target.value }))}
+                  className="input-field w-full text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Drop-off <span className="text-danger">*</span></label>
+                <input type="datetime-local" value={manualForm.end_ts} min={manualForm.start_ts} onChange={e => setManualForm(f => ({ ...f, end_ts: e.target.value }))}
+                  className="input-field w-full text-sm" />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium mb-1">Notes</label>
+              <input value={manualForm.notes} onChange={e => setManualForm(f => ({ ...f, notes: e.target.value }))}
+                className="input-field w-full" placeholder="Optional notes" />
+            </div>
+
+            {manualError && <p className="text-xs text-danger bg-danger/10 px-3 py-2 rounded-lg">{manualError}</p>}
+
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setShowManual(false)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-border/50">Cancel</button>
+              <button onClick={createManualBooking} disabled={manualLoading}
+                className="px-4 py-2 text-sm bg-accent text-white rounded-lg hover:bg-accent/90 disabled:opacity-50">
+                {manualLoading ? 'Creating…' : 'Create Booking'}
               </button>
             </div>
           </div>

@@ -82,6 +82,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Bike not available for booking' }, { status: 404 });
   }
 
+  // --- 5b. Check freeze window overlap
+  const { data: bikeFreeze } = await admin
+    .from('bikes')
+    .select('frozen_from, frozen_until, freeze_reason')
+    .eq('id', body.bike_id)
+    .maybeSingle();
+
+  if (bikeFreeze?.frozen_until && bikeFreeze?.frozen_from) {
+    const frozenFrom = new Date(bikeFreeze.frozen_from);
+    const frozenUntil = new Date(bikeFreeze.frozen_until);
+    if (frozenFrom < endTs && frozenUntil > startTs) {
+      return NextResponse.json(
+        { error: `This bike is under maintenance until ${frozenUntil.toLocaleString('en-IN')}${bikeFreeze.freeze_reason ? '. Reason: ' + bikeFreeze.freeze_reason : ''}` },
+        { status: 409 }
+      );
+    }
+  }
+
   // --- 6. Resolve effective packages (weekend override)
   const model = bike.model as any;
   const effectiveModelId = effectiveModelIdForDate(model, startTs);

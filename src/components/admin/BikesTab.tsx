@@ -97,6 +97,7 @@ export function BikesTab({
   const [rejectTarget, setRejectTarget]       = useState<string | null>(null);
   const [rejectReason, setRejectReason]       = useState('');
   const [freezeTarget, setFreezeTarget]       = useState<Bike | null>(null);
+  const [freezeFrom, setFreezeFrom]           = useState('');
   const [freezeUntil, setFreezeUntil]         = useState('');
   const [freezeReason, setFreezeReason]       = useState('');
   const [freezeLoading, setFreezeLoading]     = useState(false);
@@ -216,14 +217,21 @@ export function BikesTab({
 
   async function freezeBike() {
     if (!freezeTarget || !freezeUntil) return;
+    if (freezeFrom && new Date(freezeUntil) <= new Date(freezeFrom)) return;
     setFreezeLoading(true);
+    const nowISO = new Date().toISOString();
     await fetch(`/api/admin/bikes/${freezeTarget.id}/freeze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ frozen_until: freezeUntil, freeze_reason: freezeReason || null }),
+      body: JSON.stringify({
+        frozen_from: freezeFrom ? new Date(freezeFrom).toISOString() : nowISO,
+        frozen_until: new Date(freezeUntil).toISOString(),
+        freeze_reason: freezeReason || null,
+      }),
     });
     setFreezeLoading(false);
     setFreezeTarget(null);
+    setFreezeFrom('');
     setFreezeUntil('');
     setFreezeReason('');
     router.refresh();
@@ -338,7 +346,7 @@ export function BikesTab({
                   {isFrozen(bike) ? (
                     <button onClick={() => unfreezeBike(bike.id)} className="text-xs px-3 py-1.5 bg-info/10 text-info rounded-lg hover:bg-info/20 font-medium">Unfreeze</button>
                   ) : bike.listing_status === 'approved' ? (
-                    <button onClick={() => { setFreezeTarget(bike); setFreezeUntil(''); setFreezeReason(''); }} className="text-xs px-3 py-1.5 bg-warning/10 text-warning rounded-lg hover:bg-warning/20 font-medium">Freeze</button>
+                    <button onClick={() => { setFreezeTarget(bike); setFreezeFrom(''); setFreezeUntil(''); setFreezeReason(''); }} className="text-xs px-3 py-1.5 bg-warning/10 text-warning rounded-lg hover:bg-warning/20 font-medium">Freeze</button>
                   ) : null}
                   <button onClick={() => openEdit(bike)} className="text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-border/50 font-medium">Edit</button>
                   <button onClick={() => setDeleteConfirm(bike.id)} className="text-xs px-3 py-1.5 bg-danger/10 text-danger rounded-lg hover:bg-danger/20 font-medium">Delete</button>
@@ -561,11 +569,19 @@ export function BikesTab({
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-primary rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-4">
             <h3 className="font-semibold">Freeze {freezeTarget.model?.display_name ?? 'bike'}</h3>
-            <div>
-              <label className="block text-xs font-medium mb-1">Frozen until <span className="text-danger">*</span></label>
-              <input type="date" value={freezeUntil} onChange={e => setFreezeUntil(e.target.value)}
-                min={new Date().toISOString().slice(0, 10)}
-                className="input-field w-full" />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium mb-1">Freeze from</label>
+                <input type="datetime-local" value={freezeFrom} onChange={e => setFreezeFrom(e.target.value)}
+                  className="input-field w-full text-sm" />
+                <p className="text-[11px] text-muted mt-0.5">Leave blank = now</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Freeze until <span className="text-danger">*</span></label>
+                <input type="datetime-local" value={freezeUntil} onChange={e => setFreezeUntil(e.target.value)}
+                  min={freezeFrom || new Date().toISOString().slice(0, 16)}
+                  className="input-field w-full text-sm" />
+              </div>
             </div>
             <div>
               <label className="block text-xs font-medium mb-1">Reason (optional)</label>
