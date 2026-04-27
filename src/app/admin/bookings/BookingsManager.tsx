@@ -32,13 +32,12 @@ type Booking = {
 };
 
 function customerInfo(b: Booking) {
-  const name =
-    (b.user?.first_name || b.user?.last_name)
-      ? [b.user.first_name, b.user.last_name].filter(Boolean).join(' ')
-      : (b.customer_name ?? '—');
+  const name = b.user?.first_name || b.user?.last_name
+    ? [b.user!.first_name, b.user!.last_name].filter(Boolean).join(' ')
+    : (b.customer_name?.trim() || null);
   const email = b.user?.email ?? null;
   const phone = b.user?.phone ?? b.customer_phone ?? null;
-  return { name, email, phone };
+  return { name, email, phone, isManual: b.source === 'manual' };
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -68,7 +67,7 @@ function rupee(n: number) {
 
 type BikeOption = { id: string; emoji: string; registration_number: string | null; model: { display_name: string } | null };
 
-const EMPTY_MANUAL = { bike_id: '', customer_name: '', customer_phone: '', start_ts: '', end_ts: '', notes: '' };
+const EMPTY_MANUAL = { bike_id: '', customer_name: '', customer_phone: '', customer_email: '', total_amount: '', start_ts: '', end_ts: '', notes: '' };
 
 export function BookingsManager({ initialBookings, allBikes = [] }: { initialBookings: Booking[]; allBikes?: BikeOption[] }) {
   const [bookings, setBookings] = useState<Booking[]>(initialBookings);
@@ -97,7 +96,7 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
       const c = customerInfo(b);
       return (
         b.booking_number.toLowerCase().includes(q) ||
-        c.name.toLowerCase().includes(q) ||
+        (c.name ?? '').toLowerCase().includes(q) ||
         (c.email ?? '').toLowerCase().includes(q) ||
         (c.phone ?? '').toLowerCase().includes(q) ||
         (b.customer_name ?? '').toLowerCase().includes(q) ||
@@ -133,8 +132,8 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
 
   async function createManualBooking() {
     setManualError(null);
-    if (!manualForm.bike_id || !manualForm.customer_name || !manualForm.customer_phone || !manualForm.start_ts || !manualForm.end_ts) {
-      setManualError('All fields are required');
+    if (!manualForm.bike_id || !manualForm.customer_name.trim() || !manualForm.customer_phone.trim() || !manualForm.start_ts || !manualForm.end_ts) {
+      setManualError('Bike, customer name, phone, and dates are all required');
       return;
     }
     setManualLoading(true);
@@ -143,10 +142,12 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         bike_id: manualForm.bike_id,
-        customer_name: manualForm.customer_name,
-        customer_phone: manualForm.customer_phone,
+        customer_name: manualForm.customer_name.trim(),
+        customer_phone: manualForm.customer_phone.trim(),
+        customer_email: manualForm.customer_email.trim() || undefined,
         start_ts: new Date(manualForm.start_ts).toISOString(),
         end_ts: new Date(manualForm.end_ts).toISOString(),
+        total_amount: manualForm.total_amount ? parseFloat(manualForm.total_amount) : 0,
         notes: manualForm.notes || undefined,
       }),
     });
@@ -230,18 +231,24 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                         <div className="text-xs text-muted">{fmt(b.created_at)}</div>
                       </td>
                       <td className="px-4 py-3">
-                        {(() => { const c = customerInfo(b); return (
-                          <>
-                            <div className="font-medium flex items-center gap-1.5">
-                              {c.name}
-                              {b.source === 'manual' && (
-                                <span className="text-[9px] font-semibold uppercase tracking-wider bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded">Manual</span>
-                              )}
-                            </div>
-                            {c.email && <div className="text-xs text-muted">{c.email}</div>}
-                            {c.phone && <div className="text-xs text-muted">{c.phone}</div>}
-                          </>
-                        ); })()}
+                        {(() => {
+                          const c = customerInfo(b);
+                          return (
+                            <>
+                              <div className="font-medium flex items-center gap-1.5 flex-wrap">
+                                <span>{c.name || <span className="text-muted italic text-xs">No name</span>}</span>
+                                {c.isManual && (
+                                  <span className="text-[9px] font-semibold uppercase tracking-wider bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded shrink-0">Offline</span>
+                                )}
+                              </div>
+                              {c.phone
+                                ? <div className="text-xs text-muted">{c.phone}</div>
+                                : <div className="text-xs text-red-400 italic">No phone</div>
+                              }
+                              {c.email && <div className="text-xs text-muted">{c.email}</div>}
+                            </>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5">
@@ -389,36 +396,52 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
               </select>
             </div>
 
+            {/* Customer info */}
+            <div>
+              <label className="block text-xs font-medium mb-1">Customer name <span className="text-red-500">*</span></label>
+              <input value={manualForm.customer_name} onChange={e => setManualForm(f => ({ ...f, customer_name: e.target.value }))}
+                className="input-field w-full" placeholder="Full name" />
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium mb-1">Customer name <span className="text-danger">*</span></label>
-                <input value={manualForm.customer_name} onChange={e => setManualForm(f => ({ ...f, customer_name: e.target.value }))}
-                  className="input-field w-full" placeholder="Full name" />
+                <label className="block text-xs font-medium mb-1">Phone <span className="text-red-500">*</span></label>
+                <input value={manualForm.customer_phone} onChange={e => setManualForm(f => ({ ...f, customer_phone: e.target.value }))}
+                  className="input-field w-full" placeholder="+91 98765 43210" type="tel" />
               </div>
               <div>
-                <label className="block text-xs font-medium mb-1">Phone <span className="text-danger">*</span></label>
-                <input value={manualForm.customer_phone} onChange={e => setManualForm(f => ({ ...f, customer_phone: e.target.value }))}
-                  className="input-field w-full" placeholder="+91 XXXXX XXXXX" />
+                <label className="block text-xs font-medium mb-1">Email <span className="text-xs text-muted font-normal">(optional)</span></label>
+                <input value={manualForm.customer_email} onChange={e => setManualForm(f => ({ ...f, customer_email: e.target.value }))}
+                  className="input-field w-full" placeholder="customer@email.com" type="email" />
               </div>
             </div>
 
+            {/* Dates */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium mb-1">Pickup <span className="text-danger">*</span></label>
+                <label className="block text-xs font-medium mb-1">Pickup <span className="text-red-500">*</span></label>
                 <input type="datetime-local" value={manualForm.start_ts} onChange={e => setManualForm(f => ({ ...f, start_ts: e.target.value }))}
                   className="input-field w-full text-sm" />
               </div>
               <div>
-                <label className="block text-xs font-medium mb-1">Drop-off <span className="text-danger">*</span></label>
+                <label className="block text-xs font-medium mb-1">Drop-off <span className="text-red-500">*</span></label>
                 <input type="datetime-local" value={manualForm.end_ts} min={manualForm.start_ts} onChange={e => setManualForm(f => ({ ...f, end_ts: e.target.value }))}
                   className="input-field w-full text-sm" />
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium mb-1">Notes</label>
-              <input value={manualForm.notes} onChange={e => setManualForm(f => ({ ...f, notes: e.target.value }))}
-                className="input-field w-full" placeholder="Optional notes" />
+            {/* Amount + notes */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium mb-1">Amount collected (₹)</label>
+                <input value={manualForm.total_amount} onChange={e => setManualForm(f => ({ ...f, total_amount: e.target.value }))}
+                  className="input-field w-full" placeholder="0" type="number" min="0" step="1" />
+                <p className="text-[11px] text-muted mt-0.5">Leave 0 if not yet collected</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Notes</label>
+                <input value={manualForm.notes} onChange={e => setManualForm(f => ({ ...f, notes: e.target.value }))}
+                  className="input-field w-full" placeholder="e.g. Cash collected at pickup" />
+              </div>
             </div>
 
             {manualError && <p className="text-xs text-danger bg-danger/10 px-3 py-2 rounded-lg">{manualError}</p>}
