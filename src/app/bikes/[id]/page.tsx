@@ -159,7 +159,7 @@ export default async function BikeDetailPage({ params }: { params: { id: string 
 
       {/* Booking flow — Suspense needed because BookingFlow reads useSearchParams() */}
       <Suspense fallback={<div className="h-72 rounded-card bg-border/20 animate-pulse" />}>
-        <BookingFlow bike={bike} kycStatus={kycStatus} />
+        <BookingFlow bike={bike} kycStatus={kycStatus} isLoggedIn={!!user} />
       </Suspense>
     </div>
   );

@@ -47,6 +47,7 @@ export function RazorpayCheckout({
     if (!pickupTs) return null;
     setError(null);
     setSubmitting(true);
+
     const res = await fetch('/api/bookings/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -60,8 +61,25 @@ export function RazorpayCheckout({
         ...(couponCode ? { coupon_code: couponCode } : {}),
       }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not create booking');
+
+    // Middleware redirected to the sign-in page (HTML) or returned JSON 401 —
+    // either way, push to sign-in with the current URL as the return destination.
+    if (res.redirected || res.status === 401) {
+      setSubmitting(false);
+      const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
+      router.push(`/sign-in?redirectTo=${returnTo}`);
+      return null;
+    }
+
+    let data: any;
+    try {
+      data = await res.json();
+    } catch {
+      setSubmitting(false);
+      throw new Error('Server error — please try again.');
+    }
+
+    if (!res.ok) throw new Error(data?.error || 'Could not create booking');
     return data;
   }
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { PackagePicker } from './PackagePicker';
 import { PickupTimePicker } from './PickupTimePicker';
@@ -48,10 +48,12 @@ function defaultPickupTime(): Date | null {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, 0, 0, 0);
 }
 
-export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: string | null }) {
+export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike; kycStatus?: string | null; isLoggedIn?: boolean }) {
   const searchParams = useSearchParams();
+  const pathname = usePathname();
   const fromParam = searchParams.get('from') ?? '';
   const toParam   = searchParams.get('to')   ?? '';
+  const signInHref = `/sign-in?redirectTo=${encodeURIComponent(pathname + (searchParams.toString() ? '?' + searchParams.toString() : ''))}`;
 
   // Pre-fill tier from the duration the user already selected on the homepage
   const [tier, setTier] = useState<PackageTier>(() => {
@@ -191,19 +193,39 @@ export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: strin
             </div>
           )}
 
-          <RazorpayCheckout
-            bikeId={bike.id}
-            tier={tier}
-            pickupTs={pickupTs}
-            extraHelmets={extraHelmets}
-            mobileHolder={mobileHolder}
-            couponCode={appliedCoupon?.code ?? null}
-            disabled={!canProceed}
-            submitting={submitting}
-            setSubmitting={setSubmitting}
-            setError={setError}
-            totalAmount={breakdown?.totalAmount ?? 0}
-          />
+          {isLoggedIn ? (
+            <RazorpayCheckout
+              bikeId={bike.id}
+              tier={tier}
+              pickupTs={pickupTs}
+              extraHelmets={extraHelmets}
+              mobileHolder={mobileHolder}
+              couponCode={appliedCoupon?.code ?? null}
+              disabled={!canProceed}
+              submitting={submitting}
+              setSubmitting={setSubmitting}
+              setError={setError}
+              totalAmount={breakdown?.totalAmount ?? 0}
+            />
+          ) : (
+            <div className="mt-4 p-4 border-2 border-accent/30 rounded-xl text-center space-y-3">
+              <p className="text-sm text-muted">
+                You need an account to book a bike.
+              </p>
+              <Link
+                href={signInHref}
+                className="block w-full py-3 bg-accent text-white font-semibold rounded-xl text-base hover:bg-accent/90 transition-colors"
+              >
+                Sign in to Book →
+              </Link>
+              <p className="text-xs text-muted">
+                No account?{' '}
+                <Link href={`/sign-up?redirectTo=${encodeURIComponent(pathname + (searchParams.toString() ? '?' + searchParams.toString() : ''))}`} className="text-accent underline">
+                  Create one free
+                </Link>
+              </p>
+            </div>
+          )}
 
           <p className="text-[11px] text-muted text-center mt-3 leading-relaxed">
             By booking, you agree to our rental policy. Security deposit is paid by cash/UPI at pickup and refunded after drop-off.

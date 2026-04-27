@@ -31,6 +31,14 @@ export async function middleware(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   if (isProtected(req.nextUrl.pathname) && !user) {
+    // API routes must return JSON — not an HTML redirect — so the client
+    // can read the error without hitting a JSON parse exception.
+    if (req.nextUrl.pathname.startsWith('/api/')) {
+      return NextResponse.json(
+        { error: 'Please sign in to continue', auth: false },
+        { status: 401 }
+      );
+    }
     return NextResponse.redirect(new URL('/sign-in', req.url));
   }
 
