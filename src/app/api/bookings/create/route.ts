@@ -202,7 +202,7 @@ export async function POST(req: NextRequest) {
       coupon_id: couponRow.id, user_id: user.id, booking_id: booking.id, discount_amount: breakdown.couponDiscount,
     }).then(() =>
       admin.rpc('increment_coupon_used_count', { p_coupon_id: couponRow!.id })
-    ).catch(e => console.error('Coupon tracking error:', e));
+    ).catch((e: unknown) => console.error('Coupon tracking error:', e));
   }
 
   // --- 12. Pay at pickup — booking confirmed, no Razorpay needed

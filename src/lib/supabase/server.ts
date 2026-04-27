@@ -12,7 +12,7 @@ export async function createSupabaseServer() {
   return createServerClient(SUPABASE_URL, SUPABASE_ANON, {
     cookies: {
       getAll: () => cookieStore.getAll(),
-      setAll: (cookiesToSet) => {
+      setAll: (cookiesToSet: Array<{ name: string; value: string; options?: any }>) => {
         try {
           // Works in route handlers; throws (and is caught) in server components
           cookiesToSet.forEach(({ name, value, options }) =>

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode } from '@/lib/mock';
+import { sendVendorApproved, sendVendorRejected } from '@/lib/email';
 
 export const runtime = 'nodejs';
 
@@ -27,7 +28,6 @@ export async function POST(req: NextRequest) {
 
   const supabase = createSupabaseAdmin();
 
-  // Update vendor row
   const { data: vendor, error } = await supabase
     .from('vendors')
     .update({
@@ -36,19 +36,23 @@ export async function POST(req: NextRequest) {
       approved_at: action === 'approve' ? new Date().toISOString() : null,
     })
     .eq('id', vendor_id)
-    .select('user_id')
+    .select('user_id, business_name')
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // If approving, promote the user to 'vendor' role
   if (action === 'approve' && vendor) {
-    await supabase
-      .from('users')
-      .update({ role: 'vendor' })
-      .eq('id', vendor.user_id)
-      // don't downgrade admins
-      .neq('role', 'admin');
+    await supabase.from('users').update({ role: 'vendor' }).eq('id', vendor.user_id).neq('role', 'admin');
+  }
+
+  // Send email notification (fire-and-forget)
+  if (vendor) {
+    supabase.from('users').select('email, first_name').eq('id', vendor.user_id).maybeSingle().then(({ data: u }: { data: any }) => {
+      if (!u?.email) return;
+      const name = u.first_name || vendor.business_name;
+      if (action === 'approve') sendVendorApproved(u.email, name).catch(() => {});
+      else sendVendorRejected(u.email, name, notes).catch(() => {});
+    }).catch(() => {});
   }
 
   return NextResponse.json({ ok: true });

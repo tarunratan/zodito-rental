@@ -29,7 +29,7 @@ export const MOCK_USER = {
   first_name: 'Dev',
   last_name: 'User',
   role: 'admin' as 'customer' | 'vendor' | 'admin',
-  kyc_status: 'approved' as const,
+  kyc_status: 'approved' as 'not_submitted' | 'pending' | 'approved' | 'rejected',
   dl_number: 'TS0120230001234',
   dl_photo_url: null,
   aadhaar_photo_url: null,

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode } from '@/lib/mock';
+import { sendKycApproved, sendKycRejected } from '@/lib/email';
 
 export const runtime = 'nodejs';
 
@@ -34,6 +35,15 @@ export async function POST(req: NextRequest) {
       .eq('id', user_id);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    // Send email notification (fire-and-forget)
+    supabase.from('users').select('email, first_name').eq('id', user_id).maybeSingle().then(({ data: u }: { data: any }) => {
+      if (!u?.email) return;
+      const name = u.first_name || 'there';
+      if (action === 'approve') sendKycApproved(u.email, name).catch(() => {});
+      else sendKycRejected(u.email, name, reason).catch(() => {});
+    }).catch(() => {});
+
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: 'Admin only' }, { status: 403 });

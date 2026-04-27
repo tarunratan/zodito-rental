@@ -59,7 +59,7 @@ async function fetchVendorData(userId: string) {
       bike:bikes!inner(id, emoji, model:bike_models!inner(display_name)),
       user:users!inner(first_name, last_name, phone, email)
     `)
-    .in('bike_id', (bikes ?? []).map(b => b.id))
+    .in('bike_id', (bikes ?? []).map((b: { id: string }) => b.id))
     .order('start_ts', { ascending: false });
 
   return { vendor, bikes: bikes ?? [], bookings: bookings ?? [] };

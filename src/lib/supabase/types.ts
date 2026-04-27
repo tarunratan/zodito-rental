@@ -34,6 +34,7 @@ export interface User {
   dl_photo_url: string | null;
   aadhaar_photo_url: string | null;
   selfie_with_dl_photo_url: string | null;
+  kyc_rejection_reason: string | null;
   kyc_submitted_at: string | null;
   kyc_reviewed_at: string | null;
   created_at: string;

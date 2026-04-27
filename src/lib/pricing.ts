@@ -11,6 +11,8 @@ import type {
   PackageTier,
 } from './supabase/types';
 
+export type { PackageTier };
+
 export const GST_RATE = 0.18; // 18%
 export const DEFAULT_SECURITY_DEPOSIT = 500;
 export const NO_DL_EXTRA_DEPOSIT = 500; // added on top at pickup if no original DL

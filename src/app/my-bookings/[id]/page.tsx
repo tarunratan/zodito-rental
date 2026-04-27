@@ -5,6 +5,7 @@ import { createSupabaseServer } from '@/lib/supabase/server';
 import { isMockMode, mockBookingsStore, MOCK_BIKES } from '@/lib/mock';
 import { formatINR, formatDateTime } from '@/lib/utils';
 import { TIER_LABELS } from '@/lib/pricing';
+import type { PackageTier } from '@/lib/pricing';
 
 async function fetchBooking(id: string, userId: string) {
   if (isMockMode()) {
@@ -67,7 +68,7 @@ export default async function BookingDetailPage({ params }: { params: { id: stri
         <div className="grid grid-cols-2 gap-4 text-sm">
           <Detail label="Pickup" value={formatDateTime(booking.start_ts)} />
           <Detail label="Drop-off" value={formatDateTime(booking.end_ts)} />
-          <Detail label="Package" value={TIER_LABELS[booking.package_tier]} />
+          <Detail label="Package" value={TIER_LABELS[booking.package_tier as PackageTier]} />
           <Detail label="KM limit" value={`${booking.km_limit} km`} />
         </div>
       </div>
@@ -103,7 +104,7 @@ export default async function BookingDetailPage({ params }: { params: { id: stri
       <div className="card p-6 mb-4">
         <h2 className="font-display font-semibold text-lg mb-4">Payment breakdown</h2>
         <div className="space-y-2 text-sm">
-          <Row label={TIER_LABELS[booking.package_tier]} value={formatINR(booking.base_price ?? 0)} />
+          <Row label={TIER_LABELS[booking.package_tier as PackageTier]} value={formatINR(booking.base_price ?? 0)} />
           {booking.extra_helmet_count > 0 && (
             <Row label={`Extra helmet × ${booking.extra_helmet_count}`} value={formatINR(booking.extra_helmet_price ?? 0)} />
           )}
