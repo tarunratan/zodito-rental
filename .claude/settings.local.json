@@ -4,7 +4,9 @@
       "Bash(git add *)",
       "Bash(gh api *)",
       "Bash(python3 -c \" import sys, json data = json.load\\(sys.stdin\\) for d in data: print\\(d.get\\('id'\\), d.get\\('environment'\\), d.get\\('created_at'\\), d.get\\('description'\\)\\) \")",
-      "WebFetch(domain:www.zoditorentals.com)"
+      "WebFetch(domain:www.zoditorentals.com)",
+      "/mnt/c/Users/panugund/Downloads/zodito-chunk3/zodito-rental",
+      "edit"
     ]
   }
 }
