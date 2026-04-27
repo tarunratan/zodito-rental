@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { BookingFlow } from '@/components/booking/BookingFlow';
@@ -156,8 +157,10 @@ export default async function BikeDetailPage({ params }: { params: { id: string 
         </div>
       </div>
 
-      {/* Booking flow */}
-      <BookingFlow bike={bike} kycStatus={kycStatus} />
+      {/* Booking flow — Suspense needed because BookingFlow reads useSearchParams() */}
+      <Suspense fallback={<div className="h-72 rounded-card bg-border/20 animate-pulse" />}>
+        <BookingFlow bike={bike} kycStatus={kycStatus} />
+      </Suspense>
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { STORE_OPEN_HOUR, STORE_CLOSE_HOUR, STORE_CLOSE_MIN } from '@/lib/pricing';
+import { STORE_OPEN_HOUR, STORE_CLOSE_HOUR } from '@/lib/pricing';
 
 export function PickupTimePicker({
   value,
@@ -25,46 +25,31 @@ export function PickupTimePicker({
     const isSelectingToday = ymd(d) === ymd(new Date());
 
     let hour: number;
-    let minute: number;
 
     if (isSelectingToday) {
-      // Default to 1 hour from now, rounded up to next 30-min slot
+      // Default to 1 hour from now, rounded up to next whole hour
       const now = new Date();
-      const target = new Date(now.getTime() + 60 * 60 * 1000);
-      const rawMinute = target.getMinutes();
-      if (rawMinute === 0) {
-        hour = target.getHours();
-        minute = 0;
-      } else if (rawMinute <= 30) {
-        hour = target.getHours();
-        minute = 30;
-      } else {
-        hour = target.getHours() + 1;
-        minute = 0;
-      }
-      // Clamp to store hours
-      if (hour < STORE_OPEN_HOUR) { hour = STORE_OPEN_HOUR; minute = 0; }
-      if (hour > STORE_CLOSE_HOUR || (hour === STORE_CLOSE_HOUR && minute > STORE_CLOSE_MIN)) {
-        hour = STORE_CLOSE_HOUR; minute = STORE_CLOSE_MIN;
-      }
+      hour = now.getMinutes() > 0 ? now.getHours() + 2 : now.getHours() + 1;
+      if (hour < STORE_OPEN_HOUR) hour = STORE_OPEN_HOUR;
+      if (hour > STORE_CLOSE_HOUR) hour = STORE_CLOSE_HOUR;
     } else {
-      // For future days, preserve existing time or default 10:00 AM
+      // For future days, preserve existing hour or default 10 AM
       hour = value ? value.getHours() : 10;
-      minute = value ? value.getMinutes() : 0;
     }
 
-    onChange(new Date(d.getFullYear(), d.getMonth(), d.getDate(), hour, minute, 0, 0));
+    onChange(new Date(d.getFullYear(), d.getMonth(), d.getDate(), hour, 0, 0, 0));
   }
 
-  function selectTime(hour: number, minute: number) {
+  function selectTime(hour: number) {
     const base = value ?? new Date();
-    onChange(new Date(base.getFullYear(), base.getMonth(), base.getDate(), hour, minute, 0, 0));
+    onChange(new Date(base.getFullYear(), base.getMonth(), base.getDate(), hour, 0, 0, 0));
   }
 
   const selectedIsToday = value ? ymd(value) === ymd(new Date()) : false;
+  const timeSlots = buildTimeSlots();
 
   return (
-    <div className="grid md:grid-cols-[1fr_220px] gap-5">
+    <div className="grid md:grid-cols-[1fr_200px] gap-5">
       {/* Calendar */}
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -119,19 +104,19 @@ export function PickupTimePicker({
         </div>
       </div>
 
-      {/* Time picker */}
+      {/* Time picker — whole hours only, 12-hr AM/PM */}
       <div>
         <div className="form-label mb-2">Pickup time</div>
-        <div className="grid grid-cols-3 gap-1.5 max-h-[280px] overflow-y-auto pr-1">
-          {buildTimeSlots().map(slot => {
-            const isSelected = value && value.getHours() === slot.hour && value.getMinutes() === slot.minute;
-            const isPast = selectedIsToday && isPastSlot(slot.hour, slot.minute);
+        <div className="grid grid-cols-3 gap-1.5">
+          {timeSlots.map(slot => {
+            const isSelected = value && value.getHours() === slot.hour;
+            const isPast = selectedIsToday && slot.hour <= new Date().getHours();
 
             return (
               <button
-                key={slot.label}
+                key={slot.hour}
                 disabled={isPast}
-                onClick={() => !isPast && selectTime(slot.hour, slot.minute)}
+                onClick={() => !isPast && selectTime(slot.hour)}
                 className={cn(
                   'px-2 py-2 rounded-md text-xs font-medium border transition-all',
                   isPast
@@ -147,16 +132,25 @@ export function PickupTimePicker({
           })}
         </div>
         <p className="text-[10px] text-muted mt-2 leading-relaxed">
-          Store hours: 6:00 AM – 10:30 PM
+          Store hours: 6 AM – 10 PM
         </p>
       </div>
     </div>
   );
 }
 
-function isPastSlot(hour: number, minute: number): boolean {
-  const now = new Date();
-  return hour < now.getHours() || (hour === now.getHours() && minute <= now.getMinutes());
+function buildTimeSlots(): Array<{ hour: number; label: string }> {
+  const slots: Array<{ hour: number; label: string }> = [];
+  for (let h = STORE_OPEN_HOUR; h <= STORE_CLOSE_HOUR; h++) {
+    slots.push({ hour: h, label: fmt12(h) });
+  }
+  return slots;
+}
+
+function fmt12(h: number): string {
+  const period = h >= 12 ? 'PM' : 'AM';
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12} ${period}`;
 }
 
 function buildMonthDays(monthStart: Date): (Date | null)[] {
@@ -170,23 +164,6 @@ function buildMonthDays(monthStart: Date): (Date | null)[] {
   for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
   while (cells.length % 7 !== 0) cells.push(null);
   return cells;
-}
-
-function buildTimeSlots() {
-  const slots: { hour: number; minute: number; label: string }[] = [];
-  for (let h = STORE_OPEN_HOUR; h <= STORE_CLOSE_HOUR; h++) {
-    for (const m of [0, 30]) {
-      if (h === STORE_CLOSE_HOUR && m > STORE_CLOSE_MIN) continue;
-      slots.push({ hour: h, minute: m, label: fmt12(h, m) });
-    }
-  }
-  return slots;
-}
-
-function fmt12(h: number, m: number): string {
-  const period = h >= 12 ? 'PM' : 'AM';
-  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return `${h12}:${m.toString().padStart(2, '0')} ${period}`;
 }
 
 function startOfDay(d: Date): Date {

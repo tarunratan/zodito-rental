@@ -62,6 +62,9 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
   const [query, setQuery] = useState('');
   const [ownerFilter, setOwnerFilter] = useState<'all' | 'platform' | 'vendor'>('all');
 
+  const [showCustom, setShowCustom] = useState(false);
+  const [customHrsInput, setCustomHrsInput] = useState('');
+
   const bikes = availableBikes ?? initialBikes;
 
   const fetchAvailable = useCallback(async (from: string, to: string) => {
@@ -132,6 +135,14 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
     setToVal(defaultTo(fromVal, hrs));
   }
 
+  function applyCustomDuration() {
+    const hrs = parseInt(customHrsInput, 10);
+    if (!hrs || hrs < 12 || hrs > 720) return;
+    applyDuration(hrs);
+    setShowCustom(false);
+    setCustomHrsInput('');
+  }
+
   return (
     <section id="browse" className="max-w-7xl mx-auto px-4 md:px-6 py-10">
 
@@ -189,11 +200,11 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
           </div>
         </div>
         {/* Duration quick-select */}
-        <div className="flex gap-2 mt-3 overflow-x-auto pb-0.5 -mx-1 px-1" style={{ scrollbarWidth: 'none' }}>
+        <div className="flex gap-2 mt-3 overflow-x-auto pb-0.5 -mx-1 px-1 items-center" style={{ scrollbarWidth: 'none' }}>
           {DURATIONS.map(d => (
             <button
               key={d.hrs}
-              onClick={() => applyDuration(d.hrs)}
+              onClick={() => { applyDuration(d.hrs); setShowCustom(false); }}
               className={cn(
                 'shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border',
                 activeDurationHrs === d.hrs
@@ -204,6 +215,47 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
               {d.label}
             </button>
           ))}
+
+          {/* Custom duration */}
+          {!showCustom ? (
+            <button
+              onClick={() => setShowCustom(true)}
+              className={cn(
+                'shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border',
+                activeDurationHrs === null && fromVal && toVal
+                  ? 'bg-accent border-accent text-white'
+                  : 'bg-white/10 border-white/15 text-white/75 hover:bg-white/20 hover:text-white'
+              )}
+            >
+              Custom
+            </button>
+          ) : (
+            <div className="shrink-0 flex items-center gap-1.5">
+              <input
+                type="number"
+                min={12}
+                max={720}
+                value={customHrsInput}
+                onChange={e => setCustomHrsInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && applyCustomDuration()}
+                placeholder="hrs"
+                autoFocus
+                className="w-16 px-2 py-1.5 rounded-lg text-xs bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:ring-1 focus:ring-accent [color-scheme:dark]"
+              />
+              <button
+                onClick={applyCustomDuration}
+                className="px-2.5 py-1.5 bg-accent text-white rounded-lg text-xs font-semibold hover:bg-accent/90"
+              >
+                Go
+              </button>
+              <button
+                onClick={() => { setShowCustom(false); setCustomHrsInput(''); }}
+                className="text-white/60 hover:text-white text-sm leading-none px-1"
+              >
+                ✕
+              </button>
+            </div>
+          )}
         </div>
 
         {dateError && <p className="text-red-300 text-xs mt-2">{dateError}</p>}

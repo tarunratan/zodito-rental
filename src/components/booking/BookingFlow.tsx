@@ -1,36 +1,76 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { PackagePicker } from './PackagePicker';
 import { PickupTimePicker } from './PickupTimePicker';
 import { AddonPicker } from './AddonPicker';
 import { OrderSummary } from './OrderSummary';
 import { RazorpayCheckout } from './RazorpayCheckout';
-import { calculatePrice, tierEndTs, isWithinStoreHours, TIER_LABELS, STORE_OPEN_HOUR, STORE_CLOSE_HOUR, STORE_CLOSE_MIN } from '@/lib/pricing';
+import {
+  calculatePrice, tierEndTs, isWithinStoreHours,
+  TIER_LABELS, TIER_HOURS,
+  STORE_OPEN_HOUR, STORE_CLOSE_HOUR,
+} from '@/lib/pricing';
 import { formatDateTime } from '@/lib/utils';
 import type { PackageTier } from '@/lib/supabase/types';
 import type { AppliedCoupon } from './CouponInput';
 
 type Bike = any;
 
+// Map duration in hours to the closest available package tier
+function tierFromHours(hrs: number): PackageTier {
+  const tiers = Object.entries(TIER_HOURS) as Array<[PackageTier, number]>;
+  return tiers.reduce<[PackageTier, number]>(
+    (best, entry) => Math.abs(entry[1] - hrs) < Math.abs(best[1] - hrs) ? entry : best,
+    tiers[0]
+  )[0];
+}
+
+// Parse a local datetime string from URL params → Date, clamped to store hours
+function pickupFromParam(fromStr: string): Date | null {
+  if (!fromStr) return null;
+  const d = new Date(fromStr); // no Z suffix → parsed as local time
+  if (isNaN(d.getTime()) || d <= new Date()) return null;
+  let h = d.getHours();
+  if (d.getMinutes() >= 30) h = Math.min(h + 1, STORE_CLOSE_HOUR);
+  if (h < STORE_OPEN_HOUR) h = STORE_OPEN_HOUR;
+  if (h > STORE_CLOSE_HOUR) h = STORE_OPEN_HOUR;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, 0, 0, 0);
+}
+
 function defaultPickupTime(): Date | null {
   const now = new Date();
-  const target = new Date(now.getTime() + 60 * 60 * 1000); // +1hr
-  const rawMin = target.getMinutes();
-  let h = target.getHours();
-  let m = 0;
-  if (rawMin === 0) { m = 0; }
-  else if (rawMin <= 30) { m = 30; }
-  else { h = h + 1; m = 0; }
-  if (h < STORE_OPEN_HOUR) { h = STORE_OPEN_HOUR; m = 0; }
-  if (h > STORE_CLOSE_HOUR || (h === STORE_CLOSE_HOUR && m > STORE_CLOSE_MIN)) return null;
-  return new Date(target.getFullYear(), target.getMonth(), target.getDate(), h, m, 0, 0);
+  let h = now.getMinutes() > 0 ? now.getHours() + 2 : now.getHours() + 1;
+  if (h < STORE_OPEN_HOUR) h = STORE_OPEN_HOUR;
+  if (h > STORE_CLOSE_HOUR) return null;
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, 0, 0, 0);
 }
 
 export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: string | null }) {
-  const [tier, setTier] = useState<PackageTier>('24hr');
-  const [pickupTs, setPickupTs] = useState<Date | null>(defaultPickupTime);
+  const searchParams = useSearchParams();
+  const fromParam = searchParams.get('from') ?? '';
+  const toParam   = searchParams.get('to')   ?? '';
+
+  // Pre-fill tier from the duration the user already selected on the homepage
+  const [tier, setTier] = useState<PackageTier>(() => {
+    if (fromParam && toParam) {
+      const hrs = (new Date(toParam).getTime() - new Date(fromParam).getTime()) / 3_600_000;
+      if (hrs > 0) return tierFromHours(hrs);
+    }
+    return '24hr';
+  });
+
+  // Pre-fill pickup time from the homepage search
+  const [pickupTs, setPickupTs] = useState<Date | null>(() => {
+    if (fromParam) {
+      const d = pickupFromParam(fromParam);
+      if (d) return d;
+    }
+    return defaultPickupTime();
+  });
+
   const [extraHelmets, setExtraHelmets] = useState(0);
   const [mobileHolder, setMobileHolder] = useState(false);
   const [appliedCoupon, setAppliedCoupon] = useState<AppliedCoupon | null>(null);
@@ -56,7 +96,6 @@ export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: strin
 
   const pickupValid = pickupTs ? isWithinStoreHours(pickupTs) && pickupTs > new Date() : false;
   const canProceed = !!pickupTs && pickupValid && !!breakdown;
-
   const showKycNudge = kycStatus && kycStatus !== 'approved';
 
   return (
@@ -74,7 +113,7 @@ export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: strin
             </div>
             <p className="text-sm leading-snug">
               {kycStatus === 'not_submitted' && (
-                <>You can book now, but <strong>upload your documents before pickup</strong> — bike won't be released without verified KYC.</>
+                <>You can book now, but <strong>upload your documents before pickup</strong> — bike won&apos;t be released without verified KYC.</>
               )}
               {kycStatus === 'pending' && (
                 <>Your documents are under review. You&apos;re good to book — we&apos;ll verify before handover.</>
@@ -116,7 +155,7 @@ export function BookingFlow({ bike, kycStatus }: { bike: Bike; kycStatus?: strin
               </div>
               {!pickupValid && (
                 <div className="mt-2 text-xs text-danger">
-                  ⚠️ Pickup must be within store hours (6 AM – 10:30 PM) and in the future
+                  ⚠️ Pickup must be within store hours (6 AM – 10 PM) and in the future
                 </div>
               )}
             </div>
