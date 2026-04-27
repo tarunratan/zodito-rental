@@ -49,7 +49,7 @@ export default async function VendorPage() {
     .order('created_at', { ascending: false });
 
   // Booking summary
-  const bikeIds = (bikes ?? []).map(b => b.id);
+  const bikeIds = (bikes ?? []).map((b: { id: string }) => b.id);
   let totalEarnings = 0;
   let activeBookings = 0;
   if (bikeIds.length > 0) {
@@ -57,8 +57,8 @@ export default async function VendorPage() {
       .from('bookings')
       .select('vendor_payout, status')
       .in('bike_id', bikeIds);
-    totalEarnings = (bookings ?? []).reduce((s, b) => s + (b.vendor_payout ?? 0), 0);
-    activeBookings = (bookings ?? []).filter(b => b.status === 'confirmed' || b.status === 'ongoing').length;
+    totalEarnings = (bookings ?? []).reduce((s: number, b: { vendor_payout?: number }) => s + (b.vendor_payout ?? 0), 0);
+    activeBookings = (bookings ?? []).filter((b: { status: string }) => b.status === 'confirmed' || b.status === 'ongoing').length;
   }
 
   return (

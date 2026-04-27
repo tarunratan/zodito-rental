@@ -231,7 +231,7 @@ export async function POST(req: NextRequest) {
       discount_amount: breakdown.couponDiscount,
     }).then(() =>
       supabase.rpc('increment_coupon_used_count', { p_coupon_id: couponRow!.id })
-    ).catch(e => console.error('Coupon usage tracking error:', e));
+    ).catch((e: unknown) => console.error('Coupon usage tracking error:', e));
   }
 
   // --- 12. Create Razorpay order
