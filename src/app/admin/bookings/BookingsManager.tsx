@@ -24,9 +24,22 @@ type Booking = {
   damage_charge: number;
   notes: string | null;
   created_at: string;
+  source?: string;
+  customer_name?: string | null;
+  customer_phone?: string | null;
   user: { id: string; email: string | null; first_name: string | null; last_name: string | null; phone: string | null } | null;
   bike: { id: string; registration_number: string | null; color: string | null; emoji: string; model: { display_name: string } | null } | null;
 };
+
+function customerInfo(b: Booking) {
+  const name =
+    (b.user?.first_name || b.user?.last_name)
+      ? [b.user.first_name, b.user.last_name].filter(Boolean).join(' ')
+      : (b.customer_name ?? '—');
+  const email = b.user?.email ?? null;
+  const phone = b.user?.phone ?? b.customer_phone ?? null;
+  return { name, email, phone };
+}
 
 const STATUS_COLORS: Record<string, string> = {
   pending_payment: 'bg-yellow-100 text-yellow-700',
@@ -81,10 +94,13 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
     if (filter !== 'all' && b.status !== filter) return false;
     if (search) {
       const q = search.toLowerCase();
+      const c = customerInfo(b);
       return (
         b.booking_number.toLowerCase().includes(q) ||
-        (b.user?.email ?? '').toLowerCase().includes(q) ||
-        (b.user?.first_name ?? '').toLowerCase().includes(q) ||
+        c.name.toLowerCase().includes(q) ||
+        (c.email ?? '').toLowerCase().includes(q) ||
+        (c.phone ?? '').toLowerCase().includes(q) ||
+        (b.customer_name ?? '').toLowerCase().includes(q) ||
         (b.bike?.registration_number ?? '').toLowerCase().includes(q) ||
         (b.bike?.model?.display_name ?? '').toLowerCase().includes(q)
       );
@@ -214,9 +230,18 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                         <div className="text-xs text-muted">{fmt(b.created_at)}</div>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="font-medium">{[b.user?.first_name, b.user?.last_name].filter(Boolean).join(' ') || '—'}</div>
-                        <div className="text-xs text-muted">{b.user?.email}</div>
-                        {b.user?.phone && <div className="text-xs text-muted">{b.user.phone}</div>}
+                        {(() => { const c = customerInfo(b); return (
+                          <>
+                            <div className="font-medium flex items-center gap-1.5">
+                              {c.name}
+                              {b.source === 'manual' && (
+                                <span className="text-[9px] font-semibold uppercase tracking-wider bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded">Manual</span>
+                              )}
+                            </div>
+                            {c.email && <div className="text-xs text-muted">{c.email}</div>}
+                            {c.phone && <div className="text-xs text-muted">{c.phone}</div>}
+                          </>
+                        ); })()}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5">
