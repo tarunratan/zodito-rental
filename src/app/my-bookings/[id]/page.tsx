@@ -93,8 +93,17 @@ export default async function BookingDetailPage({ params }: { params: { id: stri
           <h2 className="font-display font-semibold text-lg mb-4">Pickup location</h2>
           <div className="space-y-2 text-sm">
             <div className="font-semibold">Zodito KPHB Store</div>
-            <div className="text-muted">KPHB, Hyderabad</div>
-            <a href="tel:+919392912953" className="inline-block text-accent font-semibold">
+            <div className="text-muted">436, Sri Sai Vamshi Residency, Gokul Plots</div>
+            <div className="text-muted">KPHB, Kukatpally, Hyderabad – 500 085</div>
+            <a
+              href="https://maps.app.goo.gl/wFYvrQ3DfyreaS1KA"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block text-accent font-semibold hover:underline"
+            >
+              📍 Open in Google Maps
+            </a>
+            <a href="tel:+919392912953" className="inline-block text-accent font-semibold ml-4">
               📞 +91 93929 12953
             </a>
           </div>

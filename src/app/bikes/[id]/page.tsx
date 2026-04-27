@@ -127,15 +127,28 @@ export default async function BikeDetailPage({ params }: { params: { id: string 
             <Spec label="Extra helmet" value="₹50" />
           </div>
 
-          {isVendor && bike.vendor && (
+          {isVendor && bike.vendor ? (
             <div className="mt-5 p-3 bg-primary/5 rounded-lg text-xs">
-              <div className="font-semibold text-primary">
-                Listed by {bike.vendor.business_name}
-              </div>
+              <div className="font-semibold text-primary">Listed by {bike.vendor.business_name}</div>
               <div className="text-muted mt-0.5">
                 📍 Pickup in {bike.vendor.pickup_area} · full address shared after booking
               </div>
             </div>
+          ) : (
+            <a
+              href="https://maps.app.goo.gl/wFYvrQ3DfyreaS1KA"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-5 p-3 bg-accent/5 border border-accent/20 rounded-lg text-xs flex items-start gap-2 hover:bg-accent/10 transition-colors group"
+            >
+              <span className="text-base mt-0.5">📍</span>
+              <div>
+                <div className="font-semibold text-primary group-hover:text-accent transition-colors">Zodito KPHB Store</div>
+                <div className="text-muted mt-0.5">436, Sri Sai Vamshi Residency, Gokul Plots</div>
+                <div className="text-muted">KPHB, Kukatpally, Hyderabad – 500 085</div>
+                <div className="text-accent mt-1 font-medium">Open in Maps →</div>
+              </div>
+            </a>
           )}
         </div>
       </div>

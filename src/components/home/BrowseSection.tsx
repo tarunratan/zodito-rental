@@ -21,8 +21,6 @@ const SORTS = [
 ];
 
 const DURATIONS = [
-  { label: '3 hrs',  hrs: 3 },
-  { label: '6 hrs',  hrs: 6 },
   { label: '12 hrs', hrs: 12 },
   { label: '1 day',  hrs: 24 },
   { label: '2 days', hrs: 48 },

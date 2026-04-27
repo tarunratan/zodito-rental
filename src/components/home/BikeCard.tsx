@@ -60,10 +60,23 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
 
         {/* Pickup location */}
         {pickupLocation && (
-          <div className="flex items-center gap-1 text-[11px] text-muted mb-3">
-            <span>📍</span>
-            <span className="line-clamp-1">{pickupLocation}</span>
-          </div>
+          isVendor ? (
+            <div className="flex items-center gap-1 text-[11px] text-muted mb-3">
+              <span>📍</span>
+              <span className="line-clamp-1">{pickupLocation}</span>
+            </div>
+          ) : (
+            <a
+              href="https://maps.app.goo.gl/wFYvrQ3DfyreaS1KA"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              className="flex items-center gap-1 text-[11px] text-accent hover:underline mb-3"
+            >
+              <span>📍</span>
+              <span className="line-clamp-1">KPHB, Kukatpally, Hyderabad</span>
+            </a>
+          )
         )}
 
         {/* Price */}
