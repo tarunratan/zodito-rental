@@ -56,11 +56,11 @@ async function fetchAnalytics() {
   const vendors = (vendorsRes.data ?? []) as { id: string; status: string }[];
   const expenseRows = (expensesRes.data ?? []) as ERow[];
 
-  const paidBookings = bookings.filter(b => b.payment_status === 'paid');
-  const totalRevenue = paidBookings.reduce((s, b) => s + Number(b.total_amount), 0);
-  const thisMonthRevenue = paidBookings.filter(b => b.created_at >= monthStart).reduce((s, b) => s + Number(b.total_amount), 0);
-  const lastMonthRevenue = paidBookings.filter(b => b.created_at >= lastMonthStart && b.created_at < monthStart).reduce((s, b) => s + Number(b.total_amount), 0);
-  const totalCommission = paidBookings.reduce((s, b) => s + Number(b.platform_commission), 0);
+  const revenueBookings = bookings.filter(b => ['confirmed', 'ongoing', 'completed'].includes(b.status));
+  const totalRevenue = revenueBookings.reduce((s, b) => s + Number(b.total_amount), 0);
+  const thisMonthRevenue = revenueBookings.filter(b => b.created_at >= monthStart).reduce((s, b) => s + Number(b.total_amount), 0);
+  const lastMonthRevenue = revenueBookings.filter(b => b.created_at >= lastMonthStart && b.created_at < monthStart).reduce((s, b) => s + Number(b.total_amount), 0);
+  const totalCommission = revenueBookings.reduce((s, b) => s + Number(b.platform_commission), 0);
 
   const byStatus = bookings.reduce((acc: Record<string, number>, b) => {
     acc[b.status] = (acc[b.status] ?? 0) + 1;
@@ -72,7 +72,7 @@ async function fetchAnalytics() {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const start = d.toISOString();
     const end = new Date(d.getFullYear(), d.getMonth() + 1, 1).toISOString();
-    const mb = paidBookings.filter(b => b.created_at >= start && b.created_at < end);
+    const mb = revenueBookings.filter(b => b.created_at >= start && b.created_at < end);
     monthlyRevenue.push({
       month: d.toLocaleString('en-IN', { month: 'short', year: '2-digit' }),
       revenue: mb.reduce((s, b) => s + Number(b.total_amount), 0),
@@ -81,7 +81,7 @@ async function fetchAnalytics() {
   }
 
   const bikeRevMap: Record<string, { revenue: number; rides: number; name: string }> = {};
-  for (const b of paidBookings) {
+  for (const b of revenueBookings) {
     const bikeInfo = bikes.find(bk => bk.id === b.bike_id);
     const name = (bikeInfo?.model as { display_name: string } | null)?.display_name ?? 'Unknown';
     if (!bikeRevMap[b.bike_id]) bikeRevMap[b.bike_id] = { revenue: 0, rides: 0, name };

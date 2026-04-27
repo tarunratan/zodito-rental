@@ -11,6 +11,9 @@ type Bike = {
   owner_type: string;
   listing_status: string;
   is_active: boolean;
+  frozen_from: string | null;
+  frozen_until: string | null;
+  freeze_reason: string | null;
   registration_number: string | null;
   color: string | null;
   color_hex: string | null;
@@ -93,6 +96,10 @@ export function BikesTab({
   const [deleteConfirm, setDeleteConfirm]     = useState<string | null>(null);
   const [rejectTarget, setRejectTarget]       = useState<string | null>(null);
   const [rejectReason, setRejectReason]       = useState('');
+  const [freezeTarget, setFreezeTarget]       = useState<Bike | null>(null);
+  const [freezeUntil, setFreezeUntil]         = useState('');
+  const [freezeReason, setFreezeReason]       = useState('');
+  const [freezeLoading, setFreezeLoading]     = useState(false);
 
   const selectedModel = models.find(m => m.id === form.model_id) ?? null;
 
@@ -207,6 +214,34 @@ export function BikesTab({
     router.refresh();
   }
 
+  async function freezeBike() {
+    if (!freezeTarget || !freezeUntil) return;
+    setFreezeLoading(true);
+    await fetch(`/api/admin/bikes/${freezeTarget.id}/freeze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ frozen_until: freezeUntil, freeze_reason: freezeReason || null }),
+    });
+    setFreezeLoading(false);
+    setFreezeTarget(null);
+    setFreezeUntil('');
+    setFreezeReason('');
+    router.refresh();
+  }
+
+  async function unfreezeBike(id: string) {
+    await fetch(`/api/admin/bikes/${id}/freeze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ unfreeze: true }),
+    });
+    router.refresh();
+  }
+
+  function isFrozen(bike: Bike) {
+    return !!bike.frozen_until && new Date(bike.frozen_until) > new Date();
+  }
+
   const displayBikes = subTab === 'pending' ? pendingBikes : allBikes;
 
   // Group models by category for the select
@@ -277,6 +312,9 @@ export function BikesTab({
                     {bike.owner_type === 'platform' && (
                       <span className="text-[10px] bg-accent/10 text-accent px-2 py-0.5 rounded-full font-medium">Zodito Fleet</span>
                     )}
+                    {isFrozen(bike) && (
+                      <span className="text-[10px] bg-info/10 text-info px-2 py-0.5 rounded-full font-medium">❄️ Frozen until {new Date(bike.frozen_until!).toLocaleDateString('en-IN')}</span>
+                    )}
                   </div>
                   <div className="text-xs text-muted mt-0.5 flex flex-wrap gap-x-2">
                     {bike.color && <span>{bike.color}</span>}
@@ -297,6 +335,11 @@ export function BikesTab({
                       <button onClick={() => { setRejectTarget(bike.id); setRejectReason(''); }} className="text-xs px-3 py-1.5 bg-danger/10 text-danger rounded-lg hover:bg-danger/20 font-medium">Reject</button>
                     </>
                   )}
+                  {isFrozen(bike) ? (
+                    <button onClick={() => unfreezeBike(bike.id)} className="text-xs px-3 py-1.5 bg-info/10 text-info rounded-lg hover:bg-info/20 font-medium">Unfreeze</button>
+                  ) : bike.listing_status === 'approved' ? (
+                    <button onClick={() => { setFreezeTarget(bike); setFreezeUntil(''); setFreezeReason(''); }} className="text-xs px-3 py-1.5 bg-warning/10 text-warning rounded-lg hover:bg-warning/20 font-medium">Freeze</button>
+                  ) : null}
                   <button onClick={() => openEdit(bike)} className="text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-border/50 font-medium">Edit</button>
                   <button onClick={() => setDeleteConfirm(bike.id)} className="text-xs px-3 py-1.5 bg-danger/10 text-danger rounded-lg hover:bg-danger/20 font-medium">Delete</button>
                 </div>
@@ -508,6 +551,33 @@ export function BikesTab({
                   {saving ? 'Saving…' : editBike ? 'Save changes' : 'Add bike'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Freeze modal ─────────────────────────────────── */}
+      {freezeTarget && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-primary rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-4">
+            <h3 className="font-semibold">Freeze {freezeTarget.model?.display_name ?? 'bike'}</h3>
+            <div>
+              <label className="block text-xs font-medium mb-1">Frozen until <span className="text-danger">*</span></label>
+              <input type="date" value={freezeUntil} onChange={e => setFreezeUntil(e.target.value)}
+                min={new Date().toISOString().slice(0, 10)}
+                className="input-field w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1">Reason (optional)</label>
+              <input value={freezeReason} onChange={e => setFreezeReason(e.target.value)}
+                className="input-field w-full" placeholder="e.g. Service, damage repair" />
+            </div>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setFreezeTarget(null)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-border/50">Cancel</button>
+              <button onClick={freezeBike} disabled={!freezeUntil || freezeLoading}
+                className="px-4 py-2 text-sm bg-warning text-white rounded-lg hover:bg-warning/90 disabled:opacity-50">
+                {freezeLoading ? 'Saving…' : 'Freeze bike'}
+              </button>
             </div>
           </div>
         </div>
