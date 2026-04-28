@@ -19,7 +19,6 @@ import type { AppliedCoupon } from './CouponInput';
 
 type Bike = any;
 
-// Map duration in hours to the closest available package tier
 function tierFromHours(hrs: number): PackageTier {
   const tiers = Object.entries(TIER_HOURS) as Array<[PackageTier, number]>;
   return tiers.reduce<[PackageTier, number]>(
@@ -28,10 +27,9 @@ function tierFromHours(hrs: number): PackageTier {
   )[0];
 }
 
-// Parse a local datetime string from URL params → Date, clamped to store hours
 function pickupFromParam(fromStr: string): Date | null {
   if (!fromStr) return null;
-  const d = new Date(fromStr); // no Z suffix → parsed as local time
+  const d = new Date(fromStr);
   if (isNaN(d.getTime()) || d <= new Date()) return null;
   let h = d.getHours();
   if (d.getMinutes() >= 30) h = Math.min(h + 1, STORE_CLOSE_HOUR);
@@ -55,7 +53,11 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
   const toParam   = searchParams.get('to')   ?? '';
   const signInHref = `/sign-in?redirectTo=${encodeURIComponent(pathname + (searchParams.toString() ? '?' + searchParams.toString() : ''))}`;
 
-  // Pre-fill tier from the duration the user already selected on the homepage
+  // Whether to show the compact quick-confirm view (true when homepage dates were passed in)
+  const hasSearchParams = !!(fromParam && toParam);
+  const [expandedForm, setExpandedForm] = useState(false);
+  const quickMode = hasSearchParams && !expandedForm;
+
   const [tier, setTier] = useState<PackageTier>(() => {
     if (fromParam && toParam) {
       const hrs = (new Date(toParam).getTime() - new Date(fromParam).getTime()) / 3_600_000;
@@ -64,7 +66,6 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
     return '24hr';
   });
 
-  // Pre-fill pickup time from the homepage search
   const [pickupTs, setPickupTs] = useState<Date | null>(() => {
     if (fromParam) {
       const d = pickupFromParam(fromParam);
@@ -100,81 +101,142 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
   const canProceed = !!pickupTs && pickupValid && !!breakdown;
   const showKycNudge = kycStatus && kycStatus !== 'approved';
 
+  const kycBanner = showKycNudge && (
+    <div className={`rounded-xl border-2 p-4 ${
+      kycStatus === 'rejected'
+        ? 'bg-danger/8 border-danger text-danger'
+        : 'bg-amber-50 border-amber-400 text-amber-900'
+    }`}>
+      <div className="flex items-center gap-2 font-bold text-sm mb-1">
+        <span className="text-lg">{kycStatus === 'rejected' ? '🚫' : '⚠️'}</span>
+        {kycStatus === 'rejected' ? 'KYC Rejected — Action Required' : 'KYC Verification Needed'}
+      </div>
+      <p className="text-sm leading-snug">
+        {kycStatus === 'not_submitted' && (
+          <>You can book now, but <strong>upload your documents before pickup</strong> — bike won&apos;t be released without verified KYC.</>
+        )}
+        {kycStatus === 'pending' && (
+          <>Your documents are under review. You&apos;re good to book — we&apos;ll verify before handover.</>
+        )}
+        {kycStatus === 'rejected' && (
+          <>Your previous submission was rejected. <strong>Re-submit before pickup</strong> or your booking may be cancelled.</>
+        )}
+      </p>
+      {(kycStatus === 'not_submitted' || kycStatus === 'rejected') && (
+        <Link
+          href="/kyc"
+          className={`inline-block mt-2 text-sm font-semibold underline ${kycStatus === 'rejected' ? 'text-danger' : 'text-amber-800'}`}
+        >
+          {kycStatus === 'rejected' ? 'Re-submit KYC →' : 'Upload documents →'}
+        </Link>
+      )}
+    </div>
+  );
+
   return (
     <div className="grid md:grid-cols-[1fr_380px] gap-6">
-      <div className="space-y-5">
-        {showKycNudge && (
-          <div className={`rounded-xl border-2 p-4 ${
-            kycStatus === 'rejected'
-              ? 'bg-danger/8 border-danger text-danger'
-              : 'bg-amber-50 border-amber-400 text-amber-900'
-          }`}>
-            <div className="flex items-center gap-2 font-bold text-sm mb-1">
-              <span className="text-lg">{kycStatus === 'rejected' ? '🚫' : '⚠️'}</span>
-              {kycStatus === 'rejected' ? 'KYC Rejected — Action Required' : 'KYC Verification Needed'}
-            </div>
-            <p className="text-sm leading-snug">
-              {kycStatus === 'not_submitted' && (
-                <>You can book now, but <strong>upload your documents before pickup</strong> — bike won&apos;t be released without verified KYC.</>
-              )}
-              {kycStatus === 'pending' && (
-                <>Your documents are under review. You&apos;re good to book — we&apos;ll verify before handover.</>
-              )}
-              {kycStatus === 'rejected' && (
-                <>Your previous submission was rejected. <strong>Re-submit before pickup</strong> or your booking may be cancelled.</>
-              )}
-            </p>
-            {(kycStatus === 'not_submitted' || kycStatus === 'rejected') && (
-              <Link
-                href="/kyc"
-                className={`inline-block mt-2 text-sm font-semibold underline ${kycStatus === 'rejected' ? 'text-danger' : 'text-amber-800'}`}
+
+      {/* ── Left column ── */}
+      {quickMode ? (
+        /* QUICK CONFIRM MODE: dates came from homepage, skip the big calendar */
+        <div className="space-y-5">
+          {kycBanner}
+
+          <div className="card p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-display font-semibold text-lg">Your trip details</h3>
+              <button
+                onClick={() => setExpandedForm(true)}
+                className="text-sm text-accent underline hover:no-underline"
               >
-                {kycStatus === 'rejected' ? 'Re-submit KYC →' : 'Upload documents →'}
-              </Link>
-            )}
-          </div>
-        )}
+                Change
+              </button>
+            </div>
 
-        <Section number={1} title="Choose your package">
-          <PackagePicker
-            packages={bike.model.packages}
-            value={tier}
-            onChange={setTier}
-          />
-        </Section>
-
-        <Section number={2} title="Pickup date & time">
-          <PickupTimePicker value={pickupTs} onChange={setPickupTs} />
-          {pickupTs && endTs && (
-            <div className="mt-4 p-3 bg-accent/5 border border-accent/20 rounded-lg text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted">Pickup</span>
-                <span className="font-semibold">{formatDateTime(pickupTs)}</span>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between items-center py-2 border-b border-border">
+                <span className="text-muted">Package</span>
+                <span className="font-semibold">{TIER_LABELS[tier]}</span>
               </div>
-              <div className="flex justify-between mt-1">
-                <span className="text-muted">Drop-off ({TIER_LABELS[tier]})</span>
-                <span className="font-semibold">{formatDateTime(endTs)}</span>
-              </div>
-              {!pickupValid && (
-                <div className="mt-2 text-xs text-danger">
-                  ⚠️ Pickup must be within store hours (6 AM – 10 PM) and in the future
+              {pickupTs && (
+                <div className="flex justify-between items-center py-2 border-b border-border">
+                  <span className="text-muted">Pickup</span>
+                  <span className="font-semibold">{formatDateTime(pickupTs)}</span>
+                </div>
+              )}
+              {endTs && (
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-muted">Drop-off</span>
+                  <span className="font-semibold">{formatDateTime(endTs)}</span>
                 </div>
               )}
             </div>
-          )}
-        </Section>
 
-        <Section number={3} title="Add-ons">
-          <AddonPicker
-            extraHelmets={extraHelmets}
-            onHelmetsChange={setExtraHelmets}
-            mobileHolder={mobileHolder}
-            onMobileHolderChange={setMobileHolder}
-          />
-        </Section>
-      </div>
+            {!pickupValid && pickupTs && (
+              <div className="mt-3 text-xs text-danger bg-danger/8 rounded-lg p-2.5">
+                ⚠️ Pickup must be within store hours (6 AM – 10 PM) and in the future.{' '}
+                <button onClick={() => setExpandedForm(true)} className="underline font-semibold">
+                  Change time →
+                </button>
+              </div>
+            )}
+          </div>
 
-      {/* Right column — sticky order summary */}
+          <Section number={1} title="Add-ons">
+            <AddonPicker
+              extraHelmets={extraHelmets}
+              onHelmetsChange={setExtraHelmets}
+              mobileHolder={mobileHolder}
+              onMobileHolderChange={setMobileHolder}
+            />
+          </Section>
+        </div>
+      ) : (
+        /* FULL FORM MODE */
+        <div className="space-y-5">
+          {kycBanner}
+
+          <Section number={1} title="Choose your package">
+            <PackagePicker
+              packages={bike.model.packages}
+              value={tier}
+              onChange={setTier}
+            />
+          </Section>
+
+          <Section number={2} title="Pickup date & time">
+            <PickupTimePicker value={pickupTs} onChange={setPickupTs} />
+            {pickupTs && endTs && (
+              <div className="mt-4 p-3 bg-accent/5 border border-accent/20 rounded-lg text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted">Pickup</span>
+                  <span className="font-semibold">{formatDateTime(pickupTs)}</span>
+                </div>
+                <div className="flex justify-between mt-1">
+                  <span className="text-muted">Drop-off ({TIER_LABELS[tier]})</span>
+                  <span className="font-semibold">{formatDateTime(endTs)}</span>
+                </div>
+                {!pickupValid && (
+                  <div className="mt-2 text-xs text-danger">
+                    ⚠️ Pickup must be within store hours (6 AM – 10 PM) and in the future
+                  </div>
+                )}
+              </div>
+            )}
+          </Section>
+
+          <Section number={3} title="Add-ons">
+            <AddonPicker
+              extraHelmets={extraHelmets}
+              onHelmetsChange={setExtraHelmets}
+              mobileHolder={mobileHolder}
+              onMobileHolderChange={setMobileHolder}
+            />
+          </Section>
+        </div>
+      )}
+
+      {/* ── Right column — sticky order summary ── */}
       <div>
         <div className="md:sticky md:top-20">
           <OrderSummary

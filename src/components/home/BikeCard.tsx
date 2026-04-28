@@ -1,11 +1,19 @@
 import Link from 'next/link';
 import { formatINR } from '@/lib/utils';
+import { TIER_HOURS, TIER_LABELS } from '@/lib/pricing';
+import type { PackageTier } from '@/lib/supabase/types';
 
 type Bike = any;
 
+function tierFromHours(hrs: number): PackageTier {
+  const tiers = Object.entries(TIER_HOURS) as Array<[PackageTier, number]>;
+  return tiers.reduce<[PackageTier, number]>(
+    (best, entry) => Math.abs(entry[1] - hrs) < Math.abs(best[1] - hrs) ? entry : best,
+    tiers[0]
+  )[0];
+}
+
 export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFrom?: string; searchTo?: string }) {
-  const pkg24 = bike.model?.packages?.find((p: any) => p.tier === '24hr');
-  const pkg12 = bike.model?.packages?.find((p: any) => p.tier === '12hr');
   const isVendor = bike.owner_type === 'vendor';
   const pickupLocation = isVendor
     ? (bike.vendor?.pickup_area ?? bike.vendor?.business_name ?? null)
@@ -14,6 +22,19 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
   const href = searchFrom && searchTo
     ? `/bikes/${bike.id}?from=${encodeURIComponent(searchFrom)}&to=${encodeURIComponent(searchTo)}`
     : `/bikes/${bike.id}`;
+
+  // Determine which price to show: searched duration's tier, or default 12hr / 24hr
+  const searchedTier: PackageTier | null = (() => {
+    if (!searchFrom || !searchTo) return null;
+    const hrs = (new Date(searchTo).getTime() - new Date(searchFrom).getTime()) / 3_600_000;
+    return hrs > 0 ? tierFromHours(hrs) : null;
+  })();
+
+  const pkg12  = bike.model?.packages?.find((p: any) => p.tier === '12hr');
+  const pkg24  = bike.model?.packages?.find((p: any) => p.tier === '24hr');
+  const searchPkg = searchedTier
+    ? bike.model?.packages?.find((p: any) => p.tier === searchedTier)
+    : null;
 
   return (
     <Link href={href} className="group card overflow-hidden hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-200">
@@ -79,20 +100,37 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
           )
         )}
 
-        {/* Price */}
+        {/* Price — dynamic based on search, or default */}
         <div className="flex items-baseline justify-between pt-3 border-t border-border">
-          <div>
-            <div className="text-[10px] text-muted uppercase tracking-wide">Starts at</div>
-            <div className="flex items-baseline gap-1">
-              <span className="font-display font-bold text-xl text-primary">{pkg12 ? formatINR(pkg12.price) : '—'}</span>
-              <span className="text-xs text-muted">/ 12 hrs</span>
+          {searchPkg ? (
+            // Show price for the searched duration
+            <div className="w-full">
+              <div className="text-[10px] text-muted uppercase tracking-wide mb-0.5">Your trip</div>
+              <div className="flex items-baseline justify-between">
+                <div className="flex items-baseline gap-1">
+                  <span className="font-display font-bold text-xl text-accent">{formatINR(searchPkg.price)}</span>
+                  <span className="text-xs text-muted">/ {TIER_LABELS[searchedTier!]}</span>
+                </div>
+                <span className="text-[11px] text-muted">{searchPkg.km_limit} km</span>
+              </div>
             </div>
-          </div>
-          {pkg24 && (
-            <div className="text-right">
-              <div className="text-[10px] text-muted uppercase tracking-wide">24 hrs</div>
-              <div className="font-display font-bold text-base text-accent">{formatINR(pkg24.price)}</div>
-            </div>
+          ) : (
+            // Default: show starts-at + 24hr
+            <>
+              <div>
+                <div className="text-[10px] text-muted uppercase tracking-wide">Starts at</div>
+                <div className="flex items-baseline gap-1">
+                  <span className="font-display font-bold text-xl text-primary">{pkg12 ? formatINR(pkg12.price) : '—'}</span>
+                  <span className="text-xs text-muted">/ 12 hrs</span>
+                </div>
+              </div>
+              {pkg24 && (
+                <div className="text-right">
+                  <div className="text-[10px] text-muted uppercase tracking-wide">24 hrs</div>
+                  <div className="font-display font-bold text-base text-accent">{formatINR(pkg24.price)}</div>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

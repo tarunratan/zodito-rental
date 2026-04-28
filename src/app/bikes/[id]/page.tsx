@@ -16,28 +16,49 @@ async function fetchBike(id: string) {
   }
 
   const supabase = createSupabaseAdmin();
-  const { data, error } = await supabase
-    .from('bikes')
-    .select(`
-      id, emoji, image_url, image_url_2, image_url_3, color, color_hex, year,
-      total_rides, rating_avg, rating_count, owner_type, registration_number,
-      model:bike_models!inner(
-        id, name, display_name, category, cc,
-        excess_km_rate, late_hourly_penalty, has_weekend_override, weekend_override_model_id,
-        packages:bike_model_packages(tier, price, km_limit)
-      ),
-      vendor:vendors(id, business_name, pickup_area, pickup_address)
-    `)
-    .eq('id', id)
-    .eq('is_active', true)
-    .eq('listing_status', 'approved')
-    .maybeSingle();
+  const [bikeRes, bikePackagesRes] = await Promise.all([
+    supabase
+      .from('bikes')
+      .select(`
+        id, emoji, image_url, image_url_2, image_url_3, color, color_hex, year,
+        total_rides, rating_avg, rating_count, owner_type, registration_number,
+        model:bike_models!inner(
+          id, name, display_name, category, cc,
+          excess_km_rate, late_hourly_penalty, has_weekend_override, weekend_override_model_id,
+          packages:bike_model_packages(tier, price, km_limit)
+        ),
+        vendor:vendors(id, business_name, pickup_area, pickup_address)
+      `)
+      .eq('id', id)
+      .eq('is_active', true)
+      .eq('listing_status', 'approved')
+      .maybeSingle(),
+    // Per-bike price overrides — gracefully handle if table doesn't exist yet
+    supabase
+      .from('bike_packages')
+      .select('tier, price, km_limit')
+      .eq('bike_id', id)
+      .then((r: any) => r.data ?? [])
+      .catch(() => [] as any[]),
+  ]);
 
-  if (error) {
-    console.error('fetchBike error:', error);
+  if (bikeRes.error) {
+    console.error('fetchBike error:', bikeRes.error);
     return null;
   }
-  return data;
+  const bike = bikeRes.data;
+  if (!bike) return null;
+
+  // Merge: per-bike overrides take priority over model-level packages
+  const overrides = bikePackagesRes as any[];
+  if (overrides.length > 0) {
+    bike.model.packages = bike.model.packages.map((mp: any) => {
+      const ov = overrides.find((bp: any) => bp.tier === mp.tier);
+      return ov ? { ...mp, price: ov.price, km_limit: ov.km_limit } : mp;
+    });
+  }
+
+  return bike;
 }
 
 export default async function BikeDetailPage({ params }: { params: { id: string } }) {

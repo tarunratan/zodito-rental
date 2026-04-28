@@ -30,8 +30,13 @@ export function OrderSummary({
       <h3 className="font-display font-semibold text-lg mb-4">Order summary</h3>
 
       <div className="flex gap-3 pb-4 border-b border-border">
-        <div className="w-14 h-14 rounded-lg bg-primary/5 flex items-center justify-center text-3xl shrink-0">
-          {bike.emoji}
+        <div className="w-14 h-14 rounded-lg bg-primary/5 overflow-hidden flex items-center justify-center shrink-0">
+          {bike.image_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={bike.image_url} alt={bike.model.display_name} className="w-full h-full object-cover" />
+          ) : (
+            <span className="text-3xl">{bike.emoji}</span>
+          )}
         </div>
         <div className="min-w-0">
           <div className="font-semibold text-sm line-clamp-2 leading-snug">{bike.model.display_name}</div>

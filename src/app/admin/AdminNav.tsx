@@ -14,6 +14,7 @@ export function AdminNav({ kycPending = 0, vendorPending = 0, activeBookings = 0
 
   const tabs = [
     { label: 'Bikes', href: '/admin' },
+    { label: 'Pricing', href: '/admin/pricing' },
     { label: 'Bookings', href: '/admin/bookings', badge: activeBookings },
     { label: 'KYC', href: '/admin/kyc', badge: kycPending },
     { label: 'Vendors', href: '/admin/vendors', badge: vendorPending },
