@@ -145,9 +145,24 @@ export default async function BikeDetailPage({ params }: { params: { id: string 
             </div>
           </div>
 
-          <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
-            <Spec label="Excess km" value={`₹${excessRate}/km`} />
-            <Spec label="Late return" value={`₹${lateRate}/hr`} />
+          {/* Extra charges — bold warning so customers know upfront */}
+          <div className="mt-5 p-3 bg-amber-50 border border-amber-300 rounded-lg">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-amber-700 mb-2">
+              ⚠️ Extra Charges (if applicable)
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+              <div>
+                <span className="text-amber-800 text-[11px]">Excess km (beyond limit)</span>
+                <div className="font-bold text-amber-900 text-base">₹{excessRate} / km</div>
+              </div>
+              <div>
+                <span className="text-amber-800 text-[11px]">Late return (per hour)</span>
+                <div className="font-bold text-amber-900 text-base">₹{lateRate} / hr</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
             <Spec label="1 helmet" value="Free" />
             <Spec label="Extra helmet" value="₹50" />
           </div>

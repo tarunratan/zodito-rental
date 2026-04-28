@@ -46,7 +46,11 @@ export function PickupTimePicker({
   }
 
   const selectedIsToday = value ? ymd(value) === ymd(new Date()) : false;
-  const timeSlots = buildTimeSlots();
+  const allSlots = buildTimeSlots();
+  // Hide past slots entirely — only show hours that can still be booked
+  const timeSlots = allSlots.filter(slot =>
+    !(selectedIsToday && slot.hour <= new Date().getHours())
+  );
 
   return (
     <div className="grid md:grid-cols-[1fr_200px] gap-5">
@@ -104,33 +108,32 @@ export function PickupTimePicker({
         </div>
       </div>
 
-      {/* Time picker — whole hours only, 12-hr AM/PM */}
+      {/* Time picker — whole hours only, 12-hr AM/PM, past hours hidden */}
       <div>
         <div className="form-label mb-2">Pickup time</div>
-        <div className="grid grid-cols-3 gap-1.5">
-          {timeSlots.map(slot => {
-            const isSelected = value && value.getHours() === slot.hour;
-            const isPast = selectedIsToday && slot.hour <= new Date().getHours();
-
-            return (
-              <button
-                key={slot.hour}
-                disabled={isPast}
-                onClick={() => !isPast && selectTime(slot.hour)}
-                className={cn(
-                  'px-2 py-2 rounded-md text-xs font-medium border transition-all',
-                  isPast
-                    ? 'bg-border/20 border-border text-border cursor-not-allowed'
-                    : isSelected
+        {timeSlots.length === 0 ? (
+          <p className="text-xs text-muted italic">Store is closed for today. Please select a future date.</p>
+        ) : (
+          <div className="grid grid-cols-3 gap-1.5">
+            {timeSlots.map(slot => {
+              const isSelected = value && value.getHours() === slot.hour;
+              return (
+                <button
+                  key={slot.hour}
+                  onClick={() => selectTime(slot.hour)}
+                  className={cn(
+                    'px-2 py-2 rounded-md text-xs font-medium border transition-all',
+                    isSelected
                       ? 'bg-accent text-white border-accent shadow-sm'
                       : 'bg-primary/5 border-border text-primary hover:bg-accent/10 hover:border-accent/60 hover:text-accent'
-                )}
-              >
-                {slot.label}
-              </button>
-            );
-          })}
-        </div>
+                  )}
+                >
+                  {slot.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
         <p className="text-[10px] text-muted mt-2 leading-relaxed">
           Store hours: 6 AM – 10 PM
         </p>

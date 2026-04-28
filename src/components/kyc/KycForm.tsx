@@ -64,11 +64,12 @@ export function KycForm({ currentStatus }: { currentStatus: string }) {
         onChange={setAadhaar}
       />
       <UploadTile
-        title="Selfie"
-        hint="Clear photo of your face"
+        title="Selfie with Driving License"
+        hint="Take a live photo holding your DL — gallery not allowed"
         icon="🤳"
         state={selfie}
         onChange={setSelfie}
+        cameraOnly
       />
 
       {error && (
@@ -93,13 +94,14 @@ export function KycForm({ currentStatus }: { currentStatus: string }) {
 }
 
 function UploadTile({
-  title, hint, icon, state, onChange,
+  title, hint, icon, state, onChange, cameraOnly = false,
 }: {
   title: string;
   hint: string;
   icon: string;
   state: FileState;
   onChange: (s: FileState) => void;
+  cameraOnly?: boolean;
 }) {
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -133,14 +135,34 @@ function UploadTile({
             onClick={() => onChange({ file: null, previewUrl: null })}
             className="absolute top-2 right-2 bg-white/95 rounded-md px-2 py-1 text-xs font-semibold"
           >
-            Replace
+            Retake
           </button>
         </div>
       ) : (
-        <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-border rounded-lg cursor-pointer hover:border-accent/50 hover:bg-accent/5 transition-colors">
-          <div className="text-muted text-sm">Tap to upload photo</div>
-          <div className="text-[11px] text-muted mt-1">JPG / PNG up to 8 MB</div>
-          <input type="file" accept="image/*" onChange={onFile} className="hidden" />
+        <label className={`flex flex-col items-center justify-center h-32 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
+          cameraOnly
+            ? 'border-accent/40 bg-accent/3 hover:bg-accent/8'
+            : 'border-border hover:border-accent/50 hover:bg-accent/5'
+        }`}>
+          {cameraOnly ? (
+            <>
+              <div className="text-2xl mb-1">📷</div>
+              <div className="text-sm font-semibold text-accent">Open Camera</div>
+              <div className="text-[11px] text-muted mt-0.5">Live photo only — no uploads</div>
+            </>
+          ) : (
+            <>
+              <div className="text-muted text-sm">Tap to upload photo</div>
+              <div className="text-[11px] text-muted mt-1">JPG / PNG up to 8 MB</div>
+            </>
+          )}
+          <input
+            type="file"
+            accept="image/*"
+            onChange={onFile}
+            className="hidden"
+            {...(cameraOnly ? { capture: 'user' } : {})}
+          />
         </label>
       )}
     </div>

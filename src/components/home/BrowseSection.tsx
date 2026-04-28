@@ -10,6 +10,7 @@ type BikeRow = any;
 const CATEGORIES: Array<{ id: BikeCategory | 'all'; label: string; icon: string }> = [
   { id: 'all', label: 'All Bikes', icon: '🏍️' },
   { id: 'scooter', label: 'Scooters', icon: '🛵' },
+  { id: 'bike_sub125', label: 'Under 125cc', icon: '🏍️' },
   { id: 'bike_sub150', label: '125–150cc', icon: '🏍️' },
   { id: 'bike_plus150', label: '150cc+', icon: '🏁' },
 ];
@@ -57,6 +58,13 @@ function hourPart(s: string) { return parseInt(s.slice(11, 13), 10) || PICKUP_OP
 function combine(date: string, hour: number): string {
   const z = (n: number) => n.toString().padStart(2, '0');
   return `${date}T${z(hour)}:00`;
+}
+
+// Only show hours that haven't passed yet (when the selected date is today)
+function availableHours(dateStr: string) {
+  if (dateStr !== todayDateStr()) return HOUR_OPTIONS;
+  const currentHour = new Date().getHours();
+  return HOUR_OPTIONS.filter(o => o.value > currentHour);
 }
 
 function todayDateStr(): string {
@@ -215,9 +223,10 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
                     setToVal(defaultTo(newFrom));
                   }
                 }}
-                className="w-24 rounded-xl border border-white/20 bg-white/10 text-white px-2 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent [color-scheme:dark]"
+                className="w-24 rounded-xl border border-white/30 px-2 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                style={{ backgroundColor: 'rgba(0,0,0,0.35)', color: 'white', colorScheme: 'dark' }}
               >
-                {HOUR_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {availableHours(datePart(fromVal)).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </div>
           </div>
@@ -240,9 +249,10 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
               <select
                 value={hourPart(toVal)}
                 onChange={e => setToVal(combine(datePart(toVal), Number(e.target.value)))}
-                className="w-24 rounded-xl border border-white/20 bg-white/10 text-white px-2 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent [color-scheme:dark]"
+                className="w-24 rounded-xl border border-white/30 px-2 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                style={{ backgroundColor: 'rgba(0,0,0,0.35)', color: 'white', colorScheme: 'dark' }}
               >
-                {HOUR_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {availableHours(datePart(toVal)).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </div>
           </div>
