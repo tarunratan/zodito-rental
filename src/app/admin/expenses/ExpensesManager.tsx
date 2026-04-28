@@ -22,11 +22,17 @@ type Expense = {
   bike: BikeOption | null;
 };
 
-const CATEGORIES = ['tyre', 'maintenance', 'repair', 'insurance', 'fuel', 'cleaning', 'parts', 'other'] as const;
+const CATEGORIES = ['bad_debt', 'damage', 'tyre', 'maintenance', 'repair', 'insurance', 'fuel', 'cleaning', 'parts', 'other'] as const;
 
 const CAT_ICONS: Record<string, string> = {
-  tyre: '🔄', maintenance: '🔧', repair: '🛠️', insurance: '📋',
-  fuel: '⛽', cleaning: '🧽', parts: '⚙️', other: '📝',
+  bad_debt: '💀', damage: '💥', tyre: '🔄', maintenance: '🔧', repair: '🛠️',
+  insurance: '📋', fuel: '⛽', cleaning: '🧽', parts: '⚙️', other: '📝',
+};
+
+const CAT_LABELS: Record<string, string> = {
+  bad_debt: 'Bad Debt / Write-off', damage: 'Damage / Accident',
+  tyre: 'Tyre / Tube', maintenance: 'Maintenance', repair: 'Repair',
+  insurance: 'Insurance', fuel: 'Fuel', cleaning: 'Cleaning', parts: 'Parts', other: 'Other',
 };
 
 const EMPTY_FORM = {
@@ -263,8 +269,13 @@ export function ExpensesManager({ initialExpenses, bikes }: { initialExpenses: E
                 <div>
                   <label className="text-xs font-medium text-muted block mb-1">Category *</label>
                   <select value={form.category} onChange={e => upd('category', e.target.value)} className="input-field w-full">
-                    {CATEGORIES.map(c => <option key={c} value={c}>{CAT_ICONS[c]} {c}</option>)}
+                    {CATEGORIES.map(c => <option key={c} value={c}>{CAT_ICONS[c]} {CAT_LABELS[c] ?? c}</option>)}
                   </select>
+                  {(form.category === 'bad_debt' || form.category === 'damage') && (
+                    <p className="text-[11px] text-amber-600 bg-amber-50 rounded px-2 py-1 mt-1">
+                      ⚠️ Financial write-off — include booking number in description
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted block mb-1">Date *</label>
