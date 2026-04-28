@@ -30,18 +30,51 @@ const DURATIONS = [
   { label: '30 days', hrs: 720 },
 ];
 
-// datetime-local inputs are LOCAL time strings — never use toISOString() (UTC) for them
+const PICKUP_OPEN  = 6;   // 6 AM
+const PICKUP_CLOSE = 22;  // 10 PM
+
+// hour options for the select dropdowns
+const HOUR_OPTIONS = Array.from({ length: PICKUP_CLOSE - PICKUP_OPEN + 1 }, (_, i) => {
+  const h = i + PICKUP_OPEN;
+  const period = h >= 12 ? 'PM' : 'AM';
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return { value: h, label: `${h12} ${period}` };
+});
+
+// Build a "YYYY-MM-DDTHH:00" local-time string (no minutes ever)
 function toLocalStr(d: Date): string {
   const z = (n: number) => n.toString().padStart(2, '0');
-  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`;
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:00`;
+}
+
+// Extract the date part "YYYY-MM-DD" from a local string
+function datePart(s: string) { return s.slice(0, 10); }
+
+// Extract the hour number from a local string
+function hourPart(s: string) { return parseInt(s.slice(11, 13), 10) || PICKUP_OPEN; }
+
+// Combine a date string + hour into a local datetime string
+function combine(date: string, hour: number): string {
+  const z = (n: number) => n.toString().padStart(2, '0');
+  return `${date}T${z(hour)}:00`;
+}
+
+function todayDateStr(): string {
+  const d = new Date();
+  const z = (n: number) => n.toString().padStart(2, '0');
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
 }
 
 function defaultFrom() {
   const d = new Date();
-  // round up to next 30-min slot
-  const mins = d.getMinutes();
-  d.setMinutes(mins <= 30 ? 30 : 60, 0, 0);
-  return toLocalStr(d);
+  let h = d.getMinutes() > 0 ? d.getHours() + 2 : d.getHours() + 1;
+  if (h < PICKUP_OPEN) h = PICKUP_OPEN;
+  if (h > PICKUP_CLOSE) {
+    // push to tomorrow's open
+    const tom = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+    return toLocalStr(new Date(tom.getFullYear(), tom.getMonth(), tom.getDate(), PICKUP_OPEN));
+  }
+  return toLocalStr(new Date(d.getFullYear(), d.getMonth(), d.getDate(), h));
 }
 
 function defaultTo(from: string, hrs = 24) {
@@ -121,8 +154,6 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
     return list;
   }, [bikes, cat, sort, query, ownerFilter]);
 
-  const nowStr = toLocalStr(new Date());
-
   // Which duration chip is active (null if user manually set a custom range)
   const activeDurationHrs = useMemo(() => {
     if (!fromVal || !toVal) return null;
@@ -152,37 +183,68 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
           🗓 When do you want to ride?
         </div>
         <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-end">
+          {/* Pickup — date + hour select (no minutes) */}
           <div className="flex-1 min-w-0">
             <label className="text-white/70 text-xs uppercase tracking-wide mb-1 block">Pickup</label>
-            <input
-              type="datetime-local"
-              value={fromVal}
-              min={nowStr}
-              step={3600}
-              onChange={e => {
-                const newFrom = e.target.value;
-                setFromVal(newFrom);
-                if (newFrom) {
+            <div className="flex gap-2">
+              <input
+                type="date"
+                value={datePart(fromVal)}
+                min={todayDateStr()}
+                onChange={e => {
+                  const newDate = e.target.value;
+                  if (!newDate) return;
+                  const newFrom = combine(newDate, hourPart(fromVal));
+                  setFromVal(newFrom);
                   if (activeDurationHrs) {
                     setToVal(defaultTo(newFrom, activeDurationHrs));
                   } else if (toVal && new Date(toVal) <= new Date(newFrom)) {
                     setToVal(defaultTo(newFrom));
                   }
-                }
-              }}
-              className="w-full rounded-xl border border-white/20 bg-white/10 text-white placeholder-white/40 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent [color-scheme:dark]"
-            />
+                }}
+                className="flex-1 min-w-0 rounded-xl border border-white/20 bg-white/10 text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent [color-scheme:dark]"
+              />
+              <select
+                value={hourPart(fromVal)}
+                onChange={e => {
+                  const newFrom = combine(datePart(fromVal), Number(e.target.value));
+                  setFromVal(newFrom);
+                  if (activeDurationHrs) {
+                    setToVal(defaultTo(newFrom, activeDurationHrs));
+                  } else if (toVal && new Date(toVal) <= new Date(newFrom)) {
+                    setToVal(defaultTo(newFrom));
+                  }
+                }}
+                className="w-24 rounded-xl border border-white/20 bg-white/10 text-white px-2 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent [color-scheme:dark]"
+              >
+                {HOUR_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
           </div>
+
+          {/* Drop-off — date + hour select (no minutes) */}
           <div className="flex-1 min-w-0">
             <label className="text-white/70 text-xs uppercase tracking-wide mb-1 block">Drop-off</label>
-            <input
-              type="datetime-local"
-              value={toVal}
-              min={fromVal || nowStr}
-              step={3600}
-              onChange={e => setToVal(e.target.value)}
-              className="w-full rounded-xl border border-white/20 bg-white/10 text-white placeholder-white/40 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent [color-scheme:dark]"
-            />
+            <div className="flex gap-2">
+              <input
+                type="date"
+                value={datePart(toVal)}
+                min={datePart(fromVal)}
+                onChange={e => {
+                  const newDate = e.target.value;
+                  if (!newDate) return;
+                  setToVal(combine(newDate, hourPart(toVal)));
+                }}
+                className="flex-1 min-w-0 rounded-xl border border-white/20 bg-white/10 text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent [color-scheme:dark]"
+              />
+              <select
+                value={hourPart(toVal)}
+                onChange={e => setToVal(combine(datePart(toVal), Number(e.target.value)))}
+                className="w-24 rounded-xl border border-white/20 bg-white/10 text-white px-2 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent [color-scheme:dark]"
+              >
+                {HOUR_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
           </div>
           <div className="flex gap-2 shrink-0 w-full sm:w-auto">
             <button
