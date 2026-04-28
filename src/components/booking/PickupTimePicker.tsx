@@ -120,10 +120,10 @@ export function PickupTimePicker({
                 className={cn(
                   'px-2 py-2 rounded-md text-xs font-medium border transition-all',
                   isPast
-                    ? 'bg-bg border-border text-border cursor-not-allowed'
+                    ? 'bg-border/20 border-border text-border cursor-not-allowed'
                     : isSelected
-                      ? 'bg-accent text-white border-accent'
-                      : 'bg-white border-border hover:border-accent/50'
+                      ? 'bg-accent text-white border-accent shadow-sm'
+                      : 'bg-primary/5 border-border text-primary hover:bg-accent/10 hover:border-accent/60 hover:text-accent'
                 )}
               >
                 {slot.label}

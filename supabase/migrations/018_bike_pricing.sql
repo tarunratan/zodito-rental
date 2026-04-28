@@ -23,10 +23,10 @@ CREATE POLICY "bike_packages_public_read" ON bike_packages
 CREATE POLICY "bike_packages_admin_write" ON bike_packages
   FOR ALL TO authenticated
   USING (
-    EXISTS (SELECT 1 FROM users WHERE auth_id = auth.uid() AND role = 'admin')
+    EXISTS (SELECT 1 FROM users WHERE auth_id = auth.uid()::text AND role = 'admin')
   )
   WITH CHECK (
-    EXISTS (SELECT 1 FROM users WHERE auth_id = auth.uid() AND role = 'admin')
+    EXISTS (SELECT 1 FROM users WHERE auth_id = auth.uid()::text AND role = 'admin')
   );
 
 CREATE INDEX IF NOT EXISTS idx_bike_packages_bike_id ON bike_packages(bike_id);
