@@ -89,6 +89,46 @@ function defaultTo(from: string, hrs = 24) {
   return toLocalStr(new Date(new Date(from).getTime() + hrs * 60 * 60 * 1000));
 }
 
+function HourPicker({ value, options, onChange }: {
+  value: number;
+  options: { value: number; label: string }[];
+  onChange: (h: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find(o => o.value === value) ?? options[0];
+  return (
+    <div className="relative w-24 shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="w-full rounded-xl border border-white/30 bg-black/30 text-white px-3 py-2.5 text-sm font-medium flex items-center justify-between gap-1"
+      >
+        <span>{selected?.label ?? '—'}</span>
+        <span className="text-white/60 text-xs">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute top-full mt-1 left-0 w-28 bg-white border border-border rounded-xl shadow-xl z-50 overflow-y-auto max-h-52">
+            {options.map(o => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => { onChange(o.value); setOpen(false); }}
+                className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                  o.value === value ? 'bg-accent text-white font-semibold' : 'text-primary hover:bg-accent/10'
+                }`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
   const [fromVal, setFromVal] = useState(() => defaultFrom());
   const [toVal, setToVal] = useState(() => defaultTo(defaultFrom()));
@@ -212,10 +252,11 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
                 }}
                 className="flex-1 min-w-0 rounded-xl border border-white/20 bg-white/10 text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent [color-scheme:dark]"
               />
-              <select
+              <HourPicker
                 value={hourPart(fromVal)}
-                onChange={e => {
-                  const newFrom = combine(datePart(fromVal), Number(e.target.value));
+                options={availableHours(datePart(fromVal))}
+                onChange={h => {
+                  const newFrom = combine(datePart(fromVal), h);
                   setFromVal(newFrom);
                   if (activeDurationHrs) {
                     setToVal(defaultTo(newFrom, activeDurationHrs));
@@ -223,11 +264,7 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
                     setToVal(defaultTo(newFrom));
                   }
                 }}
-                className="w-24 rounded-xl border border-white/30 px-2 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                style={{ backgroundColor: 'rgba(0,0,0,0.35)', color: 'white', colorScheme: 'dark' }}
-              >
-                {availableHours(datePart(fromVal)).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
+              />
             </div>
           </div>
 
@@ -246,14 +283,11 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
                 }}
                 className="flex-1 min-w-0 rounded-xl border border-white/20 bg-white/10 text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent [color-scheme:dark]"
               />
-              <select
+              <HourPicker
                 value={hourPart(toVal)}
-                onChange={e => setToVal(combine(datePart(toVal), Number(e.target.value)))}
-                className="w-24 rounded-xl border border-white/30 px-2 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                style={{ backgroundColor: 'rgba(0,0,0,0.35)', color: 'white', colorScheme: 'dark' }}
-              >
-                {availableHours(datePart(toVal)).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
+                options={availableHours(datePart(toVal))}
+                onChange={h => setToVal(combine(datePart(toVal), h))}
+              />
             </div>
           </div>
           <div className="flex gap-2 shrink-0 w-full sm:w-auto">
