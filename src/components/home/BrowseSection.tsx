@@ -158,6 +158,7 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
               type="datetime-local"
               value={fromVal}
               min={nowStr}
+              step={3600}
               onChange={e => {
                 const newFrom = e.target.value;
                 setFromVal(newFrom);
@@ -178,6 +179,7 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
               type="datetime-local"
               value={toVal}
               min={fromVal || nowStr}
+              step={3600}
               onChange={e => setToVal(e.target.value)}
               className="w-full rounded-xl border border-white/20 bg-white/10 text-white placeholder-white/40 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent [color-scheme:dark]"
             />
@@ -201,22 +203,7 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
         </div>
         {/* Duration quick-select */}
         <div className="flex gap-2 mt-3 overflow-x-auto pb-0.5 -mx-1 px-1 items-center" style={{ scrollbarWidth: 'none' }}>
-          {DURATIONS.map(d => (
-            <button
-              key={d.hrs}
-              onClick={() => { applyDuration(d.hrs); setShowCustom(false); }}
-              className={cn(
-                'shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border',
-                activeDurationHrs === d.hrs
-                  ? 'bg-accent border-accent text-white'
-                  : 'bg-white/10 border-white/15 text-white/75 hover:bg-white/20 hover:text-white'
-              )}
-            >
-              {d.label}
-            </button>
-          ))}
-
-          {/* Custom duration */}
+          {/* Custom duration — first */}
           {!showCustom ? (
             <button
               onClick={() => setShowCustom(true)}
@@ -256,6 +243,21 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
               </button>
             </div>
           )}
+
+          {DURATIONS.map(d => (
+            <button
+              key={d.hrs}
+              onClick={() => { applyDuration(d.hrs); setShowCustom(false); }}
+              className={cn(
+                'shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border',
+                activeDurationHrs === d.hrs
+                  ? 'bg-accent border-accent text-white'
+                  : 'bg-white/10 border-white/15 text-white/75 hover:bg-white/20 hover:text-white'
+              )}
+            >
+              {d.label}
+            </button>
+          ))}
         </div>
 
         {dateError && <p className="text-red-300 text-xs mt-2">{dateError}</p>}
