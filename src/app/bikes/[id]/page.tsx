@@ -145,19 +145,30 @@ export default async function BikeDetailPage({ params }: { params: { id: string 
             </div>
           </div>
 
-          {/* Extra charges — bold warning so customers know upfront */}
-          <div className="mt-5 p-3 bg-amber-50 border border-amber-300 rounded-lg">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-amber-700 mb-2">
-              ⚠️ Extra Charges (if applicable)
+          {/* Extra charges — prominent warning box */}
+          <div className="mt-5 rounded-xl border-2 border-amber-400 overflow-hidden">
+            <div className="bg-amber-400 px-4 py-2">
+              <span className="text-white font-bold text-sm tracking-wide">⚠️ Extra Charges Apply</span>
             </div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-              <div>
-                <span className="text-amber-800 text-[11px]">Excess km (beyond limit)</span>
-                <div className="font-bold text-amber-900 text-base">₹{excessRate} / km</div>
-              </div>
-              <div>
-                <span className="text-amber-800 text-[11px]">Late return (per hour)</span>
-                <div className="font-bold text-amber-900 text-base">₹{lateRate} / hr</div>
+            <div className="bg-amber-50 p-4">
+              {pkg24?.km_limit && (
+                <div className="flex items-baseline gap-2 mb-3 pb-3 border-b border-amber-200">
+                  <span className="text-amber-700 text-sm font-medium">Included KM:</span>
+                  <span className="text-amber-900 font-black text-2xl">{pkg24.km_limit} km</span>
+                  <span className="text-amber-600 text-xs">per booking</span>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white border border-amber-200 rounded-lg p-3">
+                  <p className="text-amber-700 text-xs font-semibold uppercase tracking-wide mb-1">Excess km</p>
+                  <p className="text-amber-900 font-black text-2xl leading-none">₹{excessRate}<span className="text-sm font-bold">/km</span></p>
+                  <p className="text-amber-600 text-[10px] mt-1 leading-tight">Charged at pickup-day rate</p>
+                </div>
+                <div className="bg-white border border-amber-200 rounded-lg p-3">
+                  <p className="text-amber-700 text-xs font-semibold uppercase tracking-wide mb-1">Late return</p>
+                  <p className="text-amber-900 font-black text-2xl leading-none">₹{lateRate}<span className="text-sm font-bold">/hr</span></p>
+                  <p className="text-amber-600 text-[10px] mt-1 leading-tight">After booking end time</p>
+                </div>
               </div>
             </div>
           </div>

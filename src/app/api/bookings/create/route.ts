@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getCurrentAppUser } from '@/lib/auth';
-import { createSupabaseAdmin, createSupabaseServer } from '@/lib/supabase/server';
+import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { createRazorpayOrder } from '@/lib/razorpay';
 import {
   calculatePrice,
@@ -27,13 +27,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  // --- 1. Auth check
-  const user = await getCurrentAppUser();
-  if (!user) {
-    return NextResponse.json({ error: 'Please sign in to book' }, { status: 401 });
-  }
-
-  // --- 2. Parse & validate request
+  // --- 1. Parse & validate request body (no I/O)
   const parse = bodySchema.safeParse(await req.json());
   if (!parse.success) {
     return NextResponse.json({ error: 'Invalid request: ' + parse.error.message }, { status: 400 });
@@ -42,7 +36,7 @@ export async function POST(req: NextRequest) {
   const startTs = new Date(body.start_ts);
   const endTs = tierEndTs(startTs, body.tier as PackageTier);
 
-  // --- 3. Basic time validation
+  // --- 2. Basic time validation (no I/O)
   if (startTs < new Date()) {
     return NextResponse.json({ error: 'Pickup time must be in the future' }, { status: 400 });
   }
@@ -53,17 +47,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // --- 4. MOCK MODE: just create an in-memory booking and return success
+  // --- 3. MOCK MODE
   if (isMockMode()) {
-    return handleMockBooking({ user, body, startTs, endTs });
+    return handleMockBooking({ body, startTs, endTs });
   }
 
-  // --- 5. Fetch bike + freeze + model (single query) AND coupon in parallel
   const admin = createSupabaseAdmin();
-  // Create user client in parallel — only needed for the insert later
-  const userClientPromise = createSupabaseServer();
 
-  // Coupon validation runs in parallel with bike fetch — no sequential dependency
+  // Coupon promise — fire immediately so it overlaps with auth
   const couponPromise = body.coupon_code
     ? admin
         .from('coupons')
@@ -72,7 +63,10 @@ export async function POST(req: NextRequest) {
         .maybeSingle()
     : Promise.resolve({ data: null });
 
-  const [{ data: bike, error: bikeErr }, { data: couponData }, userClient] = await Promise.all([
+  // --- 4. Auth + bike fetch + coupon all in parallel (key speed improvement)
+  //        Previously: auth completed first, then bike fetch started — wasting 2 round trips
+  const [user, { data: bike, error: bikeErr }, { data: couponData }] = await Promise.all([
+    getCurrentAppUser(),
     admin
       .from('bikes')
       .select(`
@@ -89,14 +83,17 @@ export async function POST(req: NextRequest) {
       .eq('listing_status', 'approved')
       .maybeSingle(),
     couponPromise,
-    userClientPromise,
   ]);
+
+  if (!user) {
+    return NextResponse.json({ error: 'Please sign in to book' }, { status: 401 });
+  }
 
   if (bikeErr || !bike) {
     return NextResponse.json({ error: 'Bike not available for booking' }, { status: 404 });
   }
 
-  // --- 5b. Check freeze window overlap (data already in bike row)
+  // --- 5. Check freeze window overlap
   const b = bike as any;
   if (b.frozen_until && b.frozen_from) {
     const frozenFrom = new Date(b.frozen_from);
@@ -109,7 +106,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // --- 6 & 7. Resolve weekend override packages + check coupon usage — parallel
+  // --- 6. Resolve weekend override + coupon usage in parallel (no-ops if not needed)
   const model = (bike as any).model as any;
   const effectiveModelId = effectiveModelIdForDate(model, startTs);
 
@@ -135,7 +132,7 @@ export async function POST(req: NextRequest) {
     couponRow = { id: c.id, code: c.code, discount_type: c.discount_type, discount_value: Number(c.discount_value) };
   }
 
-  // --- 8. Price calculation (server-side; authoritative)
+  // --- 7. Price calculation (server-side; authoritative)
   const rawBreakdown = calculatePrice({
     packages,
     tier: body.tier as PackageTier,
@@ -155,8 +152,8 @@ export async function POST(req: NextRequest) {
     ? calculatePrice({ packages, tier: body.tier as PackageTier, extraHelmetCount: body.extra_helmet_count, hasOriginalDL: true, includeMobileHolder: body.mobile_holder, couponDiscount: couponDiscountAmount })
     : rawBreakdown;
 
-  // --- 9. Commission split (only for vendor bikes)
-  let platform_commission = breakdown.extraHelmetCharge;  // platform keeps all helmet revenue
+  // --- 8. Commission split
+  let platform_commission = breakdown.extraHelmetCharge;
   let vendor_payout = 0;
   if (bike.owner_type === 'vendor') {
     const commissionPct = (bike.vendor as any)?.commission_pct ?? 20;
@@ -168,13 +165,12 @@ export async function POST(req: NextRequest) {
     platform_commission = split.platformCommission;
     vendor_payout = split.vendorPayout;
   } else {
-    // Platform-owned: platform keeps the full base price too
     platform_commission = breakdown.basePrice + breakdown.extraHelmetCharge;
   }
 
-  // --- 10. Insert booking via user session — RLS policy bookings_customer_insert
-  //         checks user_id = auth_user_id(), which works with the user's JWT.
-  const { data: booking, error: insertErr } = await userClient
+  // --- 9. Insert booking — use admin client (user identity verified above, user_id explicitly set)
+  //         This avoids creating a second Supabase server client just for RLS
+  const { data: booking, error: insertErr } = await admin
     .from('bookings')
     .insert({
       user_id: user.id,
@@ -197,13 +193,11 @@ export async function POST(req: NextRequest) {
       vendor_payout,
       status: body.payment_method === 'at_pickup' ? 'confirmed' : 'pending_payment',
       payment_status: 'pending',
-      // payment_deadline defaults to now() + 10 min
     })
     .select('*')
     .single();
 
   if (insertErr) {
-    // 23P01 = exclusion violation (overlap). Friendly message.
     if (insertErr.code === '23P01') {
       return NextResponse.json(
         { error: 'This bike is already booked for that time slot. Try a different time.' },
@@ -217,7 +211,7 @@ export async function POST(req: NextRequest) {
     }, { status: 500 });
   }
 
-  // --- 11. Record coupon usage (fire-and-forget)
+  // --- 10. Record coupon usage (fire-and-forget, does not block response)
   if (couponRow && breakdown.couponDiscount > 0) {
     admin.from('coupon_uses').insert({
       coupon_id: couponRow.id, user_id: user.id, booking_id: booking.id, discount_amount: breakdown.couponDiscount,
@@ -226,7 +220,7 @@ export async function POST(req: NextRequest) {
     ).catch((e: unknown) => console.error('Coupon tracking error:', e));
   }
 
-  // --- 12. Pay at pickup — booking confirmed, no Razorpay needed
+  // --- 11. Cash (pay at pickup) — done, return immediately
   if (body.payment_method === 'at_pickup') {
     return NextResponse.json({
       booking_id: booking.id,
@@ -235,7 +229,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // --- 13. Create Razorpay order
+  // --- 12. Online — create Razorpay order
   try {
     const order = await createRazorpayOrder({
       amountRupees: breakdown.totalAmount,
@@ -244,11 +238,9 @@ export async function POST(req: NextRequest) {
       userId: user.id,
     });
 
-    // Save the razorpay_order_id back on the booking
-    await userClient
-      .from('bookings')
-      .update({ razorpay_order_id: order.id })
-      .eq('id', booking.id);
+    // Save razorpay_order_id (fire-and-forget — doesn't block the response)
+    admin.from('bookings').update({ razorpay_order_id: order.id }).eq('id', booking.id)
+      .then(() => {}).catch((e: unknown) => console.error('razorpay_order_id update error:', e));
 
     return NextResponse.json({
       booking_id: booking.id,
@@ -265,11 +257,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (e: any) {
-    // Razorpay order creation failed — mark booking as failed
-    await userClient
-      .from('bookings')
-      .update({ status: 'payment_failed', payment_status: 'failed' })
-      .eq('id', booking.id);
+    await admin.from('bookings').update({ status: 'payment_failed', payment_status: 'failed' }).eq('id', booking.id);
     console.error('Razorpay order error:', e);
     return NextResponse.json({
       error: 'Payment gateway error. Please try again.',
@@ -279,7 +267,6 @@ export async function POST(req: NextRequest) {
 }
 
 function handleMockBooking(params: {
-  user: any;
   body: z.infer<typeof bodySchema>;
   startTs: Date;
   endTs: Date;
@@ -289,7 +276,6 @@ function handleMockBooking(params: {
     id,
     booking_number: 'ZDMOCK' + Math.floor(Math.random() * 10000).toString().padStart(4, '0'),
     bike_id: params.body.bike_id,
-    user_id: params.user.id,
     start_ts: params.startTs.toISOString(),
     end_ts: params.endTs.toISOString(),
     package_tier: params.body.tier,
