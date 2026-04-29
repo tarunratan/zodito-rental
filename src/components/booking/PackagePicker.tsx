@@ -19,7 +19,7 @@ export function PackagePicker({
   value: PackageTier;
   onChange: (t: PackageTier) => void;
 }) {
-  const order: PackageTier[] = ['12hr', '24hr', '7day', '15day', '30day'];
+  const order: PackageTier[] = ['6hr', '12hr', '24hr', '7day', '15day', '30day'];
   const sorted = order
     .map(t => packages.find(p => p.tier === t))
     .filter(Boolean) as PackageData[];

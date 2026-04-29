@@ -18,7 +18,7 @@ export const runtime = 'nodejs';
 
 const bodySchema = z.object({
   bike_id: z.string(),
-  tier: z.enum(['12hr', '24hr', '7day', '15day', '30day']),
+  tier: z.enum(['6hr', '12hr', '24hr', '7day', '15day', '30day']),
   start_ts: z.string(),  // ISO
   extra_helmet_count: z.number().int().min(0).max(3).default(0),
   mobile_holder: z.boolean().default(false),

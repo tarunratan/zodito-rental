@@ -20,6 +20,7 @@ export const EXTRA_HELMET_PRICE = 50;
 export const MOBILE_HOLDER_PRICE = 49;
 
 export const TIER_HOURS: Record<PackageTier, number> = {
+  '6hr':  6,
   '12hr': 12,
   '24hr': 24,
   '7day': 24 * 7,
@@ -28,6 +29,7 @@ export const TIER_HOURS: Record<PackageTier, number> = {
 };
 
 export const TIER_LABELS: Record<PackageTier, string> = {
+  '6hr':  '6 Hours',
   '12hr': '12 Hours',
   '24hr': '24 Hours (1 Day)',
   '7day': '7 Days',

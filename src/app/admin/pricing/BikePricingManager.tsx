@@ -6,7 +6,7 @@ import type { PackageTier } from '@/lib/supabase/types';
 
 type Bike = any;
 
-const TIERS: PackageTier[] = ['12hr', '24hr', '7day', '15day', '30day'];
+const TIERS: PackageTier[] = ['6hr', '12hr', '24hr', '7day', '15day', '30day'];
 
 type PkgRow = {
   tier: PackageTier;

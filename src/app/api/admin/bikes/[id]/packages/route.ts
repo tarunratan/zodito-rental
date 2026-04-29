@@ -6,7 +6,7 @@ import { isMockMode } from '@/lib/mock';
 
 export const runtime = 'nodejs';
 
-const TIERS = ['12hr', '24hr', '7day', '15day', '30day'] as const;
+const TIERS = ['6hr', '12hr', '24hr', '7day', '15day', '30day'] as const;
 
 const saveSchema = z.object({
   packages: z.array(z.object({
