@@ -158,10 +158,10 @@ function UploadTile({
           )}
           <input
             type="file"
-            accept="image/*"
+            accept={cameraOnly ? 'image/jpeg,image/png' : 'image/*'}
+            capture={cameraOnly ? 'user' : undefined}
             onChange={onFile}
             className="hidden"
-            {...(cameraOnly ? { capture: 'user' } : {})}
           />
         </label>
       )}

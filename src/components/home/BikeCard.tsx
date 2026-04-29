@@ -23,18 +23,26 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
     ? `/bikes/${bike.id}?from=${encodeURIComponent(searchFrom)}&to=${encodeURIComponent(searchTo)}`
     : `/bikes/${bike.id}`;
 
-  // Determine which price to show: searched duration's tier, or default 12hr / 24hr
-  const searchedTier: PackageTier | null = (() => {
-    if (!searchFrom || !searchTo) return null;
-    const hrs = (new Date(searchTo).getTime() - new Date(searchFrom).getTime()) / 3_600_000;
-    return hrs > 0 ? tierFromHours(hrs) : null;
-  })();
+  const pkg12 = bike.model?.packages?.find((p: any) => p.tier === '12hr');
+  const pkg24 = bike.model?.packages?.find((p: any) => p.tier === '24hr');
 
-  const pkg12  = bike.model?.packages?.find((p: any) => p.tier === '12hr');
-  const pkg24  = bike.model?.packages?.find((p: any) => p.tier === '24hr');
-  const searchPkg = searchedTier
-    ? bike.model?.packages?.find((p: any) => p.tier === searchedTier)
-    : null;
+  // Determine price/label to show for the searched duration
+  const searchDisplay: { price: number; label: string; km: number } | null = (() => {
+    if (!searchFrom || !searchTo) return null;
+    const searchHrs = Math.round((new Date(searchTo).getTime() - new Date(searchFrom).getTime()) / 3_600_000);
+    if (searchHrs <= 0) return null;
+    const tier = tierFromHours(searchHrs);
+    const tierHrs = TIER_HOURS[tier];
+    const pkg = bike.model?.packages?.find((p: any) => p.tier === tier);
+    if (!pkg) return null;
+    // If searched duration is significantly longer than the matched tier (e.g. 2 days → 24hr tier),
+    // multiply the daily rate so the price reflects the actual duration
+    if (tier === '24hr' && searchHrs > 30) {
+      const days = Math.ceil(searchHrs / 24);
+      return { price: days * pkg.price, label: `${days} days`, km: days * pkg.km_limit };
+    }
+    return { price: pkg.price, label: TIER_LABELS[tier], km: pkg.km_limit };
+  })();
 
   return (
     <Link href={href} className="group card overflow-hidden hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-200">
@@ -102,20 +110,18 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
 
         {/* Price — dynamic based on search, or default */}
         <div className="flex items-baseline justify-between pt-3 border-t border-border">
-          {searchPkg ? (
-            // Show price for the searched duration
+          {searchDisplay ? (
             <div className="w-full">
               <div className="text-[10px] text-muted uppercase tracking-wide mb-0.5">Your trip</div>
               <div className="flex items-baseline justify-between">
                 <div className="flex items-baseline gap-1">
-                  <span className="font-display font-bold text-xl text-accent">{formatINR(searchPkg.price)}</span>
-                  <span className="text-xs text-muted">/ {TIER_LABELS[searchedTier!]}</span>
+                  <span className="font-display font-bold text-xl text-accent">{formatINR(searchDisplay.price)}</span>
+                  <span className="text-xs text-muted">/ {searchDisplay.label}</span>
                 </div>
-                <span className="text-[11px] text-muted">{searchPkg.km_limit} km</span>
+                <span className="text-[11px] text-muted">{searchDisplay.km} km</span>
               </div>
             </div>
           ) : (
-            // Default: show starts-at + 24hr
             <>
               <div>
                 <div className="text-[10px] text-muted uppercase tracking-wide">Starts at</div>

@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parse.error.issues[0]?.message ?? 'Invalid request' }, { status: 400 });
   }
 
-  const { bike_id, customer_name, customer_phone, customer_email, start_ts, end_ts, total_amount, notes } = parse.data;
+  const { bike_id, customer_name, customer_phone, start_ts, end_ts, total_amount, notes } = parse.data;
   const startTs = new Date(start_ts);
   const endTs = new Date(end_ts);
 
@@ -85,7 +85,6 @@ export async function POST(req: NextRequest) {
       bike_id,
       customer_name,
       customer_phone,
-      customer_email: customer_email || null,
       start_ts: startIso,
       end_ts: endIso,
       status: 'confirmed',
