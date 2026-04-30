@@ -170,8 +170,14 @@ export async function POST(req: NextRequest) {
     platform_commission = breakdown.basePrice + breakdown.extraHelmetCharge;
   }
 
-  // --- 9. Insert booking — use admin client (user identity verified above, user_id explicitly set)
-  //         This avoids creating a second Supabase server client just for RLS
+  // --- 9. Capture client IP — server-side, no permission required, always available
+  const clientIp =
+    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+    req.headers.get('x-real-ip') ??
+    null;
+
+  // --- 10. Insert booking — use admin client (user identity verified above, user_id explicitly set)
+  //          This avoids creating a second Supabase server client just for RLS
   const { data: booking, error: insertErr } = await admin
     .from('bookings')
     .insert({
@@ -195,6 +201,7 @@ export async function POST(req: NextRequest) {
       vendor_payout,
       status: body.payment_method === 'at_pickup' ? 'confirmed' : 'pending_payment',
       payment_status: 'pending',
+      booking_ip: clientIp,
       ...(body.booking_lat !== undefined ? { booking_lat: body.booking_lat } : {}),
       ...(body.booking_lng !== undefined ? { booking_lng: body.booking_lng } : {}),
     })

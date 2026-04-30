@@ -123,14 +123,19 @@ function BookingRow({ booking }: { booking: any }) {
         <div className="text-[10px] text-muted uppercase">{booking.package_tier}</div>
       </Td>
       <Td>
-        <div className="font-semibold">
-          {booking.user?.first_name} {booking.user?.last_name}
-        </div>
+        {booking.source === 'manual' ? (
+          <div className="font-semibold">{booking.customer_name ?? '—'}</div>
+        ) : (
+          <div className="font-semibold">
+            {booking.user?.first_name} {booking.user?.last_name}
+          </div>
+        )}
         {booking.user?.phone && (
-          <a href={`tel:${booking.user.phone}`} className="text-[11px] text-accent">
+          <a href={`tel:${booking.user.phone}`} className="text-[11px] text-accent block">
             {booking.user.phone}
           </a>
         )}
+        <BookingOrigin booking={booking} />
       </Td>
       <Td>
         <span className="text-lg mr-1">{booking.bike?.emoji}</span>
@@ -142,6 +147,11 @@ function BookingRow({ booking }: { booking: any }) {
       <Td className="text-xs whitespace-nowrap">
         <div>{formatDateTime(booking.start_ts)}</div>
         <div className="text-muted">→ {formatDateTime(booking.end_ts)}</div>
+        {booking.created_at && (
+          <div className="text-[10px] text-muted/60 mt-0.5">
+            Booked {formatDateTime(booking.created_at)}
+          </div>
+        )}
       </Td>
       <Td className="font-bold">{formatINR(booking.total_amount ?? 0)}</Td>
       <Td>
@@ -216,6 +226,45 @@ function ActionBtn({
     >
       {loading ? '…' : children}
     </button>
+  );
+}
+
+function BookingOrigin({ booking }: { booking: any }) {
+  if (booking.source === 'manual') {
+    return (
+      <span className="block text-[10px] text-muted mt-0.5">
+        ⌨️ Admin entry
+      </span>
+    );
+  }
+  if (booking.booking_lat != null && booking.booking_lng != null) {
+    const mapsUrl = `https://www.google.com/maps?q=${booking.booking_lat},${booking.booking_lng}`;
+    return (
+      <a
+        href={mapsUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block text-[10px] text-accent hover:underline mt-0.5"
+        title={`GPS ${booking.booking_lat.toFixed(5)}, ${booking.booking_lng.toFixed(5)}`}
+      >
+        📍 GPS location
+      </a>
+    );
+  }
+  if (booking.booking_ip) {
+    return (
+      <span
+        className="block text-[10px] text-muted mt-0.5"
+        title="GPS not available — IP address only"
+      >
+        🌐 {booking.booking_ip}
+      </span>
+    );
+  }
+  return (
+    <span className="block text-[10px] text-muted/50 mt-0.5" title="No location captured">
+      ◌ No location
+    </span>
   );
 }
 

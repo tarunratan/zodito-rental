@@ -44,6 +44,7 @@ async function fetchAdminData() {
       .from('bookings')
       .select(`
         id, booking_number, start_ts, end_ts, status, payment_status, total_amount, package_tier, created_at,
+        booking_lat, booking_lng, booking_ip, source,
         bike:bikes!inner(id, emoji, owner_type, model:bike_models!inner(display_name)),
         user:users!inner(first_name, last_name, phone)
       `)
