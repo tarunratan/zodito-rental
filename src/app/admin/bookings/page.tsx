@@ -15,7 +15,7 @@ export default async function AdminBookingsPage() {
     const [rawBookingsRes, allBikesRes] = await Promise.all([
       supabase
         .from('bookings')
-        .select('id, booking_number, status, payment_status, total_amount, base_price, gst_amount, security_deposit, package_tier, start_ts, end_ts, picked_up_at, returned_at, cancelled_at, cancellation_reason, razorpay_payment_id, final_km_used, excess_km_charge, damage_charge, notes, created_at, user_id, bike_id, source, customer_name, customer_phone')
+        .select('id, booking_number, status, payment_status, total_amount, base_price, gst_amount, security_deposit, package_tier, start_ts, end_ts, picked_up_at, returned_at, cancelled_at, cancellation_reason, razorpay_payment_id, final_km_used, excess_km_charge, damage_charge, notes, created_at, user_id, bike_id, source, customer_name, customer_phone, booking_lat, booking_lng, booking_ip')
         .order('created_at', { ascending: false })
         .limit(200),
       supabase

@@ -27,6 +27,9 @@ type Booking = {
   source?: string;
   customer_name?: string | null;
   customer_phone?: string | null;
+  booking_lat?: number | null;
+  booking_lng?: number | null;
+  booking_ip?: string | null;
   user: { id: string; email: string | null; first_name: string | null; last_name: string | null; phone: string | null } | null;
   bike: { id: string; registration_number: string | null; color: string | null; emoji: string; model: { display_name: string } | null } | null;
 };
@@ -63,6 +66,62 @@ function fmt(ts: string | null) {
 
 function rupee(n: number) {
   return `₹${Number(n).toLocaleString('en-IN')}`;
+}
+
+function BookingLocation({ booking }: { booking: Booking }) {
+  const hasGps = booking.booking_lat != null && booking.booking_lng != null;
+  const mapsUrl = hasGps
+    ? `https://www.google.com/maps?q=${booking.booking_lat},${booking.booking_lng}`
+    : null;
+
+  return (
+    <div className={`rounded-xl border-2 overflow-hidden ${hasGps ? 'border-orange-400' : 'border-border'}`}>
+      <div className={`px-4 py-2 flex items-center gap-2 ${hasGps ? 'bg-orange-400' : 'bg-bg border-b border-border'}`}>
+        <span className={`text-xs font-bold uppercase tracking-wide ${hasGps ? 'text-white' : 'text-muted'}`}>
+          {hasGps ? '📍 Booking Location — GPS captured' : booking.booking_ip ? '🌐 Booking Location — IP only' : '◌ Booking Location'}
+        </span>
+      </div>
+      <div className="px-4 py-3 bg-white">
+        {booking.source === 'manual' ? (
+          <p className="text-xs text-muted">Admin-created booking — no customer location captured.</p>
+        ) : hasGps ? (
+          <div className="flex flex-wrap items-center gap-4">
+            <div>
+              <p className="text-[10px] text-muted uppercase tracking-wide mb-1">GPS Coordinates</p>
+              <p className="font-mono text-sm select-all">{booking.booking_lat!.toFixed(6)}, {booking.booking_lng!.toFixed(6)}</p>
+              {booking.booking_ip && <p className="text-[11px] text-muted mt-1">IP: {booking.booking_ip}</p>}
+            </div>
+            <a
+              href={mapsUrl!}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-orange-500 text-white text-sm font-semibold rounded-lg hover:bg-orange-600 transition-colors shrink-0"
+            >
+              📍 Open in Google Maps
+            </a>
+          </div>
+        ) : booking.booking_ip ? (
+          <div className="flex flex-wrap items-center gap-4">
+            <div>
+              <p className="text-[10px] text-muted uppercase tracking-wide mb-1">IP Address (GPS not available)</p>
+              <p className="font-mono text-sm select-all">{booking.booking_ip}</p>
+              <p className="text-[11px] text-muted mt-1">Customer denied location permission — IP is the only signal.</p>
+            </div>
+            <a
+              href={`https://ipinfo.io/${booking.booking_ip}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-border text-primary text-sm font-semibold rounded-lg hover:bg-border/70 transition-colors shrink-0"
+            >
+              🌐 Look up IP location
+            </a>
+          </div>
+        ) : (
+          <p className="text-xs text-muted">No location data — booking predates this feature.</p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 type BikeOption = { id: string; emoji: string; registration_number: string | null; model: { display_name: string } | null };
@@ -322,7 +381,7 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                     {expanded === b.id && (
                       <tr key={`${b.id}-exp`} className="border-b border-border bg-bg/30">
                         <td colSpan={7} className="px-4 py-4">
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
                             <div>
                               <p className="text-xs font-semibold text-muted uppercase mb-1">Pricing</p>
                               <p>Base: {rupee(b.base_price)}</p>
@@ -351,6 +410,9 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                               </div>
                             )}
                           </div>
+
+                          {/* ── Booking Location ── */}
+                          <BookingLocation booking={b} />
                         </td>
                       </tr>
                     )}
