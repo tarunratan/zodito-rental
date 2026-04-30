@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { createSupabaseBrowser } from '@/lib/supabase/client';
 import { isMockMode } from '@/lib/mock';
@@ -12,11 +12,23 @@ export function Nav() {
   const [user, setUser] = useState<any>(null);
   const [role, setRole] = useState<string | null>(null);
   const [kyc, setKyc] = useState<string | null>(null);
+  const [firstName, setFirstName] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
-  // Close menu on route change
-  useEffect(() => { setMenuOpen(false); }, [pathname]);
+  useEffect(() => { setMenuOpen(false); setUserMenuOpen(false); }, [pathname]);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    }
+    if (userMenuOpen) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [userMenuOpen]);
 
   useEffect(() => {
     if (isMockMode()) { setLoaded(true); return; }
@@ -28,14 +40,18 @@ export function Nav() {
       if (data.user) {
         fetch('/api/me/role')
           .then(r => r.json())
-          .then(d => { setRole(d.role ?? 'customer'); setKyc(d.kyc_status ?? null); })
+          .then(d => {
+            setRole(d.role ?? 'customer');
+            setKyc(d.kyc_status ?? null);
+            setFirstName(d.first_name ?? null);
+          })
           .catch(() => setRole('customer'));
       }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
-      if (!session?.user) { setRole(null); setKyc(null); }
+      if (!session?.user) { setRole(null); setKyc(null); setFirstName(null); }
     });
 
     return () => subscription.unsubscribe();
@@ -44,35 +60,16 @@ export function Nav() {
   async function handleSignOut() {
     const supabase = createSupabaseBrowser();
     await supabase.auth.signOut();
-    setUser(null); setRole(null); setKyc(null);
-    setMenuOpen(false);
+    setUser(null); setRole(null); setKyc(null); setFirstName(null);
+    setMenuOpen(false); setUserMenuOpen(false);
     router.push('/');
     router.refresh();
   }
 
   const isSignedIn = isMockMode() || !!user;
   const effectiveRole = isMockMode() ? 'customer' : role;
-
-  const navLinks = isSignedIn ? (
-    <>
-      <NavLink href="/my-bookings" onClick={() => setMenuOpen(false)}>My Bookings</NavLink>
-      {(kyc === 'not_submitted' || kyc === null) && (
-        <NavLink href="/kyc" accent onClick={() => setMenuOpen(false)}>Verify ID</NavLink>
-      )}
-      {kyc === 'rejected' && (
-        <NavLink href="/kyc" warning onClick={() => setMenuOpen(false)}>⚠ Re-submit KYC</NavLink>
-      )}
-      {effectiveRole === 'vendor' && (
-        <NavLink href="/vendor" onClick={() => setMenuOpen(false)}>Vendor Dashboard</NavLink>
-      )}
-      {effectiveRole === 'admin' && (
-        <NavLink href="/admin" onClick={() => setMenuOpen(false)}>Admin</NavLink>
-      )}
-      {effectiveRole !== 'vendor' && effectiveRole !== 'admin' && (
-        <NavLink href="/vendor/signup" onClick={() => setMenuOpen(false)}>List Your Bike</NavLink>
-      )}
-    </>
-  ) : null;
+  const displayName = firstName ?? user?.email?.split('@')[0] ?? 'Account';
+  const showListBike = effectiveRole !== 'vendor' && effectiveRole !== 'admin';
 
   return (
     <>
@@ -86,15 +83,83 @@ export function Nav() {
           </div>
         </Link>
 
-        {/* Desktop links */}
-        <ul className="hidden md:flex gap-6 list-none">{navLinks}</ul>
+        {/* Desktop centre links — always visible */}
+        <ul className="hidden md:flex gap-6 list-none items-center">
+          {showListBike && (
+            <NavLink href="/vendor/signup">List Your Bike</NavLink>
+          )}
+        </ul>
 
         <div className="flex gap-2.5 items-center">
-          {/* Desktop auth buttons */}
           {!loaded ? null : isSignedIn && !isMockMode() ? (
-            <button onClick={handleSignOut} className="hidden md:block btn-outline-light text-sm">
-              Sign out
-            </button>
+            /* ── User name dropdown (desktop) ── */
+            <div ref={userMenuRef} className="hidden md:block relative">
+              <button
+                onClick={() => setUserMenuOpen(v => !v)}
+                className="flex items-center gap-2 text-sm font-medium text-white/85 hover:text-white transition-colors px-2.5 py-1.5 rounded-lg hover:bg-white/10"
+              >
+                <span className="w-7 h-7 rounded-full bg-accent/30 border border-accent/50 flex items-center justify-center text-xs font-bold text-white uppercase">
+                  {displayName[0] ?? '?'}
+                </span>
+                <span className="max-w-[120px] truncate">{displayName}</span>
+                <span className="text-white/50 text-[10px]">{userMenuOpen ? '▲' : '▼'}</span>
+              </button>
+
+              {userMenuOpen && (
+                <div className="absolute right-0 top-full mt-2 w-56 bg-white border border-border rounded-xl shadow-xl z-50 py-1.5 overflow-hidden">
+                  <Link
+                    href="/my-bookings"
+                    onClick={() => setUserMenuOpen(false)}
+                    className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-primary hover:bg-bg transition-colors"
+                  >
+                    📋 My Bookings
+                  </Link>
+                  {(kyc === 'not_submitted' || kyc === null) && (
+                    <Link
+                      href="/kyc"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-accent font-medium hover:bg-bg transition-colors"
+                    >
+                      ✓ Verify ID
+                    </Link>
+                  )}
+                  {kyc === 'rejected' && (
+                    <Link
+                      href="/kyc"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-danger font-medium hover:bg-bg transition-colors"
+                    >
+                      ⚠ Re-submit KYC
+                    </Link>
+                  )}
+                  {effectiveRole === 'vendor' && (
+                    <Link
+                      href="/vendor"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-primary hover:bg-bg transition-colors"
+                    >
+                      🏪 Vendor Dashboard
+                    </Link>
+                  )}
+                  {effectiveRole === 'admin' && (
+                    <Link
+                      href="/admin"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-primary hover:bg-bg transition-colors"
+                    >
+                      ⚙ Admin
+                    </Link>
+                  )}
+                  <div className="border-t border-border my-1" />
+                  <button
+                    onClick={handleSignOut}
+                    className="w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-sm text-muted hover:text-danger hover:bg-bg transition-colors"
+                  >
+                    Sign out
+                  </button>
+                </div>
+              )}
+            </div>
           ) : !isMockMode() ? (
             <>
               <Link href="/sign-in" className="hidden md:block btn-outline-light">Login</Link>
@@ -118,16 +183,21 @@ export function Nav() {
       {/* Mobile drawer */}
       {menuOpen && (
         <div className="md:hidden fixed inset-0 z-[99] flex flex-col" onClick={() => setMenuOpen(false)}>
-          {/* Backdrop */}
           <div className="absolute inset-0 bg-black/40" />
-
-          {/* Menu panel */}
           <div
             className="absolute top-16 left-0 right-0 bg-primary border-b border-white/10 shadow-xl py-3 px-4 flex flex-col gap-1"
             onClick={e => e.stopPropagation()}
           >
             {isSignedIn ? (
               <>
+                {/* Name header */}
+                <div className="flex items-center gap-2.5 px-2 py-2 mb-1">
+                  <span className="w-8 h-8 rounded-full bg-accent/30 border border-accent/50 flex items-center justify-center text-sm font-bold text-white uppercase">
+                    {displayName[0] ?? '?'}
+                  </span>
+                  <span className="text-white font-semibold text-sm truncate">{displayName}</span>
+                </div>
+                <div className="border-t border-white/10 mb-1" />
                 <MobileNavLink href="/my-bookings" onClick={() => setMenuOpen(false)}>My Bookings</MobileNavLink>
                 {(kyc === 'not_submitted' || kyc === null) && (
                   <MobileNavLink href="/kyc" onClick={() => setMenuOpen(false)} accent>Verify ID</MobileNavLink>
@@ -141,17 +211,22 @@ export function Nav() {
                 {effectiveRole === 'admin' && (
                   <MobileNavLink href="/admin" onClick={() => setMenuOpen(false)}>Admin</MobileNavLink>
                 )}
-                {effectiveRole !== 'vendor' && effectiveRole !== 'admin' && (
+                {showListBike && (
                   <MobileNavLink href="/vendor/signup" onClick={() => setMenuOpen(false)}>List Your Bike</MobileNavLink>
                 )}
                 <div className="border-t border-white/10 mt-2 pt-2">
-                  <button onClick={handleSignOut} className="w-full text-left text-white/70 hover:text-white text-sm font-medium py-2.5 px-2 rounded-lg hover:bg-white/10 transition-colors">
+                  <button
+                    onClick={handleSignOut}
+                    className="w-full text-left text-white/70 hover:text-white text-sm font-medium py-2.5 px-2 rounded-lg hover:bg-white/10 transition-colors"
+                  >
                     Sign out
                   </button>
                 </div>
               </>
             ) : (
               <>
+                <MobileNavLink href="/vendor/signup" onClick={() => setMenuOpen(false)}>List Your Bike</MobileNavLink>
+                <div className="border-t border-white/10 my-1" />
                 <MobileNavLink href="/sign-in" onClick={() => setMenuOpen(false)}>Login</MobileNavLink>
                 <MobileNavLink href="/sign-up" onClick={() => setMenuOpen(false)} accent>Sign Up</MobileNavLink>
               </>
@@ -163,7 +238,9 @@ export function Nav() {
   );
 }
 
-function NavLink({ href, children, accent, warning, onClick }: { href: string; children: React.ReactNode; accent?: boolean; warning?: boolean; onClick?: () => void }) {
+function NavLink({ href, children, accent, warning, onClick }: {
+  href: string; children: React.ReactNode; accent?: boolean; warning?: boolean; onClick?: () => void;
+}) {
   return (
     <li>
       <Link
@@ -177,7 +254,9 @@ function NavLink({ href, children, accent, warning, onClick }: { href: string; c
   );
 }
 
-function MobileNavLink({ href, children, accent, warning, onClick }: { href: string; children: React.ReactNode; accent?: boolean; warning?: boolean; onClick?: () => void }) {
+function MobileNavLink({ href, children, accent, warning, onClick }: {
+  href: string; children: React.ReactNode; accent?: boolean; warning?: boolean; onClick?: () => void;
+}) {
   return (
     <Link
       href={href}

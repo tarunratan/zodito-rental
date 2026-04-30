@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import Script from 'next/script';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import type { PackageTier } from '@/lib/supabase/types';
 
@@ -42,6 +42,17 @@ export function RazorpayCheckout({
   const router = useRouter();
   const [scriptReady, setScriptReady] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('online');
+  const locationRef = useRef<{ lat: number; lng: number } | null>(null);
+
+  // Silently capture geolocation on mount — best-effort, never blocks checkout
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      pos => { locationRef.current = { lat: pos.coords.latitude, lng: pos.coords.longitude }; },
+      () => { /* permission denied or unavailable — proceed without */ },
+      { timeout: 8000, maximumAge: 60000 }
+    );
+  }, []);
 
   async function buildBooking() {
     if (!pickupTs) return null;
@@ -59,6 +70,7 @@ export function RazorpayCheckout({
         mobile_holder: mobileHolder,
         payment_method: paymentMethod,
         ...(couponCode ? { coupon_code: couponCode } : {}),
+        ...(locationRef.current ? { booking_lat: locationRef.current.lat, booking_lng: locationRef.current.lng } : {}),
       }),
     });
 

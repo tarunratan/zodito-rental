@@ -127,13 +127,39 @@ export default async function BookingDetailPage({ params }: { params: { id: stri
         </div>
       </div>
 
+      <div className="card p-6 mb-4">
+        <h2 className="font-display font-semibold text-lg mb-3">Extra charges</h2>
+        <div className="grid grid-cols-2 gap-3 text-sm mb-3">
+          <div className="rounded-lg border border-border p-3 bg-bg">
+            <div className="text-[10px] text-muted uppercase tracking-wide mb-1">Excess km</div>
+            <div className="font-bold text-xl text-primary leading-none">
+              ₹{bike.model.excess_km_rate ?? 0}<span className="text-sm font-medium">/km</span>
+            </div>
+            <div className="text-[11px] text-muted mt-1">after {booking.km_limit} km included</div>
+          </div>
+          <div className="rounded-lg border border-border p-3 bg-bg">
+            <div className="text-[10px] text-muted uppercase tracking-wide mb-1">Late return</div>
+            <div className="font-bold text-xl text-primary leading-none">
+              ₹{bike.model.late_hourly_penalty ?? 0}<span className="text-sm font-medium">/hr</span>
+            </div>
+            <div className="text-[11px] text-muted mt-1">charged at drop-off</div>
+          </div>
+        </div>
+        <p className="text-[11px] text-muted leading-relaxed">
+          Extra charges are collected at the time of vehicle return. Excess km is calculated on the odometer reading at drop-off.
+        </p>
+      </div>
+
       <div className="card p-6">
         <h2 className="font-display font-semibold text-lg mb-3">What to bring</h2>
-        <ul className="space-y-2 text-sm text-muted">
+        <ul className="space-y-2.5 text-sm text-muted">
           <li>📄 <strong className="text-primary">Original Driving License</strong> (physical; digital copies not accepted)</li>
           <li>🆔 Soft copy of <strong className="text-primary">Aadhaar Card</strong> for verification</li>
-          <li>💳 Your ID (the license holder must be present to collect)</li>
-          <li>⛽ Fuel is not included — refuel before return</li>
+          <li>💳 Your ID — the license holder must be present to collect the vehicle</li>
+          <li className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-amber-800">
+            <span className="font-semibold">⛽ Fuel Policy</span><br />
+            Fuel is not included in the rental charges. The vehicle will be provided with a minimal amount of fuel, sufficient to reach the nearest petrol station. Customers are required to refuel as per their needs. <strong>Fuel charges are non-refundable.</strong>
+          </li>
         </ul>
       </div>
     </div>
