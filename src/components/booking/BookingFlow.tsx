@@ -158,6 +158,12 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
                 <span className="text-muted">Package</span>
                 <span className="font-semibold">{TIER_LABELS[tier]}</span>
               </div>
+              {breakdown && (
+                <div className="flex justify-between items-center py-2 border-b border-border">
+                  <span className="text-muted">Included KM</span>
+                  <span className="font-semibold">{breakdown.kmLimit.toLocaleString('en-IN')} km</span>
+                </div>
+              )}
               {pickupTs && (
                 <div className="flex justify-between items-center py-2 border-b border-border">
                   <span className="text-muted">Pickup</span>

@@ -138,7 +138,7 @@ export default async function BikeDetailPage({ params }: { params: { id: string 
               <span className="font-display font-bold text-3xl text-primary">
                 {pkg24 ? formatINR(pkg24.price) : '—'}
               </span>
-              <span className="text-sm text-muted">/ 24 hrs · {pkg24?.km_limit} km</span>
+              <span className="text-sm text-muted">/ 24 hrs</span>
             </div>
             <div className="text-xs text-muted mt-1">
               + 18% GST · ₹500 refundable security deposit
@@ -151,18 +151,14 @@ export default async function BikeDetailPage({ params }: { params: { id: string 
               <span className="text-white font-bold text-sm tracking-wide">⚠️ Extra Charges Apply</span>
             </div>
             <div className="bg-amber-50 p-4">
-              {pkg24?.km_limit && (
-                <div className="flex items-baseline gap-2 mb-3 pb-3 border-b border-amber-200">
-                  <span className="text-amber-700 text-sm font-medium">Included KM:</span>
-                  <span className="text-amber-900 font-black text-2xl">{pkg24.km_limit} km</span>
-                  <span className="text-amber-600 text-xs">per booking</span>
-                </div>
-              )}
+              <p className="text-amber-700 text-xs mb-3 pb-3 border-b border-amber-200">
+                Each package includes a km limit — select your package below to see included km.
+              </p>
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-white border border-amber-200 rounded-lg p-3">
                   <p className="text-amber-700 text-xs font-semibold uppercase tracking-wide mb-1">Excess km</p>
                   <p className="text-amber-900 font-black text-2xl leading-none">₹{excessRate}<span className="text-sm font-bold">/km</span></p>
-                  <p className="text-amber-600 text-[10px] mt-1 leading-tight">Charged at pickup-day rate</p>
+                  <p className="text-amber-600 text-[10px] mt-1 leading-tight">After your package&apos;s included km</p>
                 </div>
                 <div className="bg-white border border-amber-200 rounded-lg p-3">
                   <p className="text-amber-700 text-xs font-semibold uppercase tracking-wide mb-1">Late return</p>
