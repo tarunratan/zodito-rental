@@ -25,8 +25,8 @@ const bodySchema = z.object({
   extra_helmet_count: z.number().int().min(0).max(3).default(0),
   mobile_holder: z.boolean().default(false),
   coupon_code: z.string().optional(),
-  booking_lat: z.number().optional(),
-  booking_lng: z.number().optional(),
+  booking_lat: z.number(),
+  booking_lng: z.number(),
 });
 
 // Decode JWT payload locally (no network) — used only to extract `sub` (auth_id)
@@ -235,8 +235,8 @@ export async function POST(req: NextRequest) {
       status: 'confirmed',
       payment_status: 'pending',
       booking_ip: clientIp,
-      ...(body.booking_lat !== undefined ? { booking_lat: body.booking_lat } : {}),
-      ...(body.booking_lng !== undefined ? { booking_lng: body.booking_lng } : {}),
+      booking_lat: body.booking_lat,
+      booking_lng: body.booking_lng,
     })
     .select('id, booking_number')
     .single();

@@ -24,8 +24,8 @@ const bodySchema = z.object({
   mobile_holder: z.boolean().default(false),
   payment_method: z.enum(['online', 'at_pickup']).default('online'),
   coupon_code: z.string().optional(),
-  booking_lat: z.number().optional(),
-  booking_lng: z.number().optional(),
+  booking_lat: z.number(),
+  booking_lng: z.number(),
 });
 
 export async function POST(req: NextRequest) {
@@ -202,8 +202,8 @@ export async function POST(req: NextRequest) {
       status: body.payment_method === 'at_pickup' ? 'confirmed' : 'pending_payment',
       payment_status: 'pending',
       booking_ip: clientIp,
-      ...(body.booking_lat !== undefined ? { booking_lat: body.booking_lat } : {}),
-      ...(body.booking_lng !== undefined ? { booking_lng: body.booking_lng } : {}),
+      booking_lat: body.booking_lat,
+      booking_lng: body.booking_lng,
     })
     .select('*')
     .single();

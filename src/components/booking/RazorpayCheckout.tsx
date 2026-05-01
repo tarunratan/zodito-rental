@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Script from 'next/script';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { createSupabaseBrowser } from '@/lib/supabase/client';
 import type { PackageTier } from '@/lib/supabase/types';
@@ -13,7 +13,12 @@ declare global {
 }
 
 type PaymentMethod = 'online' | 'at_pickup';
-type CashStatus = 'idle' | 'confirming' | 'confirmed' | 'failed';
+type CashStatus   = 'idle' | 'confirming' | 'confirmed' | 'failed';
+// 'pending'  — GPS request in-flight (fires on mount)
+// 'granted'  — coordinates available, booking allowed
+// 'denied'   — user explicitly blocked location in browser → hard gate
+// 'timeout'  — GPS took too long or device unavailable → soft retry gate
+type LocStatus = 'pending' | 'granted' | 'denied' | 'timeout';
 
 export function RazorpayCheckout({
   bikeId,
@@ -43,34 +48,51 @@ export function RazorpayCheckout({
   const router = useRouter();
   const [scriptReady, setScriptReady] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('online');
-  const locationRef = useRef<{ lat: number; lng: number } | null>(null);
 
-  // Cash booking optimistic state
-  const [cashStatus, setCashStatus] = useState<CashStatus>('idle');
-  const [cashError, setCashError] = useState<string | null>(null);
+  // Location — mandatory for booking
+  const locationRef = useRef<{ lat: number; lng: number } | null>(null);
+  const [locStatus, setLocStatus] = useState<LocStatus>('pending');
+
+  // Cash optimistic state
+  const [cashStatus, setCashStatus]             = useState<CashStatus>('idle');
+  const [cashError, setCashError]               = useState<string | null>(null);
   const [confirmedBooking, setConfirmedBooking] = useState<{ id: string; number: string } | null>(null);
 
-  // Silently capture geolocation on mount
-  useEffect(() => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+  // ── Location acquisition ──────────────────────────────────────────────────
+  // Fires on mount. Uses maximumAge:300000 so a cached fix (≤5 min old) is
+  // returned instantly on mobile — no delay for returning visitors.
+  // enableHighAccuracy:false → WiFi/cell fallback, much faster than pure GPS.
+  const requestLocation = useCallback(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setLocStatus('timeout');
+      return;
+    }
+    setLocStatus('pending');
     navigator.geolocation.getCurrentPosition(
-      pos => { locationRef.current = { lat: pos.coords.latitude, lng: pos.coords.longitude }; },
-      () => {},
-      { timeout: 8000, maximumAge: 60000 }
+      pos => {
+        locationRef.current = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setLocStatus('granted');
+      },
+      err => {
+        // code 1 = PERMISSION_DENIED (user explicitly blocked)
+        // code 2 = POSITION_UNAVAILABLE, code 3 = TIMEOUT
+        setLocStatus(err.code === 1 ? 'denied' : 'timeout');
+      },
+      { timeout: 10000, maximumAge: 300000, enableHighAccuracy: false }
     );
   }, []);
 
+  useEffect(() => { requestLocation(); }, [requestLocation]);
+
   // ── Cash (Pay at Pickup) ─────────────────────────────────────────────────
   async function handleAtPickup() {
-    if (!pickupTs) return;
-    setCashStatus('confirming'); // instant visual feedback — UI responds immediately
+    if (!pickupTs || !locationRef.current) return;
+    setCashStatus('confirming');
     setCashError(null);
 
     try {
-      // Get the Supabase session token from local cache — no network, reads localStorage
       const supabase = createSupabaseBrowser();
       const { data: { session } } = await supabase.auth.getSession();
-
       if (!session?.access_token) {
         setCashStatus('failed');
         setCashError('Session expired — please sign in again.');
@@ -89,8 +111,9 @@ export function RazorpayCheckout({
           start_ts: pickupTs.toISOString(),
           extra_helmet_count: extraHelmets,
           mobile_holder: mobileHolder,
+          booking_lat: locationRef.current.lat,
+          booking_lng: locationRef.current.lng,
           ...(couponCode ? { coupon_code: couponCode } : {}),
-          ...(locationRef.current ? { booking_lat: locationRef.current.lat, booking_lng: locationRef.current.lng } : {}),
         }),
       });
 
@@ -123,7 +146,7 @@ export function RazorpayCheckout({
 
   // ── Online (Razorpay) ────────────────────────────────────────────────────
   async function buildOnlineBooking() {
-    if (!pickupTs) return null;
+    if (!pickupTs || !locationRef.current) return null;
     setError(null);
     setSubmitting(true);
 
@@ -137,8 +160,9 @@ export function RazorpayCheckout({
         extra_helmet_count: extraHelmets,
         mobile_holder: mobileHolder,
         payment_method: 'online',
+        booking_lat: locationRef.current.lat,
+        booking_lng: locationRef.current.lng,
         ...(couponCode ? { coupon_code: couponCode } : {}),
-        ...(locationRef.current ? { booking_lat: locationRef.current.lat, booking_lng: locationRef.current.lng } : {}),
       }),
     });
 
@@ -212,7 +236,7 @@ export function RazorpayCheckout({
 
   const totalLabel = `₹${Math.round(totalAmount).toLocaleString('en-IN')}`;
 
-  // ── Cash confirmed state — show inline, no page navigation needed ─────────
+  // ── Confirmed state ───────────────────────────────────────────────────────
   if (cashStatus === 'confirmed' && confirmedBooking) {
     return (
       <div className="mt-4 rounded-2xl border-2 border-green-400 bg-green-50 overflow-hidden">
@@ -244,7 +268,7 @@ export function RazorpayCheckout({
     );
   }
 
-  // ── Cash confirming state ─────────────────────────────────────────────────
+  // ── Confirming state ──────────────────────────────────────────────────────
   if (cashStatus === 'confirming') {
     return (
       <div className="mt-4 rounded-2xl border-2 border-accent/40 bg-accent/5 p-6 text-center">
@@ -255,7 +279,85 @@ export function RazorpayCheckout({
     );
   }
 
-  // ── Normal state (idle or failed) ─────────────────────────────────────────
+  // ── Location DENIED — hard gate, replace entire checkout section ──────────
+  if (locStatus === 'denied') {
+    return (
+      <div className="mt-4 rounded-2xl border-2 border-red-300 bg-red-50 overflow-hidden">
+        <div className="bg-red-500 px-5 py-3 flex items-center gap-2">
+          <span className="text-white text-xl">📍</span>
+          <span className="text-white font-bold text-base">Location Access Required</span>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-sm text-gray-700 leading-relaxed">
+            Zodito requires your location to complete a booking. It is used to
+            verify your pickup point and ensure your safety during the rental.
+          </p>
+          <div className="bg-white rounded-xl border border-red-200 p-4">
+            <p className="text-xs font-bold text-gray-800 mb-2.5">How to enable location access:</p>
+            <ol className="text-xs text-gray-600 space-y-2">
+              <li className="flex items-start gap-2">
+                <span className="bg-red-100 text-red-600 font-bold rounded-full w-4 h-4 flex items-center justify-center shrink-0 mt-0.5 text-[10px]">1</span>
+                Tap the <strong>🔒 lock icon</strong> next to the URL in your browser
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="bg-red-100 text-red-600 font-bold rounded-full w-4 h-4 flex items-center justify-center shrink-0 mt-0.5 text-[10px]">2</span>
+                Find <strong>Location</strong> → set to <strong>Allow</strong>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="bg-red-100 text-red-600 font-bold rounded-full w-4 h-4 flex items-center justify-center shrink-0 mt-0.5 text-[10px]">3</span>
+                Come back here and tap <strong>Try Again</strong>
+              </li>
+            </ol>
+            <p className="text-[11px] text-gray-500 mt-3 pt-3 border-t border-red-100 italic">
+              On iPhone: go to <strong>Settings → Safari → Location</strong> and set to Allow
+            </p>
+          </div>
+          <button
+            onClick={requestLocation}
+            className="w-full py-3 bg-red-500 hover:bg-red-600 active:bg-red-700 text-white font-semibold rounded-xl text-sm transition-colors"
+          >
+            I&apos;ve Enabled Location — Try Again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Location TIMEOUT / UNAVAILABLE — soft gate with retry ────────────────
+  if (locStatus === 'timeout') {
+    return (
+      <div className="mt-4 rounded-2xl border-2 border-amber-300 bg-amber-50 overflow-hidden">
+        <div className="bg-amber-400 px-5 py-3 flex items-center gap-2">
+          <span className="text-white text-xl">📍</span>
+          <span className="text-white font-bold text-base">Location Unavailable</span>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-sm text-gray-700 leading-relaxed">
+            We couldn&apos;t get your location. Location is <strong>required</strong> to
+            complete a booking. Please ensure GPS and location services are
+            enabled on your device, then try again.
+          </p>
+          <div className="text-xs text-gray-500 bg-white border border-amber-200 rounded-lg p-3 space-y-1">
+            <p className="font-semibold text-gray-700">Quick checklist:</p>
+            <p>• Enable Wi-Fi or mobile data — improves location accuracy</p>
+            <p>• On Android: pull down from top → tap Location to enable</p>
+            <p>• On iPhone: Settings → Privacy → Location Services → On</p>
+          </div>
+          <button
+            onClick={requestLocation}
+            className="w-full py-3 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-semibold rounded-xl text-sm transition-colors"
+          >
+            Retry Location
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Normal checkout (pending or granted) ─────────────────────────────────
+  const locReady     = locStatus === 'granted';
+  const bookingReady = locReady && !disabled;
+
   return (
     <>
       <Script
@@ -264,8 +366,24 @@ export function RazorpayCheckout({
         strategy="lazyOnload"
       />
 
+      {/* Location status indicator */}
+      {locStatus === 'pending' && (
+        <div className="mt-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 border border-border">
+          <div className="w-3.5 h-3.5 border-2 border-muted/30 border-t-muted rounded-full animate-spin shrink-0" />
+          <span className="text-xs text-muted">Getting your location for booking security…</span>
+        </div>
+      )}
+      {locStatus === 'granted' && (
+        <div className="mt-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 border border-green-200">
+          <div className="w-3.5 h-3.5 bg-green-500 rounded-full flex items-center justify-center shrink-0">
+            <span className="text-white text-[8px] leading-none">✓</span>
+          </div>
+          <span className="text-xs text-green-700 font-medium">Location captured · booking security enabled</span>
+        </div>
+      )}
+
       {/* Payment method selector */}
-      <div className="mt-4 grid grid-cols-2 gap-2 p-1 bg-bg rounded-xl border border-border">
+      <div className="mt-3 grid grid-cols-2 gap-2 p-1 bg-bg rounded-xl border border-border">
         <button
           onClick={() => setPaymentMethod('online')}
           className={cn(
@@ -292,7 +410,7 @@ export function RazorpayCheckout({
         </p>
       )}
 
-      {/* Failure error */}
+      {/* Failure error (cash) */}
       {cashStatus === 'failed' && cashError && (
         <div className="mt-2 p-3 bg-danger/10 border border-danger/30 rounded-lg text-xs text-danger">
           {cashError}
@@ -303,18 +421,23 @@ export function RazorpayCheckout({
       {paymentMethod === 'online' ? (
         <button
           onClick={handleOnline}
-          disabled={disabled || submitting}
+          disabled={!bookingReady || submitting}
           className="btn-accent w-full text-base py-3 mt-3 disabled:bg-border disabled:cursor-not-allowed disabled:text-muted"
         >
-          {submitting ? 'Processing…' : disabled ? 'Select pickup time' : `Pay & Confirm · ${totalLabel}`}
+          {submitting ? 'Processing…'
+            : !locReady   ? 'Getting location…'
+            : disabled     ? 'Select pickup time'
+            : `Pay & Confirm · ${totalLabel}`}
         </button>
       ) : (
         <button
           onClick={handleAtPickup}
-          disabled={disabled}
+          disabled={!bookingReady}
           className="w-full text-base py-3 mt-3 rounded-xl font-semibold border-2 border-accent text-accent hover:bg-accent hover:text-white transition-all disabled:border-border disabled:text-muted disabled:cursor-not-allowed"
         >
-          {disabled ? 'Select pickup time' : `Confirm Booking · ${totalLabel}`}
+          {!locReady ? 'Getting location…'
+            : disabled  ? 'Select pickup time'
+            : `Confirm Booking · ${totalLabel}`}
         </button>
       )}
     </>
