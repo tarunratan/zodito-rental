@@ -25,6 +25,8 @@ const DURATIONS = [
   { label: '6 hrs',  hrs: 6 },
   { label: '12 hrs', hrs: 12 },
   { label: '1 day',  hrs: 24 },
+  { label: '2 days', hrs: 48 },
+  { label: '3 days', hrs: 72 },
   { label: '7 days', hrs: 168 },
   { label: '15 days', hrs: 360 },
   { label: '30 days', hrs: 720 },

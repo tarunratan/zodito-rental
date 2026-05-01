@@ -11,7 +11,7 @@ export type VendorStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 export type BikeOwnerType = 'platform' | 'vendor';
 export type BikeCategory = 'scooter' | 'bike_sub125' | 'bike_sub150' | 'bike_plus150';
 export type BikeListingStatus = 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'inactive';
-export type PackageTier = '6hr' | '12hr' | '24hr' | '7day' | '15day' | '30day';
+export type PackageTier = '6hr' | '12hr' | '24hr' | '2day' | '3day' | '7day' | '15day' | '30day';
 export type BookingStatus =
   | 'pending_payment'
   | 'confirmed'
