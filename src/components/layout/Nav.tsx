@@ -85,9 +85,44 @@ export function Nav() {
 
         {/* Desktop centre links — always visible */}
         <ul className="hidden md:flex gap-6 list-none items-center">
-          {showListBike && (
-            <NavLink href="/vendor/signup">List Your Bike</NavLink>
-          )}
+          {/* Partner with Us — hover flyout */}
+          <li className="flex items-center h-16 relative group">
+            <span className="flex items-center gap-1 text-sm font-medium text-white/75 group-hover:text-white transition-colors cursor-default select-none">
+              Partner with Us
+              <span className="text-white/40 text-[10px] ml-0.5">▾</span>
+            </span>
+            {/* Dropdown — no gap so hover stays active as mouse moves down */}
+            <div className="absolute top-16 left-0 hidden group-hover:block z-50 w-72">
+              <div className="bg-white border border-border rounded-xl shadow-xl overflow-hidden">
+                <div className="px-4 pt-3.5 pb-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Partner Program</span>
+                </div>
+                <Link
+                  href="/earn"
+                  className="flex items-start gap-3 px-4 py-3 hover:bg-bg transition-colors group/link"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center text-base shrink-0">
+                    💰
+                  </div>
+                  <div>
+                    <div className="font-semibold text-primary text-sm group-hover/link:text-accent transition-colors">
+                      Earn with Us
+                    </div>
+                    <div className="text-xs text-muted mt-0.5 leading-snug">
+                      List your bike, earn 80% of every rental
+                    </div>
+                  </div>
+                </Link>
+                <div className="mx-4 border-t border-border" />
+                <div className="px-4 py-3 flex items-center justify-between">
+                  <span className="text-[11px] text-muted">50+ active partners · ₹6,000+/month avg</span>
+                  <Link href="/earn" className="text-[11px] font-semibold text-accent hover:underline">
+                    Learn more →
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </li>
         </ul>
 
         <div className="flex gap-2.5 items-center">
@@ -211,6 +246,7 @@ export function Nav() {
                 {effectiveRole === 'admin' && (
                   <MobileNavLink href="/admin" onClick={() => setMenuOpen(false)}>Admin</MobileNavLink>
                 )}
+                <MobileNavLink href="/earn" onClick={() => setMenuOpen(false)}>💰 Earn with Us</MobileNavLink>
                 {showListBike && (
                   <MobileNavLink href="/vendor/signup" onClick={() => setMenuOpen(false)}>List Your Bike</MobileNavLink>
                 )}
@@ -225,6 +261,7 @@ export function Nav() {
               </>
             ) : (
               <>
+                <MobileNavLink href="/earn" onClick={() => setMenuOpen(false)} accent>💰 Earn with Us</MobileNavLink>
                 <MobileNavLink href="/vendor/signup" onClick={() => setMenuOpen(false)}>List Your Bike</MobileNavLink>
                 <div className="border-t border-white/10 my-1" />
                 <MobileNavLink href="/sign-in" onClick={() => setMenuOpen(false)}>Login</MobileNavLink>

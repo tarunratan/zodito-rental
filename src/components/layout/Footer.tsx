@@ -20,7 +20,8 @@ export function Footer() {
           <ul className="space-y-2 text-sm">
             <li><Link href="/" className="hover:text-accent transition-colors">Browse Bikes</Link></li>
             <li><Link href="/my-bookings" className="hover:text-accent transition-colors">My Bookings</Link></li>
-            <li><Link href="/vendor/signup" className="hover:text-accent transition-colors">List Your Bike</Link></li>
+            <li><Link href="/earn" className="hover:text-accent transition-colors">Earn with Us</Link></li>
+            <li><Link href="/vendor/signup" className="hover:text-accent transition-colors">Partner Apply</Link></li>
           </ul>
         </div>
 
