@@ -5,13 +5,12 @@ import { useRouter } from 'next/navigation';
 import { createSupabaseBrowser } from '@/lib/supabase/client';
 
 type FileState = { file: File | null; previewUrl: string | null };
-type SubmitStep = 'idle' | 'presigning' | 'uploading' | 'saving';
+type SubmitStep = 'idle' | 'uploading' | 'saving';
 
 const STEP_LABEL: Record<SubmitStep, string> = {
-  idle:       '',
-  presigning: 'Preparing upload…',
-  uploading:  'Uploading documents…',
-  saving:     'Saving…',
+  idle:      '',
+  uploading: 'Uploading documents…',
+  saving:    'Saving…',
 };
 
 export function KycForm({ currentStatus }: { currentStatus: string }) {
@@ -31,41 +30,44 @@ export function KycForm({ currentStatus }: { currentStatus: string }) {
     setError(null);
 
     try {
-      // ── Step 1: get one-time upload tokens from the server ──────────────────
-      setStep('presigning');
-      const presignRes = await fetch('/api/kyc/presign');
-      if (!presignRes.ok) {
-        const d = await presignRes.json().catch(() => ({}));
-        throw new Error((d as any).error || 'Failed to prepare upload');
-      }
-      const tokens = await presignRes.json() as {
-        dl:      { path: string; token: string };
-        aadhaar: { path: string; token: string };
-        selfie:  { path: string; token: string };
+      const supabase = createSupabaseBrowser();
+
+      // Get the auth UUID — this is what Supabase RLS knows as auth.uid()
+      const { data: { user: authUser }, error: authErr } = await supabase.auth.getUser();
+      if (authErr || !authUser) throw new Error('Session expired — please sign in again');
+
+      // ── Step 1: upload all 3 files directly to Supabase Storage ────────────
+      // Uses the user's live auth session (POST + FormData = CORS simple request,
+      // no preflight, works from any origin). Files never pass through Next.js.
+      setStep('uploading');
+      const ts  = Date.now();
+      const uid = authUser.id;
+
+      const paths = {
+        dl:      `${uid}/${ts}-dl.jpg`,
+        aadhaar: `${uid}/${ts}-aadhaar.jpg`,
+        selfie:  `${uid}/${ts}-selfie.jpg`,
       };
 
-      // ── Step 2: upload directly to Supabase Storage (no Next.js body limit) ─
-      setStep('uploading');
-      const supabase = createSupabaseBrowser();
       const [dlUp, aadhaarUp, selfieUp] = await Promise.all([
-        supabase.storage.from('kyc-docs').uploadToSignedUrl(tokens.dl.path,      tokens.dl.token,      dl.file!,      { contentType: dl.file!.type }),
-        supabase.storage.from('kyc-docs').uploadToSignedUrl(tokens.aadhaar.path, tokens.aadhaar.token, aadhaar.file!, { contentType: aadhaar.file!.type }),
-        supabase.storage.from('kyc-docs').uploadToSignedUrl(tokens.selfie.path,  tokens.selfie.token,  selfie.file!,  { contentType: selfie.file!.type }),
+        supabase.storage.from('kyc-docs').upload(paths.dl,      dl.file!,      { contentType: dl.file!.type }),
+        supabase.storage.from('kyc-docs').upload(paths.aadhaar, aadhaar.file!, { contentType: aadhaar.file!.type }),
+        supabase.storage.from('kyc-docs').upload(paths.selfie,  selfie.file!,  { contentType: selfie.file!.type }),
       ]);
 
       const uploadErr = dlUp.error || aadhaarUp.error || selfieUp.error;
       if (uploadErr) throw new Error('Upload failed: ' + uploadErr.message);
 
-      // ── Step 3: record storage paths in the database ────────────────────────
+      // ── Step 2: record paths in the database ────────────────────────────────
       setStep('saving');
       const submitRes = await fetch('/api/kyc/submit', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           dl_number:    dlNumber,
-          dl_path:      tokens.dl.path,
-          aadhaar_path: tokens.aadhaar.path,
-          selfie_path:  tokens.selfie.path,
+          dl_path:      paths.dl,
+          aadhaar_path: paths.aadhaar,
+          selfie_path:  paths.selfie,
         }),
       });
       const submitData = await submitRes.json().catch(() => ({}));

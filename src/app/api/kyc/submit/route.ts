@@ -26,8 +26,10 @@ export async function POST(req: NextRequest) {
   }
   const { dl_number, dl_path, aadhaar_path, selfie_path } = parse.data;
 
-  // Tamper-proof: paths must live in this user's storage folder
-  const prefix = `${user.id}/`;
+  // Tamper-proof: paths must live in this user's storage folder.
+  // Client uploads using auth.uid() as the folder name (matches Supabase RLS),
+  // so we validate against auth_id (not the app users.id).
+  const prefix = `${user.auth_id}/`;
   if (![dl_path, aadhaar_path, selfie_path].every(p => p.startsWith(prefix))) {
     return NextResponse.json({ error: 'Invalid file paths' }, { status: 403 });
   }
