@@ -2,37 +2,79 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { createSupabaseBrowser } from '@/lib/supabase/client';
 
 type FileState = { file: File | null; previewUrl: string | null };
+type SubmitStep = 'idle' | 'presigning' | 'uploading' | 'saving';
+
+const STEP_LABEL: Record<SubmitStep, string> = {
+  idle:       '',
+  presigning: 'Preparing upload…',
+  uploading:  'Uploading documents…',
+  saving:     'Saving…',
+};
 
 export function KycForm({ currentStatus }: { currentStatus: string }) {
   const router = useRouter();
   const [dlNumber, setDlNumber] = useState('');
-  const [dl, setDl] = useState<FileState>({ file: null, previewUrl: null });
-  const [aadhaar, setAadhaar] = useState<FileState>({ file: null, previewUrl: null });
-  const [selfie, setSelfie] = useState<FileState>({ file: null, previewUrl: null });
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [dl,       setDl]      = useState<FileState>({ file: null, previewUrl: null });
+  const [aadhaar,  setAadhaar]  = useState<FileState>({ file: null, previewUrl: null });
+  const [selfie,   setSelfie]   = useState<FileState>({ file: null, previewUrl: null });
+  const [step,     setStep]     = useState<SubmitStep>('idle');
+  const [error,    setError]    = useState<string | null>(null);
 
-  const canSubmit = dlNumber.trim().length >= 10 && dl.file && aadhaar.file && selfie.file && !submitting;
+  const submitting = step !== 'idle';
+  const canSubmit  = dlNumber.trim().length >= 10 && !!dl.file && !!aadhaar.file && !!selfie.file && !submitting;
 
   async function onSubmit() {
     if (!canSubmit) return;
-    setSubmitting(true);
     setError(null);
+
     try {
-      const form = new FormData();
-      form.append('dl_number', dlNumber);
-      form.append('dl', dl.file!);
-      form.append('aadhaar', aadhaar.file!);
-      form.append('selfie', selfie.file!);
-      const res = await fetch('/api/kyc/submit', { method: 'POST', body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      // ── Step 1: get one-time upload tokens from the server ──────────────────
+      setStep('presigning');
+      const presignRes = await fetch('/api/kyc/presign');
+      if (!presignRes.ok) {
+        const d = await presignRes.json().catch(() => ({}));
+        throw new Error((d as any).error || 'Failed to prepare upload');
+      }
+      const tokens = await presignRes.json() as {
+        dl:      { path: string; token: string };
+        aadhaar: { path: string; token: string };
+        selfie:  { path: string; token: string };
+      };
+
+      // ── Step 2: upload directly to Supabase Storage (no Next.js body limit) ─
+      setStep('uploading');
+      const supabase = createSupabaseBrowser();
+      const [dlUp, aadhaarUp, selfieUp] = await Promise.all([
+        supabase.storage.from('kyc-docs').uploadToSignedUrl(tokens.dl.path,      tokens.dl.token,      dl.file!,      { contentType: dl.file!.type }),
+        supabase.storage.from('kyc-docs').uploadToSignedUrl(tokens.aadhaar.path, tokens.aadhaar.token, aadhaar.file!, { contentType: aadhaar.file!.type }),
+        supabase.storage.from('kyc-docs').uploadToSignedUrl(tokens.selfie.path,  tokens.selfie.token,  selfie.file!,  { contentType: selfie.file!.type }),
+      ]);
+
+      const uploadErr = dlUp.error || aadhaarUp.error || selfieUp.error;
+      if (uploadErr) throw new Error('Upload failed: ' + uploadErr.message);
+
+      // ── Step 3: record storage paths in the database ────────────────────────
+      setStep('saving');
+      const submitRes = await fetch('/api/kyc/submit', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dl_number:    dlNumber,
+          dl_path:      tokens.dl.path,
+          aadhaar_path: tokens.aadhaar.path,
+          selfie_path:  tokens.selfie.path,
+        }),
+      });
+      const submitData = await submitRes.json().catch(() => ({}));
+      if (!submitRes.ok) throw new Error((submitData as any).error || 'Submission failed');
+
       router.refresh();
     } catch (e: any) {
-      setError(e.message);
-      setSubmitting(false);
+      setError(e.message ?? 'Something went wrong. Please try again.');
+      setStep('idle');
     }
   }
 
@@ -83,7 +125,11 @@ export function KycForm({ currentStatus }: { currentStatus: string }) {
         disabled={!canSubmit}
         className="btn-accent w-full text-base py-3 disabled:bg-border disabled:text-muted disabled:cursor-not-allowed"
       >
-        {submitting ? 'Uploading…' : currentStatus === 'rejected' ? 'Re-submit for review' : 'Submit for review'}
+        {submitting
+          ? STEP_LABEL[step]
+          : currentStatus === 'rejected'
+            ? 'Re-submit for review'
+            : 'Submit for review'}
       </button>
 
       <p className="text-[11px] text-muted leading-relaxed text-center">

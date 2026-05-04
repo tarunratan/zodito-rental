@@ -18,8 +18,11 @@ type KycUser = {
   kyc_rejection_reason: string | null;
 };
 
+type DocUrls = { dl?: string; aadhaar?: string; selfie?: string };
+type DocState = DocUrls & { loading?: boolean; failed?: boolean };
+
 const STATUS_COLORS: Record<string, string> = {
-  pending: 'bg-yellow-100 text-yellow-700',
+  pending:  'bg-yellow-100 text-yellow-700',
   approved: 'bg-green-100 text-green-700',
   rejected: 'bg-red-100 text-red-700',
 };
@@ -30,15 +33,34 @@ function fmt(ts: string | null) {
 }
 
 export function KycReviewManager({ initialUsers }: { initialUsers: KycUser[] }) {
-  const [users, setUsers] = useState<KycUser[]>(initialUsers);
-  const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [users,       setUsers]       = useState<KycUser[]>(initialUsers);
+  const [filter,      setFilter]      = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
+  const [expanded,    setExpanded]    = useState<string | null>(null);
+  const [docUrls,     setDocUrls]     = useState<Record<string, DocState>>({});
   const [rejectModal, setRejectModal] = useState<{ id: string; name: string } | null>(null);
   const [rejectReason, setRejectReason] = useState('');
-  const [loading, setLoading] = useState<string | null>(null);
-  const [lightbox, setLightbox] = useState<string | null>(null);
+  const [loading,     setLoading]     = useState<string | null>(null);
+  const [lightbox,    setLightbox]    = useState<string | null>(null);
 
   const filtered = users.filter(u => filter === 'all' || u.kyc_status === filter);
+
+  async function handleExpand(userId: string) {
+    const next = expanded === userId ? null : userId;
+    setExpanded(next);
+
+    // Fetch signed URLs on first expand — images live in a private bucket
+    if (next && !docUrls[next]) {
+      setDocUrls(prev => ({ ...prev, [next]: { loading: true } }));
+      try {
+        const res = await fetch(`/api/admin/kyc/doc-url?userId=${next}`);
+        if (!res.ok) throw new Error('failed');
+        const urls: DocUrls = await res.json();
+        setDocUrls(prev => ({ ...prev, [next]: urls }));
+      } catch {
+        setDocUrls(prev => ({ ...prev, [next]: { failed: true } }));
+      }
+    }
+  }
 
   async function review(user_id: string, action: 'approve' | 'reject', reason?: string) {
     setLoading(user_id);
@@ -61,8 +83,8 @@ export function KycReviewManager({ initialUsers }: { initialUsers: KycUser[] }) 
   }
 
   const counts = {
-    all: users.length,
-    pending: users.filter(u => u.kyc_status === 'pending').length,
+    all:      users.length,
+    pending:  users.filter(u => u.kyc_status === 'pending').length,
     approved: users.filter(u => u.kyc_status === 'approved').length,
     rejected: users.filter(u => u.kyc_status === 'rejected').length,
   };
@@ -108,7 +130,7 @@ export function KycReviewManager({ initialUsers }: { initialUsers: KycUser[] }) 
                   <>
                     <tr key={user.id}
                       className={`border-b border-border hover:bg-bg/40 cursor-pointer transition-colors ${expanded === user.id ? 'bg-bg/60' : ''}`}
-                      onClick={() => setExpanded(e => e === user.id ? null : user.id)}>
+                      onClick={() => handleExpand(user.id)}>
                       <td className="px-4 py-3">
                         <div className="font-semibold">{[user.first_name, user.last_name].filter(Boolean).join(' ') || '—'}</div>
                         <div className="text-xs text-muted">{user.email}</div>
@@ -135,49 +157,28 @@ export function KycReviewManager({ initialUsers }: { initialUsers: KycUser[] }) 
                               </button>
                             </>
                           )}
-                          <button onClick={() => setExpanded(e => e === user.id ? null : user.id)}
+                          <button onClick={() => handleExpand(user.id)}
                             className="text-xs px-2 py-1 bg-border text-primary rounded hover:bg-border/70 transition-colors">
                             {expanded === user.id ? 'Hide' : 'View'}
                           </button>
                         </div>
                       </td>
                     </tr>
+
                     {expanded === user.id && (
                       <tr key={`${user.id}-expanded`} className="border-b border-border bg-bg/30">
                         <td colSpan={5} className="px-4 py-4">
-                          <div className="space-y-3">
-                            <div className="flex flex-wrap gap-4">
-                              {[
-                                { label: 'Driving Licence', url: user.dl_photo_url },
-                                { label: 'Aadhaar', url: user.aadhaar_photo_url },
-                                { label: 'Selfie with DL', url: user.selfie_with_dl_photo_url },
-                              ].map(doc => (
-                                <div key={doc.label} className="flex flex-col items-center gap-2">
-                                  <span className="text-xs font-semibold text-muted uppercase tracking-wide">{doc.label}</span>
-                                  {doc.url ? (
-                                    <div className="w-40 h-28 rounded-lg overflow-hidden border border-border cursor-pointer hover:border-accent transition-colors bg-bg"
-                                      onClick={() => setLightbox(doc.url!)}>
-                                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                                      <img src={doc.url} alt={doc.label} className="w-full h-full object-cover" />
-                                    </div>
-                                  ) : (
-                                    <div className="w-40 h-28 rounded-lg border border-dashed border-border flex items-center justify-center bg-bg">
-                                      <span className="text-xs text-muted">Not uploaded</span>
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
+                          <DocImages userId={user.id} state={docUrls[user.id]} onLightbox={setLightbox} />
+
+                          {user.kyc_status === 'rejected' && user.kyc_rejection_reason && (
+                            <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                              <p className="text-xs font-semibold text-red-600 mb-1">Rejection reason</p>
+                              <p className="text-sm text-red-500">{user.kyc_rejection_reason}</p>
                             </div>
-                            {user.kyc_status === 'rejected' && user.kyc_rejection_reason && (
-                              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                                <p className="text-xs font-semibold text-red-600 mb-1">Rejection reason</p>
-                                <p className="text-sm text-red-500">{user.kyc_rejection_reason}</p>
-                              </div>
-                            )}
-                            {user.kyc_reviewed_at && (
-                              <p className="text-xs text-muted">Reviewed: {fmt(user.kyc_reviewed_at)}</p>
-                            )}
-                          </div>
+                          )}
+                          {user.kyc_reviewed_at && (
+                            <p className="text-xs text-muted mt-2">Reviewed: {fmt(user.kyc_reviewed_at)}</p>
+                          )}
                         </td>
                       </tr>
                     )}
@@ -212,6 +213,60 @@ export function KycReviewManager({ initialUsers }: { initialUsers: KycUser[] }) 
           <img src={lightbox} alt="Document" className="max-w-full max-h-full rounded-xl object-contain" />
         </div>
       )}
+    </div>
+  );
+}
+
+function DocImages({
+  userId, state, onLightbox,
+}: {
+  userId: string;
+  state: DocState | undefined;
+  onLightbox: (url: string) => void;
+}) {
+  if (!state || state.loading) {
+    return (
+      <div className="flex gap-3">
+        {['Driving Licence', 'Aadhaar', 'Selfie with DL'].map(label => (
+          <div key={label} className="flex flex-col items-center gap-2">
+            <span className="text-xs font-semibold text-muted uppercase tracking-wide">{label}</span>
+            <div className="w-40 h-28 rounded-lg border border-border bg-bg animate-pulse" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (state.failed) {
+    return <p className="text-xs text-danger">Could not load document images. Refresh and try again.</p>;
+  }
+
+  const docs = [
+    { label: 'Driving Licence', url: state.dl },
+    { label: 'Aadhaar',         url: state.aadhaar },
+    { label: 'Selfie with DL',  url: state.selfie },
+  ];
+
+  return (
+    <div className="flex flex-wrap gap-4">
+      {docs.map(doc => (
+        <div key={doc.label} className="flex flex-col items-center gap-2">
+          <span className="text-xs font-semibold text-muted uppercase tracking-wide">{doc.label}</span>
+          {doc.url ? (
+            <div
+              className="w-40 h-28 rounded-lg overflow-hidden border border-border cursor-pointer hover:border-accent transition-colors bg-bg"
+              onClick={() => onLightbox(doc.url!)}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={doc.url} alt={doc.label} className="w-full h-full object-cover" />
+            </div>
+          ) : (
+            <div className="w-40 h-28 rounded-lg border border-dashed border-border flex items-center justify-center bg-bg">
+              <span className="text-xs text-muted">Not uploaded</span>
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
