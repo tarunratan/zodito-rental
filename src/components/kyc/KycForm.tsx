@@ -2,38 +2,44 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createSupabaseBrowser } from '@/lib/supabase/client';
 
-type FileState = { file: File | null; previewUrl: string | null };
-type SubmitStep = 'idle' | 'compressing' | 'uploading' | 'saving';
+type FileState   = { file: File | null; previewUrl: string | null };
+type SubmitStep  = 'idle' | 'compressing' | 'uploading';
 
 const STEP_LABEL: Record<SubmitStep, string> = {
   idle:        '',
-  compressing: 'Preparing documents…',
-  uploading:   'Uploading documents…',
-  saving:      'Saving…',
+  compressing: 'Preparing photos…',
+  uploading:   'Submitting…',
 };
 
-// Re-encodes any image (JPEG, PNG, HEIC, WEBP, …) to a compact JPEG via Canvas.
-// This eliminates format/size issues — HEIC gallery photos on iOS get transcoded
-// to JPEG transparently. Falls back to the original file if Canvas fails.
+// Resize + re-encode any image (HEIC, PNG, WEBP, …) to a compact JPEG
+// using Canvas. On iOS Safari, HEIC blobs decode onto Canvas natively.
+// Falls back to original file only if the browser has no Canvas support.
 async function compressImage(file: File, maxDim = 1400, quality = 0.82): Promise<File> {
+  if (typeof document === 'undefined') return file; // SSR guard
   return new Promise(resolve => {
     const img = new Image();
     const src = URL.createObjectURL(file);
+
     img.onload = () => {
       URL.revokeObjectURL(src);
       try {
-        const scale = Math.min(maxDim / Math.max(img.naturalWidth, img.naturalHeight, 1), 1);
+        const longest = Math.max(img.naturalWidth, img.naturalHeight, 1);
+        const scale   = Math.min(maxDim / longest, 1);
         const w = Math.max(1, Math.round(img.naturalWidth  * scale));
         const h = Math.max(1, Math.round(img.naturalHeight * scale));
-        const canvas = document.createElement('canvas');
+
+        const canvas  = document.createElement('canvas');
         canvas.width  = w;
         canvas.height = h;
-        canvas.getContext('2d')?.drawImage(img, 0, 0, w, h);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { resolve(file); return; }
+        ctx.drawImage(img, 0, 0, w, h);
+
         canvas.toBlob(
-          blob => resolve(
-            blob ? new File([blob], 'photo.jpg', { type: 'image/jpeg' }) : file
+          blob => resolve(blob
+            ? new File([blob], 'photo.jpg', { type: 'image/jpeg' })
+            : file
           ),
           'image/jpeg',
           quality,
@@ -42,6 +48,7 @@ async function compressImage(file: File, maxDim = 1400, quality = 0.82): Promise
         resolve(file);
       }
     };
+
     img.onerror = () => { URL.revokeObjectURL(src); resolve(file); };
     img.src = src;
   });
@@ -50,7 +57,7 @@ async function compressImage(file: File, maxDim = 1400, quality = 0.82): Promise
 export function KycForm({ currentStatus }: { currentStatus: string }) {
   const router = useRouter();
   const [dlNumber, setDlNumber] = useState('');
-  const [dl,       setDl]      = useState<FileState>({ file: null, previewUrl: null });
+  const [dl,       setDl]       = useState<FileState>({ file: null, previewUrl: null });
   const [aadhaar,  setAadhaar]  = useState<FileState>({ file: null, previewUrl: null });
   const [selfie,   setSelfie]   = useState<FileState>({ file: null, previewUrl: null });
   const [step,     setStep]     = useState<SubmitStep>('idle');
@@ -64,58 +71,33 @@ export function KycForm({ currentStatus }: { currentStatus: string }) {
     setError(null);
 
     try {
-      const supabase = createSupabaseBrowser();
-
-      const { data: { user: authUser }, error: authErr } = await supabase.auth.getUser();
-      if (authErr || !authUser) throw new Error('Session expired — please sign in again');
-
-      // ── Step 1: compress all images → small JPEG, any format handled ────────
-      // Runs in parallel; Canvas transcodes HEIC → JPEG on iOS automatically.
+      // ── 1. Compress all three images client-side ──────────────────────────
+      // Canvas re-encodes to JPEG (~300 KB each) so the API payload stays
+      // well under 1 MB total — no body-limit issues, no MIME surprises.
       setStep('compressing');
-      const [dlCompressed, aadhaarCompressed, selfieCompressed] = await Promise.all([
+      const [dlJpeg, aadhaarJpeg, selfieJpeg] = await Promise.all([
         compressImage(dl.file!),
         compressImage(aadhaar.file!),
         compressImage(selfie.file!),
       ]);
 
-      // ── Step 2: upload directly to Supabase Storage using auth session ───────
+      // ── 2. POST compressed files to our API route ──────────────────────────
+      // The server uploads to Supabase Storage using the service-role key,
+      // which bypasses every browser/CORS/RLS constraint completely.
       setStep('uploading');
-      const ts  = Date.now();
-      const uid = authUser.id;
+      const form = new FormData();
+      form.append('dl_number', dlNumber.trim());
+      form.append('dl',        dlJpeg,      'dl.jpg');
+      form.append('aadhaar',   aadhaarJpeg, 'aadhaar.jpg');
+      form.append('selfie',    selfieJpeg,  'selfie.jpg');
 
-      const paths = {
-        dl:      `${uid}/${ts}-dl.jpg`,
-        aadhaar: `${uid}/${ts}-aadhaar.jpg`,
-        selfie:  `${uid}/${ts}-selfie.jpg`,
-      };
-
-      const [dlUp, aadhaarUp, selfieUp] = await Promise.all([
-        supabase.storage.from('kyc-docs').upload(paths.dl,      dlCompressed,      { contentType: 'image/jpeg', upsert: true }),
-        supabase.storage.from('kyc-docs').upload(paths.aadhaar, aadhaarCompressed, { contentType: 'image/jpeg', upsert: true }),
-        supabase.storage.from('kyc-docs').upload(paths.selfie,  selfieCompressed,  { contentType: 'image/jpeg', upsert: true }),
-      ]);
-
-      const uploadErr = dlUp.error || aadhaarUp.error || selfieUp.error;
-      if (uploadErr) throw new Error('Upload failed: ' + uploadErr.message);
-
-      // ── Step 3: record storage paths in the database ────────────────────────
-      setStep('saving');
-      const submitRes = await fetch('/api/kyc/submit', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dl_number:    dlNumber,
-          dl_path:      paths.dl,
-          aadhaar_path: paths.aadhaar,
-          selfie_path:  paths.selfie,
-        }),
-      });
-      const submitData = await submitRes.json().catch(() => ({}));
-      if (!submitRes.ok) throw new Error((submitData as any).error || 'Submission failed');
+      const res  = await fetch('/api/kyc/submit', { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as any).error || 'Submission failed');
 
       router.refresh();
     } catch (e: any) {
-      setError(e.message ?? 'Something went wrong. Please try again.');
+      setError(e.message ?? 'Something went wrong — please try again.');
       setStep('idle');
     }
   }
@@ -194,9 +176,9 @@ function UploadTile({
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    // Allow up to 30 MB raw — Canvas compression will shrink it before upload
-    if (file.size > 30 * 1024 * 1024) {
-      alert('File too large (max 30 MB)');
+    // Allow up to 50 MB raw — we compress before sending, so raw size doesn't matter
+    if (file.size > 50 * 1024 * 1024) {
+      alert('File is too large (max 50 MB)');
       return;
     }
     onChange({ file, previewUrl: URL.createObjectURL(file) });
