@@ -5,45 +5,49 @@ import { isMockMode, MOCK_USER } from '@/lib/mock';
 
 export const runtime = 'nodejs';
 
-async function uploadFile(
-  supabase: ReturnType<typeof createSupabaseAdmin>,
-  userId: string,
-  file: File,
-  kind: string,
-  ts: number,
-): Promise<string> {
-  const path = `${userId}/${ts}-${kind}.jpg`;
-  const bytes = Buffer.from(await file.arrayBuffer());
-  const { error } = await supabase.storage
-    .from('kyc-docs')
-    .upload(path, bytes, { contentType: 'image/jpeg', upsert: true });
-  if (error) throw new Error(`${kind} upload failed: ${error.message}`);
-  return path;
-}
-
 export async function POST(req: NextRequest) {
   const user = await getCurrentAppUser();
   if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  let form: FormData;
+  let body: any;
   try {
-    form = await req.formData();
+    body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid form data' }, { status: 400 });
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const dlNumber    = ((form.get('dl_number') as string | null) ?? '').trim();
-  const dlFront     = form.get('dl_front')      as File | null;
-  const dlBack      = form.get('dl_back')       as File | null;
-  const aadhaarFront = form.get('aadhaar_front') as File | null;
-  const aadhaarBack  = form.get('aadhaar_back')  as File | null;
-  const selfie      = form.get('selfie')        as File | null;
+  const {
+    dl_number,
+    dl_front_path,
+    dl_back_path,
+    aadhaar_front_path,
+    aadhaar_back_path,
+    selfie_path,
+  } = body ?? {};
 
-  if (dlNumber.length < 10 || !dlFront || !dlBack || !aadhaarFront || !aadhaarBack || !selfie) {
+  const dlNumber = (dl_number as string | null)?.trim() ?? '';
+  if (
+    dlNumber.length < 10 ||
+    !dl_front_path || !dl_back_path ||
+    !aadhaar_front_path || !aadhaar_back_path ||
+    !selfie_path
+  ) {
     return NextResponse.json(
-      { error: 'All fields required: dl_number, dl_front, dl_back, aadhaar_front, aadhaar_back, selfie' },
+      { error: 'All fields required: dl_number, dl_front_path, dl_back_path, aadhaar_front_path, aadhaar_back_path, selfie_path' },
       { status: 400 },
     );
+  }
+
+  // Ensure every path is scoped to this user's folder (prevents path traversal)
+  const prefix = `${user.id}/`;
+  if (
+    !String(dl_front_path).startsWith(prefix) ||
+    !String(dl_back_path).startsWith(prefix) ||
+    !String(aadhaar_front_path).startsWith(prefix) ||
+    !String(aadhaar_back_path).startsWith(prefix) ||
+    !String(selfie_path).startsWith(prefix)
+  ) {
+    return NextResponse.json({ error: 'Invalid file paths' }, { status: 403 });
   }
 
   if (isMockMode()) {
@@ -54,32 +58,14 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createSupabaseAdmin();
-  const ts = Date.now();
 
-  let dlFrontPath: string, dlBackPath: string;
-  let aadhaarFrontPath: string, aadhaarBackPath: string;
-  let selfiePath: string;
-
-  try {
-    [dlFrontPath, dlBackPath, aadhaarFrontPath, aadhaarBackPath, selfiePath] = await Promise.all([
-      uploadFile(supabase, user.id, dlFront,      'dl_front',      ts),
-      uploadFile(supabase, user.id, dlBack,        'dl_back',       ts),
-      uploadFile(supabase, user.id, aadhaarFront,  'aadhaar_front', ts),
-      uploadFile(supabase, user.id, aadhaarBack,   'aadhaar_back',  ts),
-      uploadFile(supabase, user.id, selfie,         'selfie',        ts),
-    ]);
-  } catch (e: any) {
-    console.error('KYC file upload error:', e);
-    return NextResponse.json({ error: e.message ?? 'File upload failed' }, { status: 500 });
-  }
-
-  // Step 1 — update guaranteed-to-exist columns (front photos + status)
+  // Step 1 — update guaranteed-to-exist columns
   const { error } = await supabase
     .from('users')
     .update({
       dl_number:            dlNumber,
-      dl_photo_url:         dlFrontPath,
-      aadhaar_photo_url:    aadhaarFrontPath,
+      dl_photo_url:         dl_front_path,
+      aadhaar_photo_url:    aadhaar_front_path,
       kyc_status:           'pending',
       kyc_submitted_at:     new Date().toISOString(),
       kyc_rejection_reason: null,
@@ -91,20 +77,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Step 2 — store back photos + selfie via RPCs (non-blocking).
-  // Requires migration 027 (dl_back_photo_url, aadhaar_back_photo_url columns).
-  // Requires migration 005 (selfie_with_dl_photo_url column + set_kyc_selfie RPC).
+  // Step 2 — back photos via RPC (requires migration 027)
   supabase.rpc('set_kyc_back_photos', {
-    p_user_id:     user.id,
-    p_dl_back:     dlBackPath,
-    p_aadhaar_back: aadhaarBackPath,
+    p_user_id:      user.id,
+    p_dl_back:      dl_back_path,
+    p_aadhaar_back: aadhaar_back_path,
   }).then(({ error: e }: { error: { message: string } | null }) => {
     if (e) console.warn('set_kyc_back_photos RPC failed (run migration 027):', e.message);
   });
 
-  supabase.rpc('set_kyc_selfie', { p_user_id: user.id, p_path: selfiePath })
+  // Step 3 — selfie via RPC (requires migration 005 / 027)
+  supabase.rpc('set_kyc_selfie', { p_user_id: user.id, p_path: selfie_path })
     .then(({ error: e }: { error: { message: string } | null }) => {
-      if (e) console.warn('set_kyc_selfie RPC failed (run migration 005):', e.message);
+      if (e) console.warn('set_kyc_selfie RPC failed:', e.message);
     });
 
   return NextResponse.json({ ok: true });

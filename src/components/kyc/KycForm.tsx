@@ -2,19 +2,14 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { createSupabaseBrowser } from '@/lib/supabase/client';
 
 type FileState  = { file: File | null; previewUrl: string | null };
-type SubmitStep = 'idle' | 'compressing' | 'uploading';
+type SubmitStep = 'idle' | 'uploading';
 
 const BLANK: FileState = { file: null, previewUrl: null };
 
-const STEP_LABEL: Record<SubmitStep, string> = {
-  idle:        '',
-  compressing: 'Preparing photos…',
-  uploading:   'Submitting…',
-};
-
-async function compressImage(file: File, maxDim = 1400, quality = 0.82): Promise<File> {
+async function compressToJpeg(file: File, maxDim = 1400, quality = 0.82): Promise<File> {
   if (typeof document === 'undefined') return file;
   return new Promise(resolve => {
     const img = new Image();
@@ -44,47 +39,65 @@ async function compressImage(file: File, maxDim = 1400, quality = 0.82): Promise
 
 export function KycForm({ currentStatus }: { currentStatus: string }) {
   const router = useRouter();
-  const [dlNumber,      setDlNumber]      = useState('');
-  const [dlFront,       setDlFront]       = useState<FileState>(BLANK);
-  const [dlBack,        setDlBack]        = useState<FileState>(BLANK);
-  const [aadhaarFront,  setAadhaarFront]  = useState<FileState>(BLANK);
-  const [aadhaarBack,   setAadhaarBack]   = useState<FileState>(BLANK);
-  const [selfie,        setSelfie]        = useState<FileState>(BLANK);
-  const [step,          setStep]          = useState<SubmitStep>('idle');
-  const [error,         setError]         = useState<string | null>(null);
-  const [submitted,     setSubmitted]     = useState(false);
+  const [dlNumber,     setDlNumber]     = useState('');
+  const [dlFront,      setDlFront]      = useState<FileState>(BLANK);
+  const [dlBack,       setDlBack]       = useState<FileState>(BLANK);
+  const [aadhaarFront, setAadhaarFront] = useState<FileState>(BLANK);
+  const [aadhaarBack,  setAadhaarBack]  = useState<FileState>(BLANK);
+  const [selfie,       setSelfie]       = useState<FileState>(BLANK);
+  const [step,         setStep]         = useState<SubmitStep>('idle');
+  const [error,        setError]        = useState<string | null>(null);
+  const [submitted,    setSubmitted]    = useState(false);
 
-  const submitting = step !== 'idle';
-  const canSubmit  =
+  const uploading = step === 'uploading';
+  const canSubmit =
     dlNumber.trim().length >= 10 &&
     !!dlFront.file && !!dlBack.file &&
     !!aadhaarFront.file && !!aadhaarBack.file &&
-    !!selfie.file && !submitting;
+    !!selfie.file && !uploading;
 
   async function onSubmit() {
     if (!canSubmit) return;
     setError(null);
+    setStep('uploading');
     try {
-      setStep('compressing');
-      const [dlFrontJpeg, dlBackJpeg, aadhaarFrontJpeg, aadhaarBackJpeg, selfieJpeg] =
+      const supabase = createSupabaseBrowser();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not signed in — please refresh and try again.');
+
+      const ts = Date.now();
+
+      async function uploadFile(file: File, kind: string): Promise<string> {
+        const path = `${user!.id}/${ts}-${kind}.jpg`;
+        const { error: uploadErr } = await supabase.storage
+          .from('kyc-docs')
+          .upload(path, file, { contentType: 'image/jpeg', upsert: true });
+        if (uploadErr) throw new Error(`${kind} upload failed: ${uploadErr.message}`);
+        return path;
+      }
+
+      const [dlFrontPath, dlBackPath, aadhaarFrontPath, aadhaarBackPath, selfiePath] =
         await Promise.all([
-          compressImage(dlFront.file!),
-          compressImage(dlBack.file!),
-          compressImage(aadhaarFront.file!),
-          compressImage(aadhaarBack.file!),
-          compressImage(selfie.file!),
+          uploadFile(dlFront.file!,      'dl_front'),
+          uploadFile(dlBack.file!,       'dl_back'),
+          uploadFile(aadhaarFront.file!, 'aadhaar_front'),
+          uploadFile(aadhaarBack.file!,  'aadhaar_back'),
+          uploadFile(selfie.file!,       'selfie'),
         ]);
 
-      setStep('uploading');
-      const form = new FormData();
-      form.append('dl_number',     dlNumber.trim());
-      form.append('dl_front',      dlFrontJpeg,     'dl_front.jpg');
-      form.append('dl_back',       dlBackJpeg,      'dl_back.jpg');
-      form.append('aadhaar_front', aadhaarFrontJpeg, 'aadhaar_front.jpg');
-      form.append('aadhaar_back',  aadhaarBackJpeg,  'aadhaar_back.jpg');
-      form.append('selfie',        selfieJpeg,      'selfie.jpg');
+      const res = await fetch('/api/kyc/submit', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dl_number:          dlNumber.trim(),
+          dl_front_path:      dlFrontPath,
+          dl_back_path:       dlBackPath,
+          aadhaar_front_path: aadhaarFrontPath,
+          aadhaar_back_path:  aadhaarBackPath,
+          selfie_path:        selfiePath,
+        }),
+      });
 
-      const res  = await fetch('/api/kyc/submit', { method: 'POST', body: form });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data as any).error || 'Submission failed');
 
@@ -175,8 +188,8 @@ export function KycForm({ currentStatus }: { currentStatus: string }) {
         disabled={!canSubmit}
         className="btn-accent w-full text-base py-3 disabled:bg-border disabled:text-muted disabled:cursor-not-allowed"
       >
-        {submitting
-          ? STEP_LABEL[step]
+        {uploading
+          ? 'Uploading…'
           : currentStatus === 'rejected'
             ? 'Re-submit for review'
             : 'Submit for review'}
@@ -189,7 +202,7 @@ export function KycForm({ currentStatus }: { currentStatus: string }) {
   );
 }
 
-// ── DL / Aadhaar tile: both camera (back-facing) and gallery ──────────────────
+// ── DL / Aadhaar tile: camera (back-facing) + gallery ────────────────────────
 
 function DocCaptureTile({
   label,
@@ -200,26 +213,34 @@ function DocCaptureTile({
   state: FileState;
   onChange: (s: FileState) => void;
 }) {
-  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+  const [processing, setProcessing] = useState(false);
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     if (file.size > 50 * 1024 * 1024) { alert('File too large (max 50 MB)'); return; }
-    onChange({ file, previewUrl: URL.createObjectURL(file) });
-    // Reset input so the same file can be re-selected after retake
-    e.target.value = '';
+    setProcessing(true);
+    try {
+      const compressed = await compressToJpeg(file);
+      onChange({ file: compressed, previewUrl: URL.createObjectURL(compressed) });
+    } finally {
+      setProcessing(false);
+    }
   }
 
   return (
     <div>
       <p className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">{label}</p>
-      {state.previewUrl ? (
+
+      {processing ? (
+        <div className="w-full h-40 rounded-lg border border-border bg-bg animate-pulse flex items-center justify-center">
+          <span className="text-xs text-muted">Processing…</span>
+        </div>
+      ) : state.previewUrl ? (
         <div className="relative">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={state.previewUrl}
-            alt={label}
-            className="w-full h-40 object-cover rounded-lg"
-          />
+          <img src={state.previewUrl} alt={label} className="w-full h-40 object-cover rounded-lg" />
           <button
             onClick={() => onChange(BLANK)}
             className="absolute top-2 right-2 bg-white/95 rounded-md px-2 py-1 text-xs font-semibold shadow"
@@ -229,29 +250,15 @@ function DocCaptureTile({
         </div>
       ) : (
         <div className="flex gap-2">
-          {/* Camera option — opens device camera (back-facing) */}
           <label className="flex-1 flex flex-col items-center justify-center h-24 border-2 border-dashed border-accent/40 bg-accent/3 rounded-lg cursor-pointer hover:bg-accent/10 transition-colors">
             <span className="text-xl mb-1">📷</span>
             <span className="text-xs font-semibold text-accent">Camera</span>
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/*"
-              capture="environment"
-              onChange={onFile}
-              className="hidden"
-            />
+            <input type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
           </label>
-
-          {/* Gallery option — opens file picker */}
           <label className="flex-1 flex flex-col items-center justify-center h-24 border-2 border-dashed border-border rounded-lg cursor-pointer hover:border-accent/50 hover:bg-accent/5 transition-colors">
             <span className="text-xl mb-1">🖼️</span>
             <span className="text-xs font-semibold text-muted">Gallery</span>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={onFile}
-              className="hidden"
-            />
+            <input type="file" accept="image/*" onChange={onFile} className="hidden" />
           </label>
         </div>
       )}
@@ -268,22 +275,34 @@ function SelfieCaptureTile({
   state: FileState;
   onChange: (s: FileState) => void;
 }) {
-  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+  const [processing, setProcessing] = useState(false);
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     if (file.size > 50 * 1024 * 1024) { alert('File too large (max 50 MB)'); return; }
-    onChange({ file, previewUrl: URL.createObjectURL(file) });
-    e.target.value = '';
+    setProcessing(true);
+    try {
+      const compressed = await compressToJpeg(file);
+      onChange({ file: compressed, previewUrl: URL.createObjectURL(compressed) });
+    } finally {
+      setProcessing(false);
+    }
+  }
+
+  if (processing) {
+    return (
+      <div className="w-full h-48 rounded-lg border border-border bg-bg animate-pulse flex items-center justify-center">
+        <span className="text-xs text-muted">Processing…</span>
+      </div>
+    );
   }
 
   return state.previewUrl ? (
     <div className="relative">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={state.previewUrl}
-        alt="selfie"
-        className="w-full h-48 object-cover rounded-lg"
-      />
+      <img src={state.previewUrl} alt="selfie" className="w-full h-48 object-cover rounded-lg" />
       <button
         onClick={() => onChange(BLANK)}
         className="absolute top-2 right-2 bg-white/95 rounded-md px-2 py-1 text-xs font-semibold shadow"
@@ -296,13 +315,7 @@ function SelfieCaptureTile({
       <span className="text-2xl mb-1">📷</span>
       <span className="text-sm font-semibold text-accent">Open Camera</span>
       <span className="text-[11px] text-muted mt-0.5">Live photo only — no uploads</span>
-      <input
-        type="file"
-        accept="image/jpeg,image/png"
-        capture="user"
-        onChange={onFile}
-        className="hidden"
-      />
+      <input type="file" accept="image/jpeg,image/png" capture="user" onChange={onFile} className="hidden" />
     </label>
   );
 }
