@@ -30,9 +30,7 @@ const SORTS = [
 const DURATIONS = [
   { label: '12 hrs',  hrs: 12 },
   { label: '24 hrs',  hrs: 24 },
-  { label: '36 hrs',  hrs: 36 },
   { label: '2 days',  hrs: 48 },
-  { label: '60 hrs',  hrs: 60 },
   { label: '3 days',  hrs: 72 },
   { label: '4 days',  hrs: 96 },
   { label: '5 days',  hrs: 120 },

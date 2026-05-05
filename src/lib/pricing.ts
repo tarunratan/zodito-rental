@@ -58,9 +58,9 @@ export const TIER_LABELS: Record<PackageTier, string> = {
   'monthly_flex': 'Monthly (15-29 days)',
 };
 
-// Canonical order for admin/picker
+// Canonical order for admin pricing panel — clean, no redundant hourly duplicates
 export const TIER_ORDER: PackageTier[] = [
-  '12hr', '24hr', '36hr', '48hr', '60hr', '72hr', '96hr', '120hr', '144hr',
+  '12hr', '24hr', '2day', '3day', '96hr', '120hr', '144hr',
   '7day', 'weekly_flex', '15day', 'monthly_flex', '30day',
 ];
 
@@ -83,8 +83,12 @@ const COVERING_BRACKETS: Array<{
   { tier: '12hr',         maxHours: 12  },
   { tier: '24hr',         maxHours: 24  },
   { tier: '36hr',         maxHours: 36  },
+  // '2day' preferred over '48hr' at 48hrs (same maxHours; stable sort keeps 2day first)
+  { tier: '2day',         maxHours: 48  },
   { tier: '48hr',         maxHours: 48  },
   { tier: '60hr',         maxHours: 60  },
+  // '3day' preferred over '72hr' at 72hrs
+  { tier: '3day',         maxHours: 72  },
   { tier: '72hr',         maxHours: 72  },
   { tier: '96hr',         maxHours: 96  },
   { tier: '120hr',        maxHours: 120 },
@@ -130,26 +134,43 @@ export function coveringTier(
 
   type Bracket = { maxHours: number; result: () => TierResult };
 
-  const brackets: Bracket[] = [
-    // Standard predefined brackets
-    ...COVERING_BRACKETS
-      .filter(b => availableTiers.includes(b.tier))
-      .map(b => ({
-        maxHours: b.maxHours,
+  // Explicit tier brackets this bike has priced (always take priority)
+  const explicitBrackets: Bracket[] = COVERING_BRACKETS
+    .filter(b => availableTiers.includes(b.tier))
+    .map(b => ({
+      maxHours: b.maxHours,
+      result: (): TierResult => ({
+        type: 'standard' as const,
+        tier: b.tier,
+        actualDays: b.getActualDays?.(durationHours),
+      }),
+    }));
+
+  // Synthetic per-day brackets for 2–6 days using the 24hr base price × days.
+  // Fills the gap when a bike has 12hr/24hr/7day but no intermediate tiers.
+  // Explicit brackets with the same maxHours override these (stable sort puts explicit first).
+  const syntheticBrackets: Bracket[] = availableTiers.includes('24hr')
+    ? [2, 3, 4, 5, 6].map(d => ({
+        maxHours: d * 24,
         result: (): TierResult => ({
-          type: 'standard',
-          tier: b.tier,
-          actualDays: b.getActualDays?.(durationHours),
+          type: 'standard' as const,
+          tier: '24hr' as PackageTier,
+          actualDays: d,
         }),
-      })),
-    // Admin-created custom packages — each acts as a fixed-duration bracket
-    ...customPackages
-      .filter(p => p.is_active)
-      .map(p => ({
-        maxHours: p.duration_hours,
-        result: (): TierResult => ({ type: 'custom', pkg: p }),
-      })),
-  ].sort((a, b) => a.maxHours - b.maxHours);
+      }))
+    : [];
+
+  // Admin-created custom packages — each acts as a fixed-duration bracket
+  const customBrackets: Bracket[] = customPackages
+    .filter(p => p.is_active)
+    .map(p => ({
+      maxHours: p.duration_hours,
+      result: (): TierResult => ({ type: 'custom' as const, pkg: p }),
+    }));
+
+  // Sort ascending; explicit brackets come before synthetic at same maxHours (stable sort)
+  const brackets = [...explicitBrackets, ...customBrackets, ...syntheticBrackets]
+    .sort((a, b) => a.maxHours - b.maxHours);
 
   for (const b of brackets) {
     if (durationHours <= b.maxHours) return b.result();
@@ -225,7 +246,8 @@ export function calculatePrice(params: {
     const pkg = packages.find(p => p.tier === tier);
     if (!pkg) throw new Error(`No package found for tier ${tier}`);
 
-    if (isFlexTier(tier) && actualDays && actualDays > 0) {
+    // Multiply by actualDays for flex tiers AND for the 24hr-per-day synthetic fallback (actualDays > 1)
+    if (actualDays && actualDays > 0 && (isFlexTier(tier) || actualDays > 1)) {
       basePrice = round2(Number(pkg.price) * actualDays);
       kmLimit   = Math.round(pkg.km_limit * actualDays);
     } else {
@@ -268,7 +290,8 @@ export function computeCouponDiscount(params: {
 
 export function tierEndTs(startTs: Date, tier: PackageTier, actualDays?: number): Date {
   const d = new Date(startTs);
-  if (isFlexTier(tier) && actualDays && actualDays > 0) {
+  // Use actualDays for flex tiers and for the synthetic per-day 24hr rate (actualDays > 1)
+  if (actualDays && actualDays > 0 && (isFlexTier(tier) || actualDays > 1)) {
     d.setHours(d.getHours() + actualDays * 24);
   } else {
     d.setHours(d.getHours() + TIER_HOURS[tier]);

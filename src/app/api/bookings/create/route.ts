@@ -26,7 +26,7 @@ const bodySchema = z.object({
   bike_id: z.string(),
   tier: z.enum(ALL_TIERS).optional(),
   custom_package_id: z.string().uuid().optional(),
-  actual_days: z.number().int().min(7).max(29).optional(),
+  actual_days: z.number().int().min(2).max(29).optional(),
   start_ts: z.string(),
   extra_helmet_count: z.number().int().min(0).max(3).default(0),
   mobile_holder: z.boolean().default(false),

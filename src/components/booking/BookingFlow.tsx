@@ -229,6 +229,8 @@ export function BookingFlow({
 
   const packageLabel = (isCustom && customPkg)
     ? customPkg.label
+    : tier === '24hr' && actualDays && actualDays > 1
+    ? `${actualDays} Days`
     : tier ? TIER_LABELS[tier] : '—';
 
   return (
@@ -348,7 +350,7 @@ export function BookingFlow({
               bikeId={bike.id}
               tier={tier ?? '24hr'}
               customPackageId={customPkg?.id}
-              actualDays={isFlex ? actualDays : undefined}
+              actualDays={actualDays && actualDays > 1 ? actualDays : undefined}
               pickupTs={pickupTs}
               extraHelmets={extraHelmets}
               mobileHolder={mobileHolder}

@@ -1,17 +1,7 @@
 import Link from 'next/link';
 import { formatINR } from '@/lib/utils';
-import { TIER_HOURS, TIER_LABELS } from '@/lib/pricing';
-import type { PackageTier } from '@/lib/supabase/types';
 
 type Bike = any;
-
-function tierFromHours(hrs: number): PackageTier {
-  const tiers = Object.entries(TIER_HOURS) as Array<[PackageTier, number]>;
-  return tiers.reduce<[PackageTier, number]>(
-    (best, entry) => Math.abs(entry[1] - hrs) < Math.abs(best[1] - hrs) ? entry : best,
-    tiers[0]
-  )[0];
-}
 
 export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFrom?: string; searchTo?: string }) {
   const isVendor = bike.owner_type === 'vendor';
@@ -23,25 +13,45 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
     ? `/bikes/${bike.id}?from=${encodeURIComponent(searchFrom)}&to=${encodeURIComponent(searchTo)}`
     : `/bikes/${bike.id}`;
 
-  const pkg12 = bike.model?.packages?.find((p: any) => p.tier === '12hr');
-  const pkg24 = bike.model?.packages?.find((p: any) => p.tier === '24hr');
+  const packages: any[] = bike.model?.packages ?? [];
+  const pkg12 = packages.find((p: any) => p.tier === '12hr');
+  const pkg24 = packages.find((p: any) => p.tier === '24hr');
 
-  // Determine price/label to show for the searched duration
+  // Determine price/label to show for the searched duration.
+  // Tries exact tier match first, then falls back to 24hr daily rate × days.
   const searchDisplay: { price: number; label: string; km: number } | null = (() => {
     if (!searchFrom || !searchTo) return null;
     const searchHrs = Math.round((new Date(searchTo).getTime() - new Date(searchFrom).getTime()) / 3_600_000);
     if (searchHrs <= 0) return null;
-    const tier = tierFromHours(searchHrs);
-    const tierHrs = TIER_HOURS[tier];
-    const pkg = bike.model?.packages?.find((p: any) => p.tier === tier);
-    if (!pkg) return null;
-    // If searched duration is significantly longer than the matched tier (e.g. 2 days → 24hr tier),
-    // multiply the daily rate so the price reflects the actual duration
-    if (tier === '24hr' && searchHrs > 30) {
-      const days = Math.ceil(searchHrs / 24);
-      return { price: days * pkg.price, label: `${days} days`, km: days * pkg.km_limit };
+
+    // Try exact tier match by hour count
+    const tierMap: Array<[string, number]> = [
+      ['12hr',12],['24hr',24],['2day',48],['3day',72],
+      ['96hr',96],['120hr',120],['144hr',144],['7day',168],['15day',360],['30day',720],
+    ];
+    for (const [tier, h] of tierMap) {
+      if (h === searchHrs) {
+        const pkg = packages.find((p: any) => p.tier === tier);
+        if (pkg) {
+          const label = tier === '2day' ? '2 days' : tier === '3day' ? '3 days' :
+            tier === '96hr' ? '4 days' : tier === '120hr' ? '5 days' :
+            tier === '144hr' ? '6 days' : tier === '7day' ? '7 days' :
+            tier === '15day' ? '15 days' : tier === '30day' ? '30 days' :
+            tier === '12hr' ? '12 hrs' : '24 hrs';
+          return { price: Number(pkg.price), label, km: pkg.km_limit };
+        }
+      }
     }
-    return { price: pkg.price, label: TIER_LABELS[tier], km: pkg.km_limit };
+
+    // No exact tier — use 24hr daily rate × days as fallback
+    if (pkg24 && searchHrs >= 12) {
+      if (searchHrs <= 24) return { price: Number(pkg24.price), label: '24 hrs', km: pkg24.km_limit };
+      const days = Math.ceil(searchHrs / 24);
+      return { price: days * Number(pkg24.price), label: `${days} days`, km: days * pkg24.km_limit };
+    }
+    if (pkg12 && searchHrs <= 12) return { price: Number(pkg12.price), label: '12 hrs', km: pkg12.km_limit };
+
+    return null;
   })();
 
   return (
@@ -54,15 +64,12 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
         ) : (
           <div className="text-7xl">{bike.emoji || '🏍️'}</div>
         )}
-        <div className="absolute top-3 left-3 flex gap-1.5 flex-wrap">
+        <div className="absolute top-3 left-3">
           {isVendor ? (
             <span className="text-[10px] font-semibold uppercase tracking-wider bg-white/95 text-primary px-2 py-1 rounded-md shadow-sm">Partner</span>
           ) : (
             <span className="text-[10px] font-semibold uppercase tracking-wider bg-accent text-white px-2 py-1 rounded-md shadow-sm">Zodito Fleet</span>
           )}
-          <span className="text-[10px] font-semibold uppercase tracking-wider bg-primary/80 text-white px-2 py-1 rounded-md shadow-sm">
-            {bike.model?.category === 'scooter' ? '🛵 Scooter' : '🏍️ Bike'}
-          </span>
         </div>
         {bike.model?.cc && (
           <div className="absolute top-3 right-3 bg-primary text-white text-[10px] font-bold px-2 py-1 rounded-md">
