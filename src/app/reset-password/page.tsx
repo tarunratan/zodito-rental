@@ -5,18 +5,30 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowser } from '@/lib/supabase/client';
 
+function EyeIcon({ open }: { open: boolean }) {
+  return open ? (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+    </svg>
+  ) : (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>
+    </svg>
+  );
+}
+
 export default function ResetPasswordPage() {
   const router = useRouter();
-  const [password, setPassword]     = useState('');
-  const [confirm, setConfirm]       = useState('');
-  const [loading, setLoading]       = useState(false);
-  const [error, setError]           = useState('');
-  const [done, setDone]             = useState(false);
+  const [password, setPassword]   = useState('');
+  const [confirm, setConfirm]     = useState('');
+  const [showPw, setShowPw]       = useState(false);
+  const [showCf, setShowCf]       = useState(false);
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState('');
+  const [done, setDone]           = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
 
   useEffect(() => {
-    // Supabase puts the access_token in the URL hash on redirect
-    // Calling getSession() will pick it up automatically
     const supabase = createSupabaseBrowser();
     supabase.auth.getSession().then(({ data }) => {
       setSessionReady(!!data.session);
@@ -72,19 +84,37 @@ export default function ResetPasswordPage() {
       <form onSubmit={handleSubmit} className="card p-6 flex flex-col gap-4">
         <div>
           <label className="block text-sm font-medium mb-1">New password</label>
-          <input
-            type="password" required minLength={6}
-            value={password} onChange={e => setPassword(e.target.value)}
-            className="input w-full" placeholder="Min 6 characters"
-          />
+          <div className="relative">
+            <input
+              type={showPw ? 'text' : 'password'} required minLength={6}
+              value={password} onChange={e => setPassword(e.target.value)}
+              className="input w-full pr-10" placeholder="Min 6 characters"
+            />
+            <button
+              type="button" onClick={() => setShowPw(v => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-primary transition-colors"
+              tabIndex={-1}
+            >
+              <EyeIcon open={showPw} />
+            </button>
+          </div>
         </div>
         <div>
           <label className="block text-sm font-medium mb-1">Confirm new password</label>
-          <input
-            type="password" required
-            value={confirm} onChange={e => setConfirm(e.target.value)}
-            className="input w-full" placeholder="••••••••"
-          />
+          <div className="relative">
+            <input
+              type={showCf ? 'text' : 'password'} required
+              value={confirm} onChange={e => setConfirm(e.target.value)}
+              className="input w-full pr-10" placeholder="••••••••"
+            />
+            <button
+              type="button" onClick={() => setShowCf(v => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-primary transition-colors"
+              tabIndex={-1}
+            >
+              <EyeIcon open={showCf} />
+            </button>
+          </div>
         </div>
         {error && <p className="text-danger text-sm bg-danger/10 px-3 py-2 rounded-md">{error}</p>}
         <button type="submit" disabled={loading} className="btn-accent w-full">
