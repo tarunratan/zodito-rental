@@ -5,38 +5,41 @@ import { createSupabaseAdmin } from '@/lib/supabase/server';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// Returns three one-time signed upload tokens — one per KYC document.
-// The client uploads files directly to Supabase Storage using these tokens,
-// which means file bytes never pass through the Next.js server.
+// Returns five one-time signed upload tokens — front + back for DL/Aadhaar + selfie.
+// The client uploads file bytes directly to Supabase Storage using these tokens
+// so nothing large passes through the Next.js server.
 export async function GET() {
   const user = await getCurrentAppUser();
   if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const supabase = createSupabaseAdmin();
-  const ts = Date.now();
+  const ts  = Date.now();
   const uid = user.id;
 
   const paths = {
-    dl:      `${uid}/${ts}-dl.jpg`,
-    aadhaar: `${uid}/${ts}-aadhaar.jpg`,
-    selfie:  `${uid}/${ts}-selfie.jpg`,
+    dl_front:      `${uid}/${ts}-dl_front.jpg`,
+    dl_back:       `${uid}/${ts}-dl_back.jpg`,
+    aadhaar_front: `${uid}/${ts}-aadhaar_front.jpg`,
+    aadhaar_back:  `${uid}/${ts}-aadhaar_back.jpg`,
+    selfie:        `${uid}/${ts}-selfie.jpg`,
   };
 
-  const [dlRes, aadhaarRes, selfieRes] = await Promise.all([
-    supabase.storage.from('kyc-docs').createSignedUploadUrl(paths.dl),
-    supabase.storage.from('kyc-docs').createSignedUploadUrl(paths.aadhaar),
-    supabase.storage.from('kyc-docs').createSignedUploadUrl(paths.selfie),
-  ]);
+  const results = await Promise.all(
+    Object.entries(paths).map(([key, path]) =>
+      supabase.storage.from('kyc-docs').createSignedUploadUrl(path).then(r => ({ key, path, r }))
+    )
+  );
 
-  if (dlRes.error || aadhaarRes.error || selfieRes.error) {
-    const msg = (dlRes.error || aadhaarRes.error || selfieRes.error)!.message;
-    console.error('KYC presign error:', msg);
-    return NextResponse.json({ error: 'Failed to prepare upload. Please try again.' }, { status: 500 });
+  const failed = results.find(x => x.r.error);
+  if (failed) {
+    console.error('KYC presign error:', failed.r.error?.message);
+    return NextResponse.json({ error: 'Failed to prepare upload — please try again.' }, { status: 500 });
   }
 
-  return NextResponse.json({
-    dl:      { path: paths.dl,      token: dlRes.data!.token },
-    aadhaar: { path: paths.aadhaar, token: aadhaarRes.data!.token },
-    selfie:  { path: paths.selfie,  token: selfieRes.data!.token },
+  const tokens: Record<string, { path: string; token: string }> = {};
+  results.forEach(({ key, path, r }) => {
+    tokens[key] = { path, token: r.data!.token };
   });
+
+  return NextResponse.json(tokens);
 }

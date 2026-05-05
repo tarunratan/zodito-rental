@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { createSupabaseBrowser } from '@/lib/supabase/client';
 
 type FileState  = { file: File | null; previewUrl: string | null };
-type SubmitStep = 'idle' | 'uploading';
 
 const BLANK: FileState = { file: null, previewUrl: null };
 
@@ -37,6 +36,8 @@ async function compressToJpeg(file: File, maxDim = 1400, quality = 0.82): Promis
   });
 }
 
+type UploadSlot = { path: string; token: string };
+
 export function KycForm({ currentStatus }: { currentStatus: string }) {
   const router = useRouter();
   const [dlNumber,     setDlNumber]     = useState('');
@@ -45,11 +46,11 @@ export function KycForm({ currentStatus }: { currentStatus: string }) {
   const [aadhaarFront, setAadhaarFront] = useState<FileState>(BLANK);
   const [aadhaarBack,  setAadhaarBack]  = useState<FileState>(BLANK);
   const [selfie,       setSelfie]       = useState<FileState>(BLANK);
-  const [step,         setStep]         = useState<SubmitStep>('idle');
+  const [status,       setStatus]       = useState('');
   const [error,        setError]        = useState<string | null>(null);
   const [submitted,    setSubmitted]    = useState(false);
+  const [uploading,    setUploading]    = useState(false);
 
-  const uploading = step === 'uploading';
   const canSubmit =
     dlNumber.trim().length >= 10 &&
     !!dlFront.file && !!dlBack.file &&
@@ -59,54 +60,66 @@ export function KycForm({ currentStatus }: { currentStatus: string }) {
   async function onSubmit() {
     if (!canSubmit) return;
     setError(null);
-    setStep('uploading');
+    setUploading(true);
+
     try {
+      // Step 1: Get signed upload tokens from server (no files go through Next.js)
+      setStatus('Preparing upload…');
+      const tokenRes = await fetch('/api/kyc/presign');
+      if (!tokenRes.ok) {
+        const d = await tokenRes.json().catch(() => ({}));
+        throw new Error((d as any).error || 'Could not prepare upload — please try again.');
+      }
+      const slots: Record<string, UploadSlot> = await tokenRes.json();
+
+      // Step 2: Upload each file directly to Supabase Storage via signed token
+      setStatus('Uploading photos…');
       const supabase = createSupabaseBrowser();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not signed in — please refresh and try again.');
 
-      const ts = Date.now();
-
-      async function uploadFile(file: File, kind: string): Promise<string> {
-        const path = `${user!.id}/${ts}-${kind}.jpg`;
-        const { error: uploadErr } = await supabase.storage
+      async function uploadSlot(slot: UploadSlot, file: File, label: string) {
+        const { error: upErr } = await supabase.storage
           .from('kyc-docs')
-          .upload(path, file, { contentType: 'image/jpeg', upsert: true });
-        if (uploadErr) throw new Error(`${kind} upload failed: ${uploadErr.message}`);
-        return path;
+          .uploadToSignedUrl(slot.path, slot.token, file, {
+            contentType: 'image/jpeg',
+            upsert: true,
+          });
+        if (upErr) throw new Error(`${label} upload failed: ${upErr.message}`);
       }
 
-      const [dlFrontPath, dlBackPath, aadhaarFrontPath, aadhaarBackPath, selfiePath] =
-        await Promise.all([
-          uploadFile(dlFront.file!,      'dl_front'),
-          uploadFile(dlBack.file!,       'dl_back'),
-          uploadFile(aadhaarFront.file!, 'aadhaar_front'),
-          uploadFile(aadhaarBack.file!,  'aadhaar_back'),
-          uploadFile(selfie.file!,       'selfie'),
-        ]);
+      await Promise.all([
+        uploadSlot(slots.dl_front,      dlFront.file!,      'DL front'),
+        uploadSlot(slots.dl_back,       dlBack.file!,       'DL back'),
+        uploadSlot(slots.aadhaar_front, aadhaarFront.file!, 'Aadhaar front'),
+        uploadSlot(slots.aadhaar_back,  aadhaarBack.file!,  'Aadhaar back'),
+        uploadSlot(slots.selfie,        selfie.file!,       'Selfie'),
+      ]);
 
+      // Step 3: Save file paths to DB (tiny JSON, no files)
+      setStatus('Saving…');
       const res = await fetch('/api/kyc/submit', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           dl_number:          dlNumber.trim(),
-          dl_front_path:      dlFrontPath,
-          dl_back_path:       dlBackPath,
-          aadhaar_front_path: aadhaarFrontPath,
-          aadhaar_back_path:  aadhaarBackPath,
-          selfie_path:        selfiePath,
+          dl_front_path:      slots.dl_front.path,
+          dl_back_path:       slots.dl_back.path,
+          aadhaar_front_path: slots.aadhaar_front.path,
+          aadhaar_back_path:  slots.aadhaar_back.path,
+          selfie_path:        slots.selfie.path,
         }),
       });
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data as any).error || 'Submission failed');
+      if (!res.ok) throw new Error((data as any).error || 'Failed to save — please try again.');
 
       setSubmitted(true);
-      setStep('idle');
       router.refresh();
     } catch (e: any) {
+      console.error('KYC submit error:', e);
       setError(e.message ?? 'Something went wrong — please try again.');
-      setStep('idle');
+    } finally {
+      setUploading(false);
+      setStatus('');
     }
   }
 
@@ -189,7 +202,7 @@ export function KycForm({ currentStatus }: { currentStatus: string }) {
         className="btn-accent w-full text-base py-3 disabled:bg-border disabled:text-muted disabled:cursor-not-allowed"
       >
         {uploading
-          ? 'Uploading…'
+          ? (status || 'Uploading…')
           : currentStatus === 'rejected'
             ? 'Re-submit for review'
             : 'Submit for review'}
