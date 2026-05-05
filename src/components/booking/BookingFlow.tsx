@@ -1,16 +1,16 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { PackagePicker } from './PackagePicker';
 import { PickupTimePicker } from './PickupTimePicker';
+import { ReturnTimePicker } from './ReturnTimePicker';
 import { AddonPicker } from './AddonPicker';
 import { OrderSummary } from './OrderSummary';
 import { RazorpayCheckout } from './RazorpayCheckout';
 import {
   calculatePrice, tierEndTs, isWithinStoreHours,
-  TIER_LABELS, TIER_HOURS, isFlexTier,
+  TIER_LABELS, isFlexTier, coveringTier, formatDuration,
   STORE_OPEN_HOUR, STORE_CLOSE_HOUR,
 } from '@/lib/pricing';
 import { formatDateTime } from '@/lib/utils';
@@ -18,14 +18,6 @@ import type { PackageTier } from '@/lib/supabase/types';
 import type { AppliedCoupon } from './CouponInput';
 
 type Bike = any;
-
-function tierFromHours(hrs: number): PackageTier {
-  const tiers = Object.entries(TIER_HOURS) as Array<[PackageTier, number]>;
-  return tiers.reduce<[PackageTier, number]>(
-    (best, entry) => Math.abs(entry[1] - hrs) < Math.abs(best[1] - hrs) ? entry : best,
-    tiers[0]
-  )[0];
-}
 
 function pickupFromParam(fromStr: string): Date | null {
   if (!fromStr) return null;
@@ -53,18 +45,9 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
   const toParam   = searchParams.get('to')   ?? '';
   const signInHref = `/sign-in?redirectTo=${encodeURIComponent(pathname + (searchParams.toString() ? '?' + searchParams.toString() : ''))}`;
 
-  // Whether to show the compact quick-confirm view (true when homepage dates were passed in)
   const hasSearchParams = !!(fromParam && toParam);
   const [expandedForm, setExpandedForm] = useState(false);
   const quickMode = hasSearchParams && !expandedForm;
-
-  const [tier, setTier] = useState<PackageTier>(() => {
-    if (fromParam && toParam) {
-      const hrs = (new Date(toParam).getTime() - new Date(fromParam).getTime()) / 3_600_000;
-      if (hrs > 0) return tierFromHours(hrs);
-    }
-    return '24hr';
-  });
 
   const [pickupTs, setPickupTs] = useState<Date | null>(() => {
     if (fromParam) {
@@ -74,20 +57,54 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
     return defaultPickupTime();
   });
 
+  const [returnTs, setReturnTs] = useState<Date | null>(() => {
+    if (toParam) {
+      const d = new Date(toParam);
+      if (!isNaN(d.getTime())) return d;
+    }
+    return null;
+  });
+
+  // Clear returnTs if it falls before the minimum (pickupTs + 12hrs) after pickupTs changes
+  useEffect(() => {
+    if (pickupTs && returnTs) {
+      const minReturn = new Date(pickupTs.getTime() + 12 * 3_600_000);
+      if (returnTs < minReturn) setReturnTs(null);
+    }
+  }, [pickupTs]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [extraHelmets, setExtraHelmets] = useState(0);
   const [mobileHolder, setMobileHolder] = useState(false);
   const [appliedCoupon, setAppliedCoupon] = useState<AppliedCoupon | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [actualDays, setActualDays] = useState<number>(7);
 
-  const isFlex = isFlexTier(tier);
+  const availableTiers = useMemo<PackageTier[]>(
+    () => bike.model.packages.map((p: any) => p.tier),
+    [bike.model.packages]
+  );
+
+  const durationHours = useMemo(
+    () => pickupTs && returnTs ? (returnTs.getTime() - pickupTs.getTime()) / 3_600_000 : 0,
+    [pickupTs, returnTs]
+  );
+
+  const computedTierResult = useMemo(
+    () => (durationHours > 0 ? coveringTier(durationHours, availableTiers) : null),
+    [durationHours, availableTiers]
+  );
+
+  const tier      = computedTierResult?.tier ?? '24hr';
+  const actualDays = computedTierResult?.actualDays;
+  const isFlex    = isFlexTier(tier);
+
   const endTs = useMemo(
-    () => (pickupTs ? tierEndTs(pickupTs, tier, isFlex ? actualDays : undefined) : null),
-    [pickupTs, tier, isFlex, actualDays]
+    () => (pickupTs && computedTierResult ? tierEndTs(pickupTs, tier, actualDays) : null),
+    [pickupTs, tier, actualDays, computedTierResult]
   );
 
   const breakdown = useMemo(() => {
+    if (!computedTierResult) return null;
     try {
       return calculatePrice({
         packages: bike.model.packages,
@@ -101,10 +118,14 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
     } catch {
       return null;
     }
-  }, [bike.model.packages, tier, isFlex, actualDays, extraHelmets, mobileHolder, appliedCoupon]);
+  }, [bike.model.packages, tier, isFlex, actualDays, extraHelmets, mobileHolder, appliedCoupon, computedTierResult]);
 
   const pickupValid = pickupTs ? isWithinStoreHours(pickupTs) && pickupTs > new Date() : false;
-  const canProceed = !!pickupTs && pickupValid && !!breakdown;
+  const noPackageForDuration = !!computedTierResult && !breakdown;
+  const durationTooLong = durationHours > 720;
+  const durationTooShort = durationHours > 0 && durationHours < 12;
+  const canProceed = !!pickupTs && pickupValid && !!returnTs && !!computedTierResult && !!breakdown && !noPackageForDuration;
+
   const showKycNudge = kycStatus && kycStatus !== 'approved';
 
   const kycBanner = showKycNudge && (
@@ -139,12 +160,61 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
     </div>
   );
 
+  // Duration / package info banner shown between step 2 and step 3
+  const durationBanner = (() => {
+    if (!pickupTs || !returnTs) return null;
+    if (durationTooShort) {
+      return (
+        <div className="p-3 bg-danger/8 border border-danger/30 rounded-lg text-sm text-danger">
+          Minimum booking is 12 hours. Please select a later return time.
+        </div>
+      );
+    }
+    if (durationTooLong) {
+      return (
+        <div className="p-3 bg-danger/8 border border-danger/30 rounded-lg text-sm text-danger">
+          Maximum booking is 30 days. Please select an earlier return date.
+        </div>
+      );
+    }
+    if (noPackageForDuration && computedTierResult) {
+      return (
+        <div className="p-3 bg-warning/10 border border-warning/30 rounded-lg text-sm text-warning-dark">
+          No package is configured for <strong>{TIER_LABELS[tier]}</strong> on this bike. Please adjust your dates.
+        </div>
+      );
+    }
+    if (computedTierResult && endTs) {
+      return (
+        <div className="p-3.5 bg-accent/5 border border-accent/20 rounded-lg text-sm">
+          <div className="flex justify-between items-center">
+            <span className="text-muted">Your trip</span>
+            <span className="font-semibold">{formatDuration(durationHours)}</span>
+          </div>
+          <div className="flex justify-between items-center mt-1.5">
+            <span className="text-muted">Package applied</span>
+            <span className="font-semibold text-accent">{TIER_LABELS[tier]}</span>
+          </div>
+          <div className="flex justify-between items-center mt-1.5">
+            <span className="text-muted">Return deadline</span>
+            <span className="font-semibold">{formatDateTime(endTs)}</span>
+          </div>
+          {durationHours < (computedTierResult ? getTierMaxHours(tier) : durationHours) && (
+            <p className="text-[11px] text-muted mt-2 leading-relaxed">
+              Return the bike before this deadline — late returns attract extra charges.
+            </p>
+          )}
+        </div>
+      );
+    }
+    return null;
+  })();
+
   return (
     <div className="grid md:grid-cols-[1fr_380px] gap-6">
 
       {/* ── Left column ── */}
       {quickMode ? (
-        /* QUICK CONFIRM MODE: dates came from homepage, skip the big calendar */
         <div className="space-y-5">
           {kycBanner}
 
@@ -160,10 +230,18 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
             </div>
 
             <div className="space-y-2 text-sm">
-              <div className="flex justify-between items-center py-2 border-b border-border">
-                <span className="text-muted">Package</span>
-                <span className="font-semibold">{TIER_LABELS[tier]}</span>
-              </div>
+              {computedTierResult && (
+                <div className="flex justify-between items-center py-2 border-b border-border">
+                  <span className="text-muted">Package</span>
+                  <span className="font-semibold text-accent">{TIER_LABELS[tier]}</span>
+                </div>
+              )}
+              {durationHours > 0 && (
+                <div className="flex justify-between items-center py-2 border-b border-border">
+                  <span className="text-muted">Duration</span>
+                  <span className="font-semibold">{formatDuration(durationHours)}</span>
+                </div>
+              )}
               {breakdown && (
                 <div className="flex justify-between items-center py-2 border-b border-border">
                   <span className="text-muted">Included KM</span>
@@ -178,7 +256,7 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
               )}
               {endTs && (
                 <div className="flex justify-between items-center py-2">
-                  <span className="text-muted">Drop-off</span>
+                  <span className="text-muted">Return by</span>
                   <span className="font-semibold">{formatDateTime(endTs)}</span>
                 </div>
               )}
@@ -204,39 +282,30 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
           </Section>
         </div>
       ) : (
-        /* FULL FORM MODE */
         <div className="space-y-5">
           {kycBanner}
 
-          <Section number={1} title="Choose your package">
-            <PackagePicker
-              packages={bike.model.packages}
-              value={tier}
-              onChange={setTier}
-              actualDays={actualDays}
-              onActualDaysChange={setActualDays}
-            />
-          </Section>
-
-          <Section number={2} title="Pickup date & time">
+          <Section number={1} title="Pickup date & time">
             <PickupTimePicker value={pickupTs} onChange={setPickupTs} />
-            {pickupTs && endTs && (
-              <div className="mt-4 p-3 bg-accent/5 border border-accent/20 rounded-lg text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted">Pickup</span>
-                  <span className="font-semibold">{formatDateTime(pickupTs)}</span>
-                </div>
-                <div className="flex justify-between mt-1">
-                  <span className="text-muted">Drop-off ({TIER_LABELS[tier]})</span>
-                  <span className="font-semibold">{formatDateTime(endTs)}</span>
-                </div>
-                {!pickupValid && (
-                  <div className="mt-2 text-xs text-danger">
-                    ⚠️ Pickup must be within store hours (6 AM – 10 PM) and in the future
-                  </div>
-                )}
+            {pickupTs && !pickupValid && (
+              <div className="mt-2 text-xs text-danger">
+                ⚠️ Pickup must be within store hours (6 AM – 10 PM) and in the future
               </div>
             )}
+          </Section>
+
+          <Section number={2} title="Return date & time">
+            {!pickupTs ? (
+              <p className="text-sm text-muted">Select a pickup time first.</p>
+            ) : (
+              <ReturnTimePicker
+                pickupTs={pickupTs}
+                value={returnTs}
+                onChange={setReturnTs}
+              />
+            )}
+
+            {durationBanner && <div className="mt-4">{durationBanner}</div>}
           </Section>
 
           <Section number={3} title="Add-ons">
@@ -311,6 +380,15 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
       </div>
     </div>
   );
+}
+
+function getTierMaxHours(tier: PackageTier): number {
+  const map: Partial<Record<PackageTier, number>> = {
+    '12hr': 12, '24hr': 24, '36hr': 36, '48hr': 48,
+    '60hr': 60, '72hr': 72, '96hr': 96, '120hr': 120,
+    '144hr': 144, '7day': 168, '15day': 360, '30day': 720,
+  };
+  return map[tier] ?? 0;
 }
 
 function Section({

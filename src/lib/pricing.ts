@@ -73,6 +73,58 @@ export function isFlexTier(tier: PackageTier): tier is 'weekly_flex' | 'monthly_
   return tier === 'weekly_flex' || tier === 'monthly_flex';
 }
 
+// Ordered brackets used to find the smallest tier that covers an arbitrary duration.
+// Fixed tiers are exact; flex tiers fill gaps between fixed anchors.
+const COVERING_BRACKETS: Array<{
+  tier: PackageTier;
+  maxHours: number;
+  getActualDays?: (hrs: number) => number;
+}> = [
+  { tier: '12hr',         maxHours: 12  },
+  { tier: '24hr',         maxHours: 24  },
+  { tier: '36hr',         maxHours: 36  },
+  { tier: '48hr',         maxHours: 48  },
+  { tier: '60hr',         maxHours: 60  },
+  { tier: '72hr',         maxHours: 72  },
+  { tier: '96hr',         maxHours: 96  },
+  { tier: '120hr',        maxHours: 120 },
+  { tier: '144hr',        maxHours: 144 },
+  { tier: '7day',         maxHours: 168 },
+  // weekly_flex: per-day pricing for 7–14 days (>168 hrs up to 336 hrs)
+  { tier: 'weekly_flex',  maxHours: 336, getActualDays: hrs => Math.ceil(hrs / 24) },
+  { tier: '15day',        maxHours: 360 },
+  // monthly_flex: per-day pricing for 15–29 days (>360 hrs up to 696 hrs)
+  { tier: 'monthly_flex', maxHours: 696, getActualDays: hrs => Math.ceil(hrs / 24) },
+  { tier: '30day',        maxHours: 720 },
+];
+
+/**
+ * Given an actual rental duration and the set of tiers the bike offers,
+ * returns the smallest tier whose bracket covers that duration (rounds UP).
+ * Returns null if duration is 0 or exceeds 30 days.
+ */
+export function coveringTier(
+  durationHours: number,
+  availableTiers: PackageTier[]
+): { tier: PackageTier; actualDays?: number } | null {
+  if (durationHours <= 0) return null;
+  for (const b of COVERING_BRACKETS) {
+    if (!availableTiers.includes(b.tier)) continue;
+    if (durationHours <= b.maxHours) {
+      return { tier: b.tier, actualDays: b.getActualDays?.(durationHours) };
+    }
+  }
+  return null; // exceeds 30 days
+}
+
+export function formatDuration(hours: number): string {
+  const d = Math.floor(hours / 24);
+  const h = Math.round(hours % 24);
+  if (d === 0) return `${h} hr${h !== 1 ? 's' : ''}`;
+  if (h === 0) return `${d} day${d !== 1 ? 's' : ''}`;
+  return `${d}d ${h}h`;
+}
+
 export function isWeekendIST(d: Date): boolean {
   const istMs = d.getTime() + 5.5 * 60 * 60 * 1000;
   const ist = new Date(istMs);
