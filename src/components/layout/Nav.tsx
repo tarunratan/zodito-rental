@@ -50,6 +50,10 @@ export function Nav() {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (_event === 'PASSWORD_RECOVERY') {
+        router.push('/reset-password');
+        return;
+      }
       setUser(session?.user ?? null);
       if (!session?.user) { setRole(null); setKyc(null); setFirstName(null); }
     });

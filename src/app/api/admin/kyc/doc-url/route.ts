@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
 
   const supabase = createSupabaseAdmin();
 
+  // Fetch core columns (always exist)
   const { data, error } = await supabase
     .from('users')
     .select('dl_photo_url, aadhaar_photo_url, selfie_with_dl_photo_url')
@@ -28,15 +29,27 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'User not found' }, { status: 404 });
   }
 
-  const pathEntries = [
-    { key: 'dl',      path: data.dl_photo_url },
-    { key: 'aadhaar', path: data.aadhaar_photo_url },
-    { key: 'selfie',  path: data.selfie_with_dl_photo_url },
+  // Fetch back-photo columns (added in migration 027) — graceful fallback if not yet run
+  let backData: { dl_back_photo_url: string | null; aadhaar_back_photo_url: string | null } =
+    { dl_back_photo_url: null, aadhaar_back_photo_url: null };
+  try {
+    const r = await supabase
+      .from('users')
+      .select('dl_back_photo_url, aadhaar_back_photo_url')
+      .eq('id', userId)
+      .maybeSingle();
+    if (!r.error && r.data) backData = r.data as typeof backData;
+  } catch { /* migration 027 not yet run — silently skip */ }
+
+  const pathEntries: Array<{ key: string; path: string }> = [
+    { key: 'dl',           path: data.dl_photo_url },
+    { key: 'dl_back',      path: backData.dl_back_photo_url },
+    { key: 'aadhaar',      path: data.aadhaar_photo_url },
+    { key: 'aadhaar_back', path: backData.aadhaar_back_photo_url },
+    { key: 'selfie',       path: data.selfie_with_dl_photo_url },
   ].filter((e): e is { key: string; path: string } => !!e.path);
 
-  if (pathEntries.length === 0) {
-    return NextResponse.json({});
-  }
+  if (pathEntries.length === 0) return NextResponse.json({});
 
   const signedResults = await supabase.storage
     .from('kyc-docs')
@@ -48,7 +61,7 @@ export async function GET(req: NextRequest) {
   }
 
   const urls: Record<string, string> = {};
-  (signedResults.data ?? []).forEach((item: { signedUrl: string | null; path: string; error: string | null }, i: number) => {
+  (signedResults.data ?? []).forEach((item: { signedUrl: string | null }, i: number) => {
     if (item.signedUrl) urls[pathEntries[i].key] = item.signedUrl;
   });
 

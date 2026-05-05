@@ -18,7 +18,7 @@ type KycUser = {
   kyc_rejection_reason: string | null;
 };
 
-type DocUrls = { dl?: string; aadhaar?: string; selfie?: string };
+type DocUrls = { dl?: string; dl_back?: string; aadhaar?: string; aadhaar_back?: string; selfie?: string };
 type DocState = DocUrls & { loading?: boolean; failed?: boolean };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -224,13 +224,21 @@ function DocImages({
   state: DocState | undefined;
   onLightbox: (url: string) => void;
 }) {
+  const DOCS = [
+    { label: 'DL Front',     key: 'dl'           as const },
+    { label: 'DL Back',      key: 'dl_back'      as const },
+    { label: 'Aadhaar Front', key: 'aadhaar'     as const },
+    { label: 'Aadhaar Back', key: 'aadhaar_back' as const },
+    { label: 'Selfie + DL',  key: 'selfie'       as const },
+  ];
+
   if (!state || state.loading) {
     return (
-      <div className="flex gap-3">
-        {['Driving Licence', 'Aadhaar', 'Selfie with DL'].map(label => (
-          <div key={label} className="flex flex-col items-center gap-2">
-            <span className="text-xs font-semibold text-muted uppercase tracking-wide">{label}</span>
-            <div className="w-40 h-28 rounded-lg border border-border bg-bg animate-pulse" />
+      <div className="flex flex-wrap gap-3">
+        {DOCS.map(d => (
+          <div key={d.key} className="flex flex-col items-center gap-2">
+            <span className="text-xs font-semibold text-muted uppercase tracking-wide">{d.label}</span>
+            <div className="w-36 h-24 rounded-lg border border-border bg-bg animate-pulse" />
           </div>
         ))}
       </div>
@@ -241,32 +249,29 @@ function DocImages({
     return <p className="text-xs text-danger">Could not load document images. Refresh and try again.</p>;
   }
 
-  const docs = [
-    { label: 'Driving Licence', url: state.dl },
-    { label: 'Aadhaar',         url: state.aadhaar },
-    { label: 'Selfie with DL',  url: state.selfie },
-  ];
-
   return (
-    <div className="flex flex-wrap gap-4">
-      {docs.map(doc => (
-        <div key={doc.label} className="flex flex-col items-center gap-2">
-          <span className="text-xs font-semibold text-muted uppercase tracking-wide">{doc.label}</span>
-          {doc.url ? (
-            <div
-              className="w-40 h-28 rounded-lg overflow-hidden border border-border cursor-pointer hover:border-accent transition-colors bg-bg"
-              onClick={() => onLightbox(doc.url!)}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={doc.url} alt={doc.label} className="w-full h-full object-cover" />
-            </div>
-          ) : (
-            <div className="w-40 h-28 rounded-lg border border-dashed border-border flex items-center justify-center bg-bg">
-              <span className="text-xs text-muted">Not uploaded</span>
-            </div>
-          )}
-        </div>
-      ))}
+    <div className="flex flex-wrap gap-3">
+      {DOCS.map(doc => {
+        const url = state[doc.key];
+        return (
+          <div key={doc.key} className="flex flex-col items-center gap-1.5">
+            <span className="text-[11px] font-semibold text-muted uppercase tracking-wide">{doc.label}</span>
+            {url ? (
+              <div
+                className="w-36 h-24 rounded-lg overflow-hidden border border-border cursor-pointer hover:border-accent transition-colors bg-bg"
+                onClick={() => onLightbox(url)}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={url} alt={doc.label} className="w-full h-full object-cover" />
+              </div>
+            ) : (
+              <div className="w-36 h-24 rounded-lg border border-dashed border-border flex items-center justify-center bg-bg">
+                <span className="text-[10px] text-muted">Not uploaded</span>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
