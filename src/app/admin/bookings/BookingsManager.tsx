@@ -138,6 +138,33 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
   const [loading, setLoading] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const [deleteModal, setDeleteModal] = useState<{ id: string; number: string } | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  async function deleteBooking(booking_id: string) {
+    setDeleteLoading(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch('/api/admin/bookings/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ booking_id }),
+      });
+      if (res.ok) {
+        setBookings(prev => prev.filter(b => b.id !== booking_id));
+        setDeleteModal(null);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setDeleteError(data.error ?? 'Failed to delete booking');
+      }
+    } catch {
+      setDeleteError('Network error — please try again');
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
+
   const [showManual, setShowManual] = useState(false);
   const [manualForm, setManualForm] = useState({ ...EMPTY_MANUAL });
   const [manualLoading, setManualLoading] = useState(false);
@@ -390,6 +417,14 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                               Refund
                             </button>
                           )}
+                          {['cancelled', 'payment_failed'].includes(b.status) && (
+                            <button
+                              onClick={() => { setDeleteModal({ id: b.id, number: b.booking_number }); setDeleteError(null); }}
+                              className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded hover:bg-red-50 hover:text-red-600 transition-colors"
+                            >
+                              Delete
+                            </button>
+                          )}
                           <button onClick={() => setExpanded(e => e === b.id ? null : b.id)}
                             className="text-xs px-2 py-1 bg-border text-primary rounded hover:bg-border/70 transition-colors">
                             {expanded === b.id ? 'Hide' : 'Details'}
@@ -474,6 +509,39 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                 className={`px-4 py-2 text-sm text-white rounded-lg disabled:opacity-60 ${actionModal.action === 'cancelled' ? 'bg-red-500 hover:bg-red-600' : 'bg-accent hover:bg-accent-hover'}`}
               >
                 {loading === actionModal.id ? 'Updating…' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {deleteModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-primary rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-4">
+            <h3 className="font-semibold text-red-600">Delete Booking?</h3>
+            <p className="text-sm text-muted">
+              Permanently delete <span className="font-mono font-semibold text-primary">{deleteModal.number}</span>?
+              This cannot be undone.
+            </p>
+            {deleteError && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {deleteError}
+              </p>
+            )}
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => { setDeleteModal(null); setDeleteError(null); }}
+                className="border border-border rounded-lg hover:bg-border/40 text-sm px-4 py-2"
+              >
+                Keep it
+              </button>
+              <button
+                onClick={() => deleteBooking(deleteModal.id)}
+                disabled={deleteLoading}
+                className="px-4 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-60"
+              >
+                {deleteLoading ? 'Deleting…' : 'Yes, delete'}
               </button>
             </div>
           </div>
