@@ -298,10 +298,10 @@ export async function POST(req: NextRequest) {
     });
   } catch (e: any) {
     await admin.from('bookings').update({ status: 'payment_failed', payment_status: 'failed' }).eq('id', booking.id);
-    console.error('Razorpay order error:', e);
+    const msg: string = e?.error?.description ?? e?.message ?? String(e);
+    console.error('Razorpay order error:', msg, e);
     return NextResponse.json({
-      error: 'Payment gateway error. Please try again.',
-      _debug: { message: e.message },
+      error: `Payment gateway error: ${msg}`,
     }, { status: 500 });
   }
 }
