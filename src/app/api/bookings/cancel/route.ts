@@ -26,14 +26,18 @@ export async function POST(req: NextRequest) {
 
   const supabase = createSupabaseAdmin();
 
-  // Only the owner can cancel, and only while in pending_payment or confirmed
   const { data: booking } = await supabase
     .from('bookings')
     .select('id, user_id, status, razorpay_payment_id, total_amount')
     .eq('id', parse.data.booking_id)
     .maybeSingle();
 
-  if (!booking || booking.user_id !== user.id) {
+  if (!booking) {
+    return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+  }
+
+  // Admins can cancel any booking; customers can only cancel their own
+  if (user.role !== 'admin' && booking.user_id !== user.id) {
     return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
   }
   if (!['pending_payment', 'confirmed'].includes(booking.status)) {
