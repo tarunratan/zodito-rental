@@ -63,16 +63,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: e.message ?? 'File upload failed' }, { status: 500 });
   }
 
+  // Step 1 — update all columns that are guaranteed to exist in the schema
   const { error } = await supabase
     .from('users')
     .update({
-      dl_number:                dlNumber,
-      dl_photo_url:             dlPath,
-      aadhaar_photo_url:        aadhaarPath,
-      selfie_with_dl_photo_url: selfiePath,
-      kyc_status:               'pending',
-      kyc_submitted_at:         new Date().toISOString(),
-      kyc_rejection_reason:     null,
+      dl_number:            dlNumber,
+      dl_photo_url:         dlPath,
+      aadhaar_photo_url:    aadhaarPath,
+      kyc_status:           'pending',
+      kyc_submitted_at:     new Date().toISOString(),
+      kyc_rejection_reason: null,
     })
     .eq('id', user.id);
 
@@ -80,6 +80,12 @@ export async function POST(req: NextRequest) {
     console.error('KYC DB update error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  // Step 2 — store selfie path via RPC so it bypasses the PostgREST schema cache.
+  // Fire-and-forget: never fails the submission.
+  // Requires migration 005 (ALTER TABLE users ADD COLUMN selfie_with_dl_photo_url).
+  supabase.rpc('set_kyc_selfie', { p_user_id: user.id, p_path: selfiePath })
+    .then(({ error: e }: { error: { message: string } | null }) => { if (e) console.warn('set_kyc_selfie RPC failed (run migration 005):', e.message); });
 
   return NextResponse.json({ ok: true });
 }
