@@ -10,6 +10,7 @@ import {
   computeCouponDiscount,
 } from '@/lib/pricing';
 import type { PackageTier } from '@/lib/supabase/types';
+import type { CustomPackage } from '@/lib/pricing';
 
 // Edge runtime: no cold start, runs at the network edge closest to the user.
 // Supabase JS client uses native fetch — fully Edge-compatible.
@@ -25,7 +26,8 @@ const ALL_TIERS = [
 
 const bodySchema = z.object({
   bike_id: z.string(),
-  tier: z.enum(ALL_TIERS),
+  tier: z.enum(ALL_TIERS).optional(),
+  custom_package_id: z.string().uuid().optional(),
   actual_days: z.number().int().min(7).max(29).optional(),
   start_ts: z.string(),
   extra_helmet_count: z.number().int().min(0).max(3).default(0),
@@ -33,7 +35,7 @@ const bodySchema = z.object({
   coupon_code: z.string().optional(),
   booking_lat: z.number(),
   booking_lng: z.number(),
-});
+}).refine(d => d.tier || d.custom_package_id, { message: 'tier or custom_package_id required' });
 
 // Decode JWT payload locally (no network) — used only to extract `sub` (auth_id)
 // so we can fire the users-table lookup in parallel with auth.getUser().
@@ -63,7 +65,10 @@ export async function POST(req: NextRequest) {
   const body = parse.data;
 
   const startTs = new Date(body.start_ts);
-  const endTs = tierEndTs(startTs, body.tier as PackageTier, body.actual_days);
+  // Placeholder endTs for standard tiers; replaced after custom package lookup
+  const prelimEndTs = body.tier
+    ? tierEndTs(startTs, body.tier as PackageTier, body.actual_days)
+    : new Date(startTs.getTime() + 24 * 3_600_000);
 
   if (startTs <= new Date()) {
     return NextResponse.json({ error: 'Pickup time must be in the future' }, { status: 400 });
@@ -86,7 +91,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid auth token' }, { status: 401 });
   }
 
-  // --- SINGLE ROUND-TRIP: auth verify + bike + user_id + coupon all fire at once
+  // --- SINGLE ROUND-TRIP: auth verify + bike + user_id + coupon + custom pkg all fire at once
   const couponPromise = body.coupon_code
     ? admin
         .from('coupons')
@@ -95,7 +100,11 @@ export async function POST(req: NextRequest) {
         .maybeSingle()
     : Promise.resolve({ data: null });
 
-  const [authResult, bikeResult, userResult, couponResult] = await Promise.all([
+  const customPkgPromise = body.custom_package_id
+    ? admin.from('custom_packages').select('*').eq('id', body.custom_package_id).eq('bike_id', body.bike_id).eq('is_active', true).maybeSingle()
+    : Promise.resolve({ data: null });
+
+  const [authResult, bikeResult, userResult, couponResult, customPkgResult] = await Promise.all([
     admin.auth.getUser(token),
     admin
       .from('bikes')
@@ -114,6 +123,7 @@ export async function POST(req: NextRequest) {
       .maybeSingle(),
     admin.from('users').select('id').eq('auth_id', authIdFromToken).maybeSingle(),
     couponPromise,
+    customPkgPromise,
   ]);
 
   // Validate auth — admin.auth.getUser() is the authoritative check
@@ -133,14 +143,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'User account not found — please contact support' }, { status: 401 });
   }
 
+  const customPkg = customPkgResult.data as CustomPackage | null;
+  if (body.custom_package_id && !customPkg) {
+    return NextResponse.json({ error: 'Custom package not found or inactive' }, { status: 404 });
+  }
+
   const bike = bikeResult.data as any;
   const userId = userResult.data.id as string;
+
+  const resolvedEndTs = customPkg
+    ? new Date(startTs.getTime() + customPkg.duration_hours * 3_600_000)
+    : prelimEndTs;
 
   // Freeze window check
   if (bike.frozen_from && bike.frozen_until) {
     const frozenFrom = new Date(bike.frozen_from);
     const frozenUntil = new Date(bike.frozen_until);
-    if (frozenFrom < endTs && frozenUntil > startTs) {
+    if (frozenFrom < resolvedEndTs && frozenUntil > startTs) {
       return NextResponse.json(
         { error: `This bike is under maintenance until ${frozenUntil.toLocaleString('en-IN')}${bike.freeze_reason ? '. Reason: ' + bike.freeze_reason : ''}` },
         { status: 409 }
@@ -182,10 +201,12 @@ export async function POST(req: NextRequest) {
   }
 
   // Price calculation — pure, no I/O
+  const priceParams = customPkg
+    ? { customPackage: customPkg }
+    : { packages, tier: body.tier as PackageTier, actualDays: body.actual_days };
+
   const rawBreakdown = calculatePrice({
-    packages,
-    tier: body.tier as PackageTier,
-    actualDays: body.actual_days,
+    ...priceParams,
     extraHelmetCount: body.extra_helmet_count,
     hasOriginalDL: true,
     includeMobileHolder: body.mobile_holder,
@@ -199,7 +220,7 @@ export async function POST(req: NextRequest) {
       })
     : 0;
   const breakdown = couponDiscountAmount > 0
-    ? calculatePrice({ packages, tier: body.tier as PackageTier, actualDays: body.actual_days, extraHelmetCount: body.extra_helmet_count, hasOriginalDL: true, includeMobileHolder: body.mobile_holder, couponDiscount: couponDiscountAmount })
+    ? calculatePrice({ ...priceParams, extraHelmetCount: body.extra_helmet_count, hasOriginalDL: true, includeMobileHolder: body.mobile_holder, couponDiscount: couponDiscountAmount })
     : rawBreakdown;
 
   // Commission split
@@ -224,8 +245,9 @@ export async function POST(req: NextRequest) {
       user_id: userId,
       bike_id: bike.id,
       start_ts: startTs.toISOString(),
-      end_ts: endTs.toISOString(),
-      package_tier: body.tier,
+      end_ts: resolvedEndTs.toISOString(),
+      package_tier: body.tier ?? null,
+      custom_package_id: customPkg?.id ?? null,
       base_price: breakdown.basePrice,
       km_limit: breakdown.kmLimit,
       extra_helmet_count: breakdown.extraHelmetCount,

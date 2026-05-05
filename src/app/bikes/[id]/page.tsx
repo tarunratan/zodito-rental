@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { BookingFlow } from '@/components/booking/BookingFlow';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { getCurrentAppUser } from '@/lib/auth';
+import type { CustomPackage } from '@/lib/pricing';
 
 // Bike details change infrequently — serve from cache, regenerate in background every hour
 export const revalidate = 3600;
@@ -12,11 +13,11 @@ import { formatINR } from '@/lib/utils';
 
 async function fetchBike(id: string) {
   if (isMockMode()) {
-    return MOCK_BIKES.find(b => b.id === id) ?? null;
+    return { bike: MOCK_BIKES.find(b => b.id === id) ?? null, customPackages: [] as CustomPackage[] };
   }
 
   const supabase = createSupabaseAdmin();
-  const [bikeRes, bikePackagesRes] = await Promise.all([
+  const [bikeRes, bikePackagesRes, customPkgsRes] = await Promise.all([
     supabase
       .from('bikes')
       .select(`
@@ -40,14 +41,23 @@ async function fetchBike(id: string) {
       .eq('bike_id', id)
       .then((r: any) => r.data ?? [])
       .catch(() => [] as any[]),
+    // Admin-created custom duration packages for this bike
+    supabase
+      .from('custom_packages')
+      .select('id, bike_id, label, duration_hours, price, km_limit, is_active')
+      .eq('bike_id', id)
+      .eq('is_active', true)
+      .order('duration_hours', { ascending: true })
+      .then((r: any) => (r.data ?? []) as CustomPackage[])
+      .catch(() => [] as CustomPackage[]),
   ]);
 
   if (bikeRes.error) {
     console.error('fetchBike error:', bikeRes.error);
-    return null;
+    return { bike: null, customPackages: [] as CustomPackage[] };
   }
   const bike = bikeRes.data;
-  if (!bike) return null;
+  if (!bike) return { bike: null, customPackages: [] as CustomPackage[] };
 
   // Merge: per-bike overrides take priority over model-level packages
   const overrides = bikePackagesRes as any[];
@@ -58,11 +68,11 @@ async function fetchBike(id: string) {
     });
   }
 
-  return bike;
+  return { bike, customPackages: customPkgsRes };
 }
 
 export default async function BikeDetailPage({ params }: { params: { id: string } }) {
-  const [bike, user] = await Promise.all([fetchBike(params.id), getCurrentAppUser()]);
+  const [{ bike, customPackages }, user] = await Promise.all([fetchBike(params.id), getCurrentAppUser()]);
   if (!bike) notFound();
   const kycStatus = user?.kyc_status ?? null;
 
@@ -174,7 +184,7 @@ export default async function BikeDetailPage({ params }: { params: { id: string 
 
       {/* Booking flow — Suspense needed because BookingFlow reads useSearchParams() */}
       <Suspense fallback={<div className="h-72 rounded-card bg-border/20 animate-pulse" />}>
-        <BookingFlow bike={bike} kycStatus={kycStatus} isLoggedIn={!!user} />
+        <BookingFlow bike={bike} kycStatus={kycStatus} isLoggedIn={!!user} customPackages={customPackages} />
       </Suspense>
     </div>
   );

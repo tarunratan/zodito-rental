@@ -1,9 +1,7 @@
 'use client';
 
 import { formatINR, formatDateTime } from '@/lib/utils';
-import { TIER_LABELS } from '@/lib/pricing';
 import type { PriceBreakdown } from '@/lib/pricing';
-import type { PackageTier } from '@/lib/supabase/types';
 import { CouponInput, type AppliedCoupon } from './CouponInput';
 
 type Bike = any;
@@ -13,7 +11,7 @@ export function OrderSummary({
   breakdown,
   pickupTs,
   endTs,
-  tier,
+  packageLabel,
   appliedCoupon,
   onCouponApply,
 }: {
@@ -21,7 +19,7 @@ export function OrderSummary({
   breakdown: PriceBreakdown | null;
   pickupTs: Date | null;
   endTs: Date | null;
-  tier: PackageTier;
+  packageLabel: string;
   appliedCoupon: AppliedCoupon | null;
   onCouponApply: (coupon: AppliedCoupon | null) => void;
 }) {
@@ -55,7 +53,7 @@ export function OrderSummary({
 
       {breakdown && (
         <div className="py-3 space-y-2 text-sm">
-          <Row label={`${TIER_LABELS[tier]}`} value={formatINR(breakdown.basePrice)} />
+          <Row label={packageLabel} value={formatINR(breakdown.basePrice)} />
           {breakdown.extraHelmetCount > 0 && (
             <Row
               label={`Extra helmet × ${breakdown.extraHelmetCount}`}

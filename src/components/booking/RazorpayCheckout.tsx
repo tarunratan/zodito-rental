@@ -23,6 +23,7 @@ type LocStatus = 'pending' | 'granted' | 'denied' | 'timeout';
 export function RazorpayCheckout({
   bikeId,
   tier,
+  customPackageId,
   actualDays,
   pickupTs,
   extraHelmets,
@@ -36,6 +37,7 @@ export function RazorpayCheckout({
 }: {
   bikeId: string;
   tier: PackageTier;
+  customPackageId?: string;  // set for admin custom packages, overrides tier
   actualDays?: number;
   pickupTs: Date | null;
   extraHelmets: number;
@@ -109,7 +111,7 @@ export function RazorpayCheckout({
         },
         body: JSON.stringify({
           bike_id: bikeId,
-          tier,
+          ...(customPackageId ? { custom_package_id: customPackageId } : { tier }),
           ...(actualDays ? { actual_days: actualDays } : {}),
           start_ts: pickupTs.toISOString(),
           extra_helmet_count: extraHelmets,
@@ -163,7 +165,7 @@ export function RazorpayCheckout({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         bike_id: bikeId,
-        tier,
+        ...(customPackageId ? { custom_package_id: customPackageId } : { tier }),
         ...(actualDays ? { actual_days: actualDays } : {}),
         start_ts: pickupTs.toISOString(),
         extra_helmet_count: extraHelmets,

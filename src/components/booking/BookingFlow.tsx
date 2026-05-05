@@ -13,6 +13,7 @@ import {
   TIER_LABELS, isFlexTier, coveringTier, formatDuration,
   STORE_OPEN_HOUR, STORE_CLOSE_HOUR,
 } from '@/lib/pricing';
+import type { CustomPackage, TierResult } from '@/lib/pricing';
 import { formatDateTime } from '@/lib/utils';
 import type { PackageTier } from '@/lib/supabase/types';
 import type { AppliedCoupon } from './CouponInput';
@@ -38,7 +39,17 @@ function defaultPickupTime(): Date | null {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, 0, 0, 0);
 }
 
-export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike; kycStatus?: string | null; isLoggedIn?: boolean }) {
+export function BookingFlow({
+  bike,
+  kycStatus,
+  isLoggedIn = true,
+  customPackages = [],
+}: {
+  bike: Bike;
+  kycStatus?: string | null;
+  isLoggedIn?: boolean;
+  customPackages?: CustomPackage[];
+}) {
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const fromParam = searchParams.get('from') ?? '';
@@ -65,11 +76,10 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
     return null;
   });
 
-  // Clear returnTs if it falls before the minimum (pickupTs + 12hrs) after pickupTs changes
+  // Clear returnTs if it is now before the minimum (pickupTs + 12hrs)
   useEffect(() => {
-    if (pickupTs && returnTs) {
-      const minReturn = new Date(pickupTs.getTime() + 12 * 3_600_000);
-      if (returnTs < minReturn) setReturnTs(null);
+    if (pickupTs && returnTs && returnTs < new Date(pickupTs.getTime() + 12 * 3_600_000)) {
+      setReturnTs(null);
     }
   }, [pickupTs]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -89,27 +99,40 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
     [pickupTs, returnTs]
   );
 
-  const computedTierResult = useMemo(
-    () => (durationHours > 0 ? coveringTier(durationHours, availableTiers) : null),
-    [durationHours, availableTiers]
+  const tierResult = useMemo<TierResult | null>(
+    () => durationHours > 0 ? coveringTier(durationHours, availableTiers, customPackages) : null,
+    [durationHours, availableTiers, customPackages]
   );
 
-  const tier      = computedTierResult?.tier ?? '24hr';
-  const actualDays = computedTierResult?.actualDays;
-  const isFlex    = isFlexTier(tier);
+  // Derive pricing inputs from the tier result
+  const isCustom   = tierResult?.type === 'custom';
+  const tier       = tierResult?.type === 'standard' ? tierResult.tier   : null;
+  const actualDays = tierResult?.type === 'standard' ? tierResult.actualDays : undefined;
+  const isFlex     = tier ? isFlexTier(tier) : false;
+  const customPkg  = tierResult?.type === 'custom'   ? tierResult.pkg    : null;
 
-  const endTs = useMemo(
-    () => (pickupTs && computedTierResult ? tierEndTs(pickupTs, tier, actualDays) : null),
-    [pickupTs, tier, actualDays, computedTierResult]
-  );
+  const endTs = useMemo(() => {
+    if (!pickupTs || !tierResult) return null;
+    if (tierResult.type === 'standard') return tierEndTs(pickupTs, tierResult.tier, tierResult.actualDays);
+    return new Date(pickupTs.getTime() + tierResult.pkg.duration_hours * 3_600_000);
+  }, [pickupTs, tierResult]);
 
   const breakdown = useMemo(() => {
-    if (!computedTierResult) return null;
+    if (!tierResult) return null;
     try {
+      if (tierResult.type === 'custom') {
+        return calculatePrice({
+          customPackage: tierResult.pkg,
+          extraHelmetCount: extraHelmets,
+          hasOriginalDL: true,
+          includeMobileHolder: mobileHolder,
+          couponDiscount: appliedCoupon?.discountAmount ?? 0,
+        });
+      }
       return calculatePrice({
         packages: bike.model.packages,
-        tier,
-        actualDays: isFlex ? actualDays : undefined,
+        tier: tierResult.tier,
+        actualDays: isFlex ? tierResult.actualDays : undefined,
         extraHelmetCount: extraHelmets,
         hasOriginalDL: true,
         includeMobileHolder: mobileHolder,
@@ -118,13 +141,13 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
     } catch {
       return null;
     }
-  }, [bike.model.packages, tier, isFlex, actualDays, extraHelmets, mobileHolder, appliedCoupon, computedTierResult]);
+  }, [bike.model.packages, tierResult, isFlex, extraHelmets, mobileHolder, appliedCoupon]);
 
-  const pickupValid = pickupTs ? isWithinStoreHours(pickupTs) && pickupTs > new Date() : false;
-  const noPackageForDuration = !!computedTierResult && !breakdown;
-  const durationTooLong = durationHours > 720;
+  const pickupValid      = pickupTs ? isWithinStoreHours(pickupTs) && pickupTs > new Date() : false;
+  const noPackage        = !!tierResult && !breakdown;
+  const durationTooLong  = durationHours > 720;
   const durationTooShort = durationHours > 0 && durationHours < 12;
-  const canProceed = !!pickupTs && pickupValid && !!returnTs && !!computedTierResult && !!breakdown && !noPackageForDuration;
+  const canProceed       = !!pickupTs && pickupValid && !!returnTs && !!tierResult && !!breakdown;
 
   const showKycNudge = kycStatus && kycStatus !== 'approved';
 
@@ -160,31 +183,27 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
     </div>
   );
 
-  // Duration / package info banner shown between step 2 and step 3
   const durationBanner = (() => {
     if (!pickupTs || !returnTs) return null;
-    if (durationTooShort) {
-      return (
-        <div className="p-3 bg-danger/8 border border-danger/30 rounded-lg text-sm text-danger">
-          Minimum booking is 12 hours. Please select a later return time.
-        </div>
-      );
-    }
-    if (durationTooLong) {
-      return (
-        <div className="p-3 bg-danger/8 border border-danger/30 rounded-lg text-sm text-danger">
-          Maximum booking is 30 days. Please select an earlier return date.
-        </div>
-      );
-    }
-    if (noPackageForDuration && computedTierResult) {
-      return (
-        <div className="p-3 bg-warning/10 border border-warning/30 rounded-lg text-sm text-warning-dark">
-          No package is configured for <strong>{TIER_LABELS[tier]}</strong> on this bike. Please adjust your dates.
-        </div>
-      );
-    }
-    if (computedTierResult && endTs) {
+    if (durationTooShort) return (
+      <div className="p-3 bg-danger/8 border border-danger/30 rounded-lg text-sm text-danger">
+        Minimum booking is 12 hours. Please select a later return time.
+      </div>
+    );
+    if (durationTooLong) return (
+      <div className="p-3 bg-danger/8 border border-danger/30 rounded-lg text-sm text-danger">
+        Maximum booking is 30 days. Please select an earlier return date.
+      </div>
+    );
+    if (noPackage) return (
+      <div className="p-3 bg-warning/10 border border-warning/30 rounded-lg text-sm">
+        No package available for this duration. Please adjust your dates or ask the operator.
+      </div>
+    );
+    if (tierResult && endTs) {
+      const pkgLabel = isCustom && customPkg
+        ? customPkg.label
+        : tier ? TIER_LABELS[tier] : '';
       return (
         <div className="p-3.5 bg-accent/5 border border-accent/20 rounded-lg text-sm">
           <div className="flex justify-between items-center">
@@ -192,23 +211,25 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
             <span className="font-semibold">{formatDuration(durationHours)}</span>
           </div>
           <div className="flex justify-between items-center mt-1.5">
-            <span className="text-muted">Package applied</span>
-            <span className="font-semibold text-accent">{TIER_LABELS[tier]}</span>
+            <span className="text-muted">Package</span>
+            <span className="font-semibold text-accent">
+              {pkgLabel}
+              {isCustom && <span className="ml-1.5 text-[10px] bg-accent/10 text-accent px-1.5 py-0.5 rounded-full font-bold">Custom</span>}
+            </span>
           </div>
           <div className="flex justify-between items-center mt-1.5">
-            <span className="text-muted">Return deadline</span>
+            <span className="text-muted">Return by</span>
             <span className="font-semibold">{formatDateTime(endTs)}</span>
           </div>
-          {durationHours < (computedTierResult ? getTierMaxHours(tier) : durationHours) && (
-            <p className="text-[11px] text-muted mt-2 leading-relaxed">
-              Return the bike before this deadline — late returns attract extra charges.
-            </p>
-          )}
         </div>
       );
     }
     return null;
   })();
+
+  const packageLabel = (isCustom && customPkg)
+    ? customPkg.label
+    : tier ? TIER_LABELS[tier] : '—';
 
   return (
     <div className="grid md:grid-cols-[1fr_380px] gap-6">
@@ -221,19 +242,15 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
           <div className="card p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-display font-semibold text-lg">Your trip details</h3>
-              <button
-                onClick={() => setExpandedForm(true)}
-                className="text-sm text-accent underline hover:no-underline"
-              >
+              <button onClick={() => setExpandedForm(true)} className="text-sm text-accent underline hover:no-underline">
                 Change
               </button>
             </div>
-
             <div className="space-y-2 text-sm">
-              {computedTierResult && (
+              {tierResult && (
                 <div className="flex justify-between items-center py-2 border-b border-border">
                   <span className="text-muted">Package</span>
-                  <span className="font-semibold text-accent">{TIER_LABELS[tier]}</span>
+                  <span className="font-semibold text-accent">{packageLabel}</span>
                 </div>
               )}
               {durationHours > 0 && (
@@ -261,23 +278,18 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
                 </div>
               )}
             </div>
-
             {!pickupValid && pickupTs && (
               <div className="mt-3 text-xs text-danger bg-danger/8 rounded-lg p-2.5">
                 ⚠️ Pickup must be within store hours (6 AM – 10 PM) and in the future.{' '}
-                <button onClick={() => setExpandedForm(true)} className="underline font-semibold">
-                  Change time →
-                </button>
+                <button onClick={() => setExpandedForm(true)} className="underline font-semibold">Change time →</button>
               </div>
             )}
           </div>
 
           <Section number={1} title="Add-ons">
             <AddonPicker
-              extraHelmets={extraHelmets}
-              onHelmetsChange={setExtraHelmets}
-              mobileHolder={mobileHolder}
-              onMobileHolderChange={setMobileHolder}
+              extraHelmets={extraHelmets} onHelmetsChange={setExtraHelmets}
+              mobileHolder={mobileHolder} onMobileHolderChange={setMobileHolder}
             />
           </Section>
         </div>
@@ -298,28 +310,21 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
             {!pickupTs ? (
               <p className="text-sm text-muted">Select a pickup time first.</p>
             ) : (
-              <ReturnTimePicker
-                pickupTs={pickupTs}
-                value={returnTs}
-                onChange={setReturnTs}
-              />
+              <ReturnTimePicker pickupTs={pickupTs} value={returnTs} onChange={setReturnTs} />
             )}
-
             {durationBanner && <div className="mt-4">{durationBanner}</div>}
           </Section>
 
           <Section number={3} title="Add-ons">
             <AddonPicker
-              extraHelmets={extraHelmets}
-              onHelmetsChange={setExtraHelmets}
-              mobileHolder={mobileHolder}
-              onMobileHolderChange={setMobileHolder}
+              extraHelmets={extraHelmets} onHelmetsChange={setExtraHelmets}
+              mobileHolder={mobileHolder} onMobileHolderChange={setMobileHolder}
             />
           </Section>
         </div>
       )}
 
-      {/* ── Right column — sticky order summary ── */}
+      {/* ── Right column ── */}
       <div>
         <div className="md:sticky md:top-20">
           <OrderSummary
@@ -327,7 +332,7 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
             breakdown={breakdown}
             pickupTs={pickupTs}
             endTs={endTs}
-            tier={tier}
+            packageLabel={packageLabel}
             appliedCoupon={appliedCoupon}
             onCouponApply={setAppliedCoupon}
           />
@@ -341,7 +346,8 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
           {isLoggedIn ? (
             <RazorpayCheckout
               bikeId={bike.id}
-              tier={tier}
+              tier={tier ?? '24hr'}
+              customPackageId={customPkg?.id}
               actualDays={isFlex ? actualDays : undefined}
               pickupTs={pickupTs}
               extraHelmets={extraHelmets}
@@ -355,9 +361,7 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
             />
           ) : (
             <div className="mt-4 p-4 border-2 border-accent/30 rounded-xl text-center space-y-3">
-              <p className="text-sm text-muted">
-                You need an account to book a bike.
-              </p>
+              <p className="text-sm text-muted">You need an account to book a bike.</p>
               <Link
                 href={signInHref}
                 className="block w-full py-3 bg-accent text-white font-semibold rounded-xl text-base hover:bg-accent/90 transition-colors"
@@ -382,24 +386,11 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
   );
 }
 
-function getTierMaxHours(tier: PackageTier): number {
-  const map: Partial<Record<PackageTier, number>> = {
-    '12hr': 12, '24hr': 24, '36hr': 36, '48hr': 48,
-    '60hr': 60, '72hr': 72, '96hr': 96, '120hr': 120,
-    '144hr': 144, '7day': 168, '15day': 360, '30day': 720,
-  };
-  return map[tier] ?? 0;
-}
-
-function Section({
-  number, title, children,
-}: { number: number; title: string; children: React.ReactNode }) {
+function Section({ number, title, children }: { number: number; title: string; children: React.ReactNode }) {
   return (
     <div className="card p-5">
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-7 h-7 rounded-full bg-accent text-white font-bold text-sm flex items-center justify-center">
-          {number}
-        </div>
+        <div className="w-7 h-7 rounded-full bg-accent text-white font-bold text-sm flex items-center justify-center">{number}</div>
         <h3 className="font-display font-semibold text-lg">{title}</h3>
       </div>
       {children}

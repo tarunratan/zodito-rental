@@ -98,23 +98,63 @@ const COVERING_BRACKETS: Array<{
   { tier: '30day',        maxHours: 720 },
 ];
 
+/** Admin-defined custom duration package stored in `custom_packages` table. */
+export interface CustomPackage {
+  id: string;
+  bike_id: string;
+  label: string;
+  duration_hours: number;
+  price: number;
+  km_limit: number;
+  is_active: boolean;
+}
+
+/** Discriminated union returned by coveringTier — either a standard predefined tier
+ *  or an admin-created custom-duration package. */
+export type TierResult =
+  | { type: 'standard'; tier: PackageTier; actualDays?: number }
+  | { type: 'custom';   pkg: CustomPackage };
+
 /**
- * Given an actual rental duration and the set of tiers the bike offers,
- * returns the smallest tier whose bracket covers that duration (rounds UP).
- * Returns null if duration is 0 or exceeds 30 days.
+ * Given an actual rental duration, finds the smallest bracket that covers it.
+ * Custom packages (exact durations) are merged into the bracket list and take
+ * priority when they are an exact or near-exact fit over a longer standard tier.
+ * Returns null if duration is 0 or exceeds all available options.
  */
 export function coveringTier(
   durationHours: number,
-  availableTiers: PackageTier[]
-): { tier: PackageTier; actualDays?: number } | null {
+  availableTiers: PackageTier[],
+  customPackages: CustomPackage[] = []
+): TierResult | null {
   if (durationHours <= 0) return null;
-  for (const b of COVERING_BRACKETS) {
-    if (!availableTiers.includes(b.tier)) continue;
-    if (durationHours <= b.maxHours) {
-      return { tier: b.tier, actualDays: b.getActualDays?.(durationHours) };
-    }
+
+  type Bracket = { maxHours: number; result: () => TierResult };
+
+  const brackets: Bracket[] = [
+    // Standard predefined brackets
+    ...COVERING_BRACKETS
+      .filter(b => availableTiers.includes(b.tier))
+      .map(b => ({
+        maxHours: b.maxHours,
+        result: (): TierResult => ({
+          type: 'standard',
+          tier: b.tier,
+          actualDays: b.getActualDays?.(durationHours),
+        }),
+      })),
+    // Admin-created custom packages — each acts as a fixed-duration bracket
+    ...customPackages
+      .filter(p => p.is_active)
+      .map(p => ({
+        maxHours: p.duration_hours,
+        result: (): TierResult => ({ type: 'custom', pkg: p }),
+      })),
+  ].sort((a, b) => a.maxHours - b.maxHours);
+
+  for (const b of brackets) {
+    if (durationHours <= b.maxHours) return b.result();
   }
-  return null; // exceeds 30 days
+  return null;
 }
 
 export function formatDuration(hours: number): string {
@@ -153,38 +193,47 @@ export interface PriceBreakdown {
   gstAmount: number;
   couponDiscount: number;
   totalAmount: number;
-  tier: PackageTier;
+  tier: PackageTier | null;       // null when a custom package is used
+  customPackageId?: string;
+  customPackageLabel?: string;
   actualDays?: number;
 }
 
 export function calculatePrice(params: {
-  packages: BikeModelPackage[];
-  tier: PackageTier;
-  actualDays?: number;      // required for weekly_flex / monthly_flex
+  packages?: BikeModelPackage[];
+  tier?: PackageTier;
+  customPackage?: CustomPackage;   // use instead of tier for admin-created packages
+  actualDays?: number;             // required for weekly_flex / monthly_flex
   extraHelmetCount?: number;
   hasOriginalDL?: boolean;
   includeMobileHolder?: boolean;
   couponDiscount?: number;
 }): PriceBreakdown {
   const {
-    packages, tier, actualDays,
+    packages, tier, customPackage, actualDays,
     extraHelmetCount = 0, hasOriginalDL = true,
     includeMobileHolder = false, couponDiscount: rawDiscount = 0,
   } = params;
 
-  const pkg = packages.find(p => p.tier === tier);
-  if (!pkg) throw new Error(`No package found for tier ${tier}`);
-
   let basePrice: number;
   let kmLimit: number;
 
-  if (isFlexTier(tier) && actualDays && actualDays > 0) {
-    // For flex tiers: price field = per_day_rate, km_limit = km_per_day
-    basePrice = round2(Number(pkg.price) * actualDays);
-    kmLimit   = Math.round(pkg.km_limit * actualDays);
+  if (customPackage) {
+    basePrice = round2(Number(customPackage.price));
+    kmLimit   = customPackage.km_limit;
+  } else if (tier && packages) {
+    const pkg = packages.find(p => p.tier === tier);
+    if (!pkg) throw new Error(`No package found for tier ${tier}`);
+
+    if (isFlexTier(tier) && actualDays && actualDays > 0) {
+      basePrice = round2(Number(pkg.price) * actualDays);
+      kmLimit   = Math.round(pkg.km_limit * actualDays);
+    } else {
+      basePrice = Number(pkg.price);
+      kmLimit   = pkg.km_limit;
+    }
   } else {
-    basePrice = Number(pkg.price);
-    kmLimit   = pkg.km_limit;
+    throw new Error('Either (packages + tier) or customPackage must be provided');
   }
 
   const extraHelmetCharge   = extraHelmetCount * EXTRA_HELMET_PRICE;
@@ -198,7 +247,9 @@ export function calculatePrice(params: {
   return {
     basePrice, kmLimit, extraHelmetCount, extraHelmetCharge,
     mobileHolderCharge, securityDeposit, subtotal, gstAmount,
-    couponDiscount, totalAmount, tier,
+    couponDiscount, totalAmount,
+    tier: tier ?? null,
+    ...(customPackage ? { customPackageId: customPackage.id, customPackageLabel: customPackage.label } : {}),
     ...(actualDays ? { actualDays } : {}),
   };
 }
