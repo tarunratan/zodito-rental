@@ -27,8 +27,13 @@ export function BookingCard({ booking }: { booking: Booking }) {
   return (
     <div className="card p-4 md:p-5">
       <div className="flex items-start gap-4">
-        <div className="w-14 h-14 md:w-16 md:h-16 rounded-lg bg-primary/5 flex items-center justify-center text-3xl md:text-4xl shrink-0">
-          {bike.emoji}
+        <div className="w-14 h-14 md:w-16 md:h-16 rounded-lg bg-primary/5 flex items-center justify-center text-3xl md:text-4xl shrink-0 overflow-hidden">
+          {bike.image_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={bike.image_url} alt={bike.model?.display_name ?? ''} className="w-full h-full object-cover" />
+          ) : (
+            <span>{bike.emoji || '🏍️'}</span>
+          )}
         </div>
 
         <div className="flex-1 min-w-0">

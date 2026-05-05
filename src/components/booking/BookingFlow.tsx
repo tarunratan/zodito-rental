@@ -10,7 +10,7 @@ import { OrderSummary } from './OrderSummary';
 import { RazorpayCheckout } from './RazorpayCheckout';
 import {
   calculatePrice, tierEndTs, isWithinStoreHours,
-  TIER_LABELS, TIER_HOURS,
+  TIER_LABELS, TIER_HOURS, isFlexTier,
   STORE_OPEN_HOUR, STORE_CLOSE_HOUR,
 } from '@/lib/pricing';
 import { formatDateTime } from '@/lib/utils';
@@ -79,14 +79,20 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
   const [appliedCoupon, setAppliedCoupon] = useState<AppliedCoupon | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actualDays, setActualDays] = useState<number>(7);
 
-  const endTs = useMemo(() => (pickupTs ? tierEndTs(pickupTs, tier) : null), [pickupTs, tier]);
+  const isFlex = isFlexTier(tier);
+  const endTs = useMemo(
+    () => (pickupTs ? tierEndTs(pickupTs, tier, isFlex ? actualDays : undefined) : null),
+    [pickupTs, tier, isFlex, actualDays]
+  );
 
   const breakdown = useMemo(() => {
     try {
       return calculatePrice({
         packages: bike.model.packages,
         tier,
+        actualDays: isFlex ? actualDays : undefined,
         extraHelmetCount: extraHelmets,
         hasOriginalDL: true,
         includeMobileHolder: mobileHolder,
@@ -95,7 +101,7 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
     } catch {
       return null;
     }
-  }, [bike.model.packages, tier, extraHelmets, mobileHolder, appliedCoupon]);
+  }, [bike.model.packages, tier, isFlex, actualDays, extraHelmets, mobileHolder, appliedCoupon]);
 
   const pickupValid = pickupTs ? isWithinStoreHours(pickupTs) && pickupTs > new Date() : false;
   const canProceed = !!pickupTs && pickupValid && !!breakdown;
@@ -207,6 +213,8 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
               packages={bike.model.packages}
               value={tier}
               onChange={setTier}
+              actualDays={actualDays}
+              onActualDaysChange={setActualDays}
             />
           </Section>
 
@@ -265,6 +273,7 @@ export function BookingFlow({ bike, kycStatus, isLoggedIn = true }: { bike: Bike
             <RazorpayCheckout
               bikeId={bike.id}
               tier={tier}
+              actualDays={isFlex ? actualDays : undefined}
               pickupTs={pickupTs}
               extraHelmets={extraHelmets}
               mobileHolder={mobileHolder}

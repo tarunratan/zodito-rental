@@ -23,6 +23,7 @@ type LocStatus = 'pending' | 'granted' | 'denied' | 'timeout';
 export function RazorpayCheckout({
   bikeId,
   tier,
+  actualDays,
   pickupTs,
   extraHelmets,
   mobileHolder,
@@ -35,6 +36,7 @@ export function RazorpayCheckout({
 }: {
   bikeId: string;
   tier: PackageTier;
+  actualDays?: number;
   pickupTs: Date | null;
   extraHelmets: number;
   mobileHolder: boolean;
@@ -108,6 +110,7 @@ export function RazorpayCheckout({
         body: JSON.stringify({
           bike_id: bikeId,
           tier,
+          ...(actualDays ? { actual_days: actualDays } : {}),
           start_ts: pickupTs.toISOString(),
           extra_helmet_count: extraHelmets,
           mobile_holder: mobileHolder,
@@ -132,7 +135,12 @@ export function RazorpayCheckout({
 
       if (!res.ok) {
         setCashStatus('failed');
-        setCashError(data?.error ?? 'Could not create booking. Please try again.');
+        // 409 = time slot conflict — show a softer, actionable message
+        if (res.status === 409) {
+          setCashError('This time slot is no longer available. Please select a different pickup time.');
+        } else {
+          setCashError(data?.error ?? 'Could not create booking. Please try again.');
+        }
         return;
       }
 
@@ -156,6 +164,7 @@ export function RazorpayCheckout({
       body: JSON.stringify({
         bike_id: bikeId,
         tier,
+        ...(actualDays ? { actual_days: actualDays } : {}),
         start_ts: pickupTs.toISOString(),
         extra_helmet_count: extraHelmets,
         mobile_holder: mobileHolder,
@@ -179,7 +188,12 @@ export function RazorpayCheckout({
       throw new Error('Server error — please try again.');
     }
 
-    if (!res.ok) throw new Error(data?.error || 'Could not create booking');
+    if (!res.ok) {
+      const msg = res.status === 409
+        ? 'This time slot is no longer available. Please select a different pickup time.'
+        : (data?.error || 'Could not create booking');
+      throw new Error(msg);
+    }
     return data;
   }
 

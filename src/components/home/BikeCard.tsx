@@ -54,12 +54,15 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
         ) : (
           <div className="text-7xl">{bike.emoji || '🏍️'}</div>
         )}
-        <div className="absolute top-3 left-3 flex gap-1.5">
+        <div className="absolute top-3 left-3 flex gap-1.5 flex-wrap">
           {isVendor ? (
-            <span className="text-[10px] font-semibold uppercase tracking-wider bg-white/95 text-primary px-2 py-1 rounded-md shadow-sm">Partner Bike</span>
+            <span className="text-[10px] font-semibold uppercase tracking-wider bg-white/95 text-primary px-2 py-1 rounded-md shadow-sm">Partner</span>
           ) : (
             <span className="text-[10px] font-semibold uppercase tracking-wider bg-accent text-white px-2 py-1 rounded-md shadow-sm">Zodito Fleet</span>
           )}
+          <span className="text-[10px] font-semibold uppercase tracking-wider bg-primary/80 text-white px-2 py-1 rounded-md shadow-sm">
+            {bike.model?.category === 'scooter' ? '🛵 Scooter' : '🏍️ Bike'}
+          </span>
         </div>
         {bike.model?.cc && (
           <div className="absolute top-3 right-3 bg-primary text-white text-[10px] font-bold px-2 py-1 rounded-md">

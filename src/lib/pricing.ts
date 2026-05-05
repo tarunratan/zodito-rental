@@ -1,9 +1,6 @@
 // ============================================================================
 // PRICING ENGINE
 // ============================================================================
-// All price math lives here. Import this from both client (for live previews
-// in the booking UI) and server (for validated totals before saving a booking).
-// ============================================================================
 
 import type {
   BikeModel,
@@ -13,50 +10,76 @@ import type {
 
 export type { PackageTier };
 
-export const GST_RATE = 0.18; // 18%
+export const GST_RATE = 0.18;
 export const DEFAULT_SECURITY_DEPOSIT = 500;
-export const NO_DL_EXTRA_DEPOSIT = 500; // added on top at pickup if no original DL
+export const NO_DL_EXTRA_DEPOSIT = 500;
 export const EXTRA_HELMET_PRICE = 50;
 export const MOBILE_HOLDER_PRICE = 49;
 
+// Fixed-duration tiers — hours of rental
 export const TIER_HOURS: Record<PackageTier, number> = {
-  '6hr':  6,
-  '12hr': 12,
-  '24hr': 24,
-  '2day': 48,
-  '3day': 72,
-  '7day': 24 * 7,
-  '15day': 24 * 15,
-  '30day': 24 * 30,
+  '6hr':   6,
+  '12hr':  12,
+  '24hr':  24,
+  '36hr':  36,
+  '48hr':  48,
+  '60hr':  60,
+  '72hr':  72,
+  '96hr':  96,
+  '120hr': 120,
+  '144hr': 144,
+  '2day':  48,
+  '3day':  72,
+  '7day':  168,
+  '15day': 360,
+  '30day': 720,
+  // Flex tiers — actual duration set by actualDays param
+  'weekly_flex':  0,
+  'monthly_flex': 0,
 };
 
 export const TIER_LABELS: Record<PackageTier, string> = {
-  '6hr':  '6 Hours',
-  '12hr': '12 Hours',
-  '24hr': '24 Hours (1 Day)',
-  '2day': '2 Days',
-  '3day': '3 Days',
-  '7day': '7 Days',
+  '6hr':   '6 Hours',
+  '12hr':  '12 Hours',
+  '24hr':  '24 Hours',
+  '36hr':  '36 Hours',
+  '48hr':  '2 Days (48 hrs)',
+  '60hr':  '60 Hours',
+  '72hr':  '3 Days (72 hrs)',
+  '96hr':  '4 Days',
+  '120hr': '5 Days',
+  '144hr': '6 Days',
+  '2day':  '2 Days',
+  '3day':  '3 Days',
+  '7day':  '7 Days',
   '15day': '15 Days',
   '30day': '30 Days',
+  'weekly_flex':  'Weekly (7-14 days)',
+  'monthly_flex': 'Monthly (15-29 days)',
 };
 
-/**
- * Is a given date a weekend (Sat or Sun) in IST?
- * We always compute in IST because store and bookings are Hyderabad-local.
- */
+// Canonical order for admin/picker
+export const TIER_ORDER: PackageTier[] = [
+  '12hr', '24hr', '36hr', '48hr', '60hr', '72hr', '96hr', '120hr', '144hr',
+  '7day', 'weekly_flex', '15day', 'monthly_flex', '30day',
+];
+
+export const FLEX_TIER_RANGES: Record<'weekly_flex' | 'monthly_flex', { min: number; max: number }> = {
+  weekly_flex:  { min: 7,  max: 14 },
+  monthly_flex: { min: 15, max: 29 },
+};
+
+export function isFlexTier(tier: PackageTier): tier is 'weekly_flex' | 'monthly_flex' {
+  return tier === 'weekly_flex' || tier === 'monthly_flex';
+}
+
 export function isWeekendIST(d: Date): boolean {
-  // Convert to IST (UTC+5:30)
-  const istMs = d.getTime() + 5.5 * 60 * 60 * 1000; // fixed UTC→IST offset (+5:30)
+  const istMs = d.getTime() + 5.5 * 60 * 60 * 1000;
   const ist = new Date(istMs);
-  const day = ist.getUTCDay(); // 0 = Sun, 6 = Sat
+  const day = ist.getUTCDay();
   return day === 0 || day === 6;
 }
 
-/**
- * For models with weekend override (Activa 5G/4G → 6G pricing on weekends):
- * returns the effective model_id to use for pricing.
- */
 export function effectiveModelIdForDate(
   model: BikeModel,
   startDate: Date
@@ -74,58 +97,57 @@ export interface PriceBreakdown {
   extraHelmetCharge: number;
   mobileHolderCharge: number;
   securityDeposit: number;
-  subtotal: number;           // base + helmet + mobile holder (before tax)
+  subtotal: number;
   gstAmount: number;
-  couponDiscount: number;     // 0 if no coupon applied
-  totalAmount: number;        // subtotal + gst - couponDiscount + deposit
+  couponDiscount: number;
+  totalAmount: number;
   tier: PackageTier;
+  actualDays?: number;
 }
 
-/**
- * Calculate full price breakdown for a booking.
- *
- * `packages` should be all packages for the *effective* model (weekend-adjusted).
- * Use `findPackage()` to pick the right tier from them.
- */
 export function calculatePrice(params: {
   packages: BikeModelPackage[];
   tier: PackageTier;
+  actualDays?: number;      // required for weekly_flex / monthly_flex
   extraHelmetCount?: number;
   hasOriginalDL?: boolean;
   includeMobileHolder?: boolean;
   couponDiscount?: number;
 }): PriceBreakdown {
-  const { packages, tier, extraHelmetCount = 0, hasOriginalDL = true, includeMobileHolder = false, couponDiscount: rawDiscount = 0 } = params;
+  const {
+    packages, tier, actualDays,
+    extraHelmetCount = 0, hasOriginalDL = true,
+    includeMobileHolder = false, couponDiscount: rawDiscount = 0,
+  } = params;
 
   const pkg = packages.find(p => p.tier === tier);
-  if (!pkg) {
-    throw new Error(`No package found for tier ${tier}`);
+  if (!pkg) throw new Error(`No package found for tier ${tier}`);
+
+  let basePrice: number;
+  let kmLimit: number;
+
+  if (isFlexTier(tier) && actualDays && actualDays > 0) {
+    // For flex tiers: price field = per_day_rate, km_limit = km_per_day
+    basePrice = round2(Number(pkg.price) * actualDays);
+    kmLimit   = Math.round(pkg.km_limit * actualDays);
+  } else {
+    basePrice = Number(pkg.price);
+    kmLimit   = pkg.km_limit;
   }
 
-  const basePrice = Number(pkg.price);
-  const kmLimit = pkg.km_limit;
-  const extraHelmetCharge = extraHelmetCount * EXTRA_HELMET_PRICE;
-  const mobileHolderCharge = includeMobileHolder ? MOBILE_HOLDER_PRICE : 0;
-  const securityDeposit =
-    DEFAULT_SECURITY_DEPOSIT + (hasOriginalDL ? 0 : NO_DL_EXTRA_DEPOSIT);
-
-  const subtotal = basePrice + extraHelmetCharge + mobileHolderCharge;
-  const gstAmount = round2(subtotal * GST_RATE);
-  const couponDiscount = Math.min(round2(rawDiscount), round2(subtotal + gstAmount));
-  const totalAmount = round2(subtotal + gstAmount - couponDiscount + securityDeposit);
+  const extraHelmetCharge   = extraHelmetCount * EXTRA_HELMET_PRICE;
+  const mobileHolderCharge  = includeMobileHolder ? MOBILE_HOLDER_PRICE : 0;
+  const securityDeposit     = DEFAULT_SECURITY_DEPOSIT + (hasOriginalDL ? 0 : NO_DL_EXTRA_DEPOSIT);
+  const subtotal            = basePrice + extraHelmetCharge + mobileHolderCharge;
+  const gstAmount           = round2(subtotal * GST_RATE);
+  const couponDiscount      = Math.min(round2(rawDiscount), round2(subtotal + gstAmount));
+  const totalAmount         = round2(subtotal + gstAmount - couponDiscount + securityDeposit);
 
   return {
-    basePrice,
-    kmLimit,
-    extraHelmetCount,
-    extraHelmetCharge,
-    mobileHolderCharge,
-    securityDeposit,
-    subtotal,
-    gstAmount,
-    couponDiscount,
-    totalAmount,
-    tier,
+    basePrice, kmLimit, extraHelmetCount, extraHelmetCharge,
+    mobileHolderCharge, securityDeposit, subtotal, gstAmount,
+    couponDiscount, totalAmount, tier,
+    ...(actualDays ? { actualDays } : {}),
   };
 }
 
@@ -141,37 +163,27 @@ export function computeCouponDiscount(params: {
   return round2(Math.min(discount_value, subtotal + gstAmount));
 }
 
-/**
- * Given a start timestamp and a tier, compute the end timestamp.
- */
-export function tierEndTs(startTs: Date, tier: PackageTier): Date {
+export function tierEndTs(startTs: Date, tier: PackageTier, actualDays?: number): Date {
   const d = new Date(startTs);
-  d.setHours(d.getHours() + TIER_HOURS[tier]);
+  if (isFlexTier(tier) && actualDays && actualDays > 0) {
+    d.setHours(d.getHours() + actualDays * 24);
+  } else {
+    d.setHours(d.getHours() + TIER_HOURS[tier]);
+  }
   return d;
 }
 
-/**
- * Split a total payment into vendor payout and platform commission.
- * NOTE: commission applies only to the rental portion, NOT the security deposit
- * or GST (GST is a passthrough to the government). Helmet addon is platform revenue.
- */
 export function splitCommission(params: {
   basePrice: number;
   extraHelmetCharge: number;
   commissionPct: number;
 }) {
   const { basePrice, extraHelmetCharge, commissionPct } = params;
-  const commissionableAmount = basePrice; // vendor gets % of base rental only
-  const platformCommission = round2(commissionableAmount * (commissionPct / 100));
-  const vendorPayout = round2(commissionableAmount - platformCommission);
-  // Platform also keeps the helmet charge in full
-  const totalPlatformRevenue = round2(platformCommission + extraHelmetCharge);
-  return { platformCommission: totalPlatformRevenue, vendorPayout };
+  const platformCommission = round2(basePrice * (commissionPct / 100));
+  const vendorPayout       = round2(basePrice - platformCommission);
+  return { platformCommission: round2(platformCommission + extraHelmetCharge), vendorPayout };
 }
 
-/**
- * Late return / excess km calculation — used when admin closes out a booking.
- */
 export function calculateReturnCharges(params: {
   kmUsed: number;
   kmLimit: number;
@@ -180,9 +192,9 @@ export function calculateReturnCharges(params: {
   lateHourlyPenalty: number;
 }) {
   const { kmUsed, kmLimit, lateHours, excessKmRate, lateHourlyPenalty } = params;
-  const excessKm = Math.max(0, kmUsed - kmLimit);
+  const excessKm      = Math.max(0, kmUsed - kmLimit);
   const excessKmCharge = round2(excessKm * excessKmRate);
-  const lateCharge = round2(Math.max(0, lateHours) * lateHourlyPenalty);
+  const lateCharge     = round2(Math.max(0, lateHours) * lateHourlyPenalty);
   return { excessKm, excessKmCharge, lateCharge, total: round2(excessKmCharge + lateCharge) };
 }
 
@@ -190,19 +202,16 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-// Store hours: 6:00 AM – 10:30 PM IST
-export const STORE_OPEN_HOUR = 6;   // 6:00 AM
-export const STORE_CLOSE_HOUR = 22; // 22:30 = 10:30 PM
-export const STORE_CLOSE_MIN = 30;
+export const STORE_OPEN_HOUR  = 6;
+export const STORE_CLOSE_HOUR = 22;
+export const STORE_CLOSE_MIN  = 30;
 
 export function isWithinStoreHours(d: Date): boolean {
-  // Convert to IST
-  const istMs = d.getTime() + 5.5 * 60 * 60 * 1000; // fixed UTC→IST offset (+5:30)
-  const ist = new Date(istMs);
-  const h = ist.getUTCHours();
-  const m = ist.getUTCMinutes();
-
-  if (h < STORE_OPEN_HOUR) return false;
+  const istMs = d.getTime() + 5.5 * 60 * 60 * 1000;
+  const ist   = new Date(istMs);
+  const h     = ist.getUTCHours();
+  const m     = ist.getUTCMinutes();
+  if (h < STORE_OPEN_HOUR)  return false;
   if (h > STORE_CLOSE_HOUR) return false;
   if (h === STORE_CLOSE_HOUR && m > STORE_CLOSE_MIN) return false;
   return true;

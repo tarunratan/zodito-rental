@@ -49,59 +49,115 @@ export function ListBikeForm({ models }: { models: Model[] }) {
     }
   }
 
-  // Group models by category
-  const grouped = models.reduce<Record<string, Model[]>>((acc, m) => {
+  type VehicleTypeFilter = 'scooter' | 'motorcycle';
+
+  const scooterModels    = models.filter(m => m.category === 'scooter');
+  const motorcycleModels = models.filter(m => m.category !== 'scooter');
+
+  const selectedModel = models.find(m => m.id === form.model_id);
+  const vehicleTypeFilter: VehicleTypeFilter | null =
+    selectedModel ? (selectedModel.category === 'scooter' ? 'scooter' : 'motorcycle') : null;
+
+  const ccGroupLabels: Record<string, string> = {
+    bike_sub125: '< 125cc',
+    bike_sub150: '125–150cc',
+    bike_plus150: '150cc+',
+  };
+  const motoGrouped = motorcycleModels.reduce<Record<string, Model[]>>((acc, m) => {
     (acc[m.category] ??= []).push(m);
     return acc;
   }, {});
 
-  const categoryLabels: Record<string, string> = {
-    scooter: 'Scooters (≤125cc)',
-    bike_sub150: '125–150cc',
-    bike_plus150: '150cc+',
-  };
-
   return (
     <div className="space-y-4">
+      {/* Vehicle type selector — top-level choice */}
+      <div className="card p-5">
+        <label className="form-label block mb-3">Vehicle type *</label>
+        <div className="grid grid-cols-2 gap-3">
+          {([
+            { type: 'scooter'    as VehicleTypeFilter, icon: '🛵', label: 'Scooter', desc: '≤125cc automatic' },
+            { type: 'motorcycle' as VehicleTypeFilter, icon: '🏍️', label: 'Motorcycle', desc: '125cc+ manual/sport' },
+          ] as const).map(v => {
+            const active = vehicleTypeFilter === v.type ||
+              (!vehicleTypeFilter && false); // nothing selected yet
+            const hasModels = v.type === 'scooter' ? scooterModels.length > 0 : motorcycleModels.length > 0;
+            return (
+              <button
+                key={v.type}
+                type="button"
+                disabled={!hasModels}
+                onClick={() => update('model_id', '')} // reset when switching type
+                className={`p-4 rounded-xl border-2 text-left transition-all ${
+                  active
+                    ? 'border-accent bg-accent/5'
+                    : 'border-border hover:border-accent/40'
+                } disabled:opacity-40 disabled:cursor-not-allowed`}
+              >
+                <div className="text-2xl mb-1">{v.icon}</div>
+                <div className="font-semibold text-sm">{v.label}</div>
+                <div className="text-[11px] text-muted mt-0.5">{v.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="card p-5">
         <label className="form-label">Select model *</label>
         <p className="text-xs text-muted mt-1 mb-3">
           The model determines pricing. All prices follow Zodito&apos;s master rate card.
         </p>
-        <div className="space-y-4">
-          {Object.entries(grouped).map(([category, catModels]) => (
-            <div key={category}>
-              <div className="text-[10px] font-semibold text-muted uppercase tracking-wider mb-1.5">
-                {categoryLabels[category] ?? category}
-              </div>
-              <div className="space-y-1.5">
-                {catModels.map(m => (
-                  <label
-                    key={m.id}
-                    className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-all ${
-                      form.model_id === m.id
-                        ? 'border-accent bg-accent/5'
-                        : 'border-border hover:border-accent/50'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="model"
-                      value={m.id}
-                      checked={form.model_id === m.id}
-                      onChange={() => update('model_id', m.id)}
-                      className="accent-accent"
-                    />
-                    <div className="flex-1">
-                      <div className="font-semibold text-sm">{m.display_name}</div>
-                      <div className="text-[11px] text-muted">{m.cc}cc</div>
-                    </div>
-                  </label>
-                ))}
-              </div>
+
+        {/* Scooter models */}
+        {scooterModels.length > 0 && (
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <span>🛵</span>
+              <span className="text-[10px] font-semibold text-muted uppercase tracking-wider">Scooters</span>
             </div>
-          ))}
-        </div>
+            <div className="space-y-1.5">
+              {scooterModels.map(m => (
+                <label key={m.id} className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-all ${form.model_id === m.id ? 'border-accent bg-accent/5' : 'border-border hover:border-accent/50'}`}>
+                  <input type="radio" name="model" value={m.id} checked={form.model_id === m.id} onChange={() => update('model_id', m.id)} className="accent-accent" />
+                  <div className="flex-1">
+                    <div className="font-semibold text-sm">{m.display_name}</div>
+                    <div className="text-[11px] text-muted">{m.cc}cc · Automatic</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Motorcycle models grouped by CC */}
+        {motorcycleModels.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <span>🏍️</span>
+              <span className="text-[10px] font-semibold text-muted uppercase tracking-wider">Motorcycles</span>
+            </div>
+            <div className="space-y-4">
+              {Object.entries(motoGrouped).map(([category, catModels]) => (
+                <div key={category}>
+                  <div className="text-[10px] text-muted uppercase tracking-wider mb-1.5 pl-1">
+                    {ccGroupLabels[category] ?? category}
+                  </div>
+                  <div className="space-y-1.5">
+                    {catModels.map(m => (
+                      <label key={m.id} className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-all ${form.model_id === m.id ? 'border-accent bg-accent/5' : 'border-border hover:border-accent/50'}`}>
+                        <input type="radio" name="model" value={m.id} checked={form.model_id === m.id} onChange={() => update('model_id', m.id)} className="accent-accent" />
+                        <div className="flex-1">
+                          <div className="font-semibold text-sm">{m.display_name}</div>
+                          <div className="text-[11px] text-muted">{m.cc}cc</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="card p-5 space-y-3">

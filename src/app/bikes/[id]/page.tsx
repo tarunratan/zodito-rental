@@ -69,10 +69,6 @@ export default async function BikeDetailPage({ params }: { params: { id: string 
   const pkg24 = bike.model.packages.find((p: any) => p.tier === '24hr');
   const isVendor = bike.owner_type === 'vendor';
 
-  // Mock bikes don't have excess_km_rate etc. on the model; fall back to sensible defaults
-  const excessRate = bike.model.excess_km_rate ?? (bike.model.cc >= 150 ? 4 : 3);
-  const lateRate = bike.model.late_hourly_penalty ?? (bike.model.cc >= 150 ? 89 : 49);
-
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
       <Link href="/" className="text-sm text-muted hover:text-primary inline-flex items-center gap-1 mb-6">
@@ -145,31 +141,7 @@ export default async function BikeDetailPage({ params }: { params: { id: string 
             </div>
           </div>
 
-          {/* Extra charges — prominent warning box */}
-          <div className="mt-5 rounded-xl border-2 border-amber-400 overflow-hidden">
-            <div className="bg-amber-400 px-4 py-2">
-              <span className="text-white font-bold text-sm tracking-wide">⚠️ Extra Charges Apply</span>
-            </div>
-            <div className="bg-amber-50 p-4">
-              <p className="text-amber-700 text-xs mb-3 pb-3 border-b border-amber-200">
-                Each package includes a km limit — select your package below to see included km.
-              </p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-white border border-amber-200 rounded-lg p-3">
-                  <p className="text-amber-700 text-xs font-semibold uppercase tracking-wide mb-1">Excess km</p>
-                  <p className="text-amber-900 font-black text-2xl leading-none">₹{excessRate}<span className="text-sm font-bold">/km</span></p>
-                  <p className="text-amber-600 text-[10px] mt-1 leading-tight">After your package&apos;s included km</p>
-                </div>
-                <div className="bg-white border border-amber-200 rounded-lg p-3">
-                  <p className="text-amber-700 text-xs font-semibold uppercase tracking-wide mb-1">Late return</p>
-                  <p className="text-amber-900 font-black text-2xl leading-none">₹{lateRate}<span className="text-sm font-bold">/hr</span></p>
-                  <p className="text-amber-600 text-[10px] mt-1 leading-tight">After booking end time</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+          <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
             <Spec label="1 helmet" value="Free" />
             <Spec label="Extra helmet" value="₹50" />
           </div>

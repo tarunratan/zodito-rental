@@ -3,6 +3,7 @@ import { getCurrentAppUser } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 // Returns three one-time signed upload tokens — one per KYC document.
 // The client uploads files directly to Supabase Storage using these tokens,

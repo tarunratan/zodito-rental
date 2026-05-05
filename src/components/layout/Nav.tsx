@@ -143,6 +143,13 @@ export function Nav() {
               {userMenuOpen && (
                 <div className="absolute right-0 top-full mt-2 w-56 bg-white border border-border rounded-xl shadow-xl z-50 py-1.5 overflow-hidden">
                   <Link
+                    href="/profile"
+                    onClick={() => setUserMenuOpen(false)}
+                    className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-primary hover:bg-bg transition-colors"
+                  >
+                    👤 My Profile
+                  </Link>
+                  <Link
                     href="/my-bookings"
                     onClick={() => setUserMenuOpen(false)}
                     className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-primary hover:bg-bg transition-colors"
@@ -151,16 +158,16 @@ export function Nav() {
                   </Link>
                   {(kyc === 'not_submitted' || kyc === null) && (
                     <Link
-                      href="/kyc"
+                      href="/profile?tab=kyc"
                       onClick={() => setUserMenuOpen(false)}
                       className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-accent font-medium hover:bg-bg transition-colors"
                     >
-                      ✓ Verify ID
+                      🪪 Verify ID
                     </Link>
                   )}
                   {kyc === 'rejected' && (
                     <Link
-                      href="/kyc"
+                      href="/profile?tab=kyc"
                       onClick={() => setUserMenuOpen(false)}
                       className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-danger font-medium hover:bg-bg transition-colors"
                     >
@@ -233,12 +240,13 @@ export function Nav() {
                   <span className="text-white font-semibold text-sm truncate">{displayName}</span>
                 </div>
                 <div className="border-t border-white/10 mb-1" />
+                <MobileNavLink href="/profile" onClick={() => setMenuOpen(false)}>My Profile</MobileNavLink>
                 <MobileNavLink href="/my-bookings" onClick={() => setMenuOpen(false)}>My Bookings</MobileNavLink>
                 {(kyc === 'not_submitted' || kyc === null) && (
-                  <MobileNavLink href="/kyc" onClick={() => setMenuOpen(false)} accent>Verify ID</MobileNavLink>
+                  <MobileNavLink href="/profile?tab=kyc" onClick={() => setMenuOpen(false)} accent>🪪 Verify ID</MobileNavLink>
                 )}
                 {kyc === 'rejected' && (
-                  <MobileNavLink href="/kyc" onClick={() => setMenuOpen(false)} warning>⚠ Re-submit KYC</MobileNavLink>
+                  <MobileNavLink href="/profile?tab=kyc" onClick={() => setMenuOpen(false)} warning>⚠ Re-submit KYC</MobileNavLink>
                 )}
                 {effectiveRole === 'vendor' && (
                   <MobileNavLink href="/vendor" onClick={() => setMenuOpen(false)}>Vendor Dashboard</MobileNavLink>

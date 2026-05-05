@@ -51,12 +51,19 @@ export default function SignInPage() {
         <button type="submit" disabled={loading} className="btn-accent w-full">
           {loading ? 'Signing in…' : 'Sign in'}
         </button>
-        <p className="text-sm text-center text-muted">
-          No account?{' '}
-          <Link href="/sign-up" className="text-accent hover:underline font-medium">
-            Create one
-          </Link>
-        </p>
+        <div className="flex flex-col gap-1.5 text-center">
+          <p className="text-sm text-muted">
+            No account?{' '}
+            <Link href="/sign-up" className="text-accent hover:underline font-medium">
+              Create one
+            </Link>
+          </p>
+          <p className="text-sm text-muted">
+            <Link href="/forgot-password" className="text-accent hover:underline font-medium">
+              Forgot password?
+            </Link>
+          </p>
+        </div>
       </form>
     </div>
   );

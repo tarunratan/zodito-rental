@@ -16,10 +16,16 @@ import type { PackageTier } from '@/lib/supabase/types';
 
 export const runtime = 'nodejs';
 
+const ALL_TIERS = [
+  '6hr','12hr','24hr','36hr','48hr','60hr','72hr','96hr','120hr','144hr',
+  '2day','3day','7day','15day','30day','weekly_flex','monthly_flex',
+] as const;
+
 const bodySchema = z.object({
   bike_id: z.string(),
-  tier: z.enum(['6hr', '12hr', '24hr', '2day', '3day', '7day', '15day', '30day']),
-  start_ts: z.string(),  // ISO
+  tier: z.enum(ALL_TIERS),
+  actual_days: z.number().int().min(7).max(29).optional(), // for weekly_flex/monthly_flex
+  start_ts: z.string(),
   extra_helmet_count: z.number().int().min(0).max(3).default(0),
   mobile_holder: z.boolean().default(false),
   payment_method: z.enum(['online', 'at_pickup']).default('online'),
@@ -36,7 +42,7 @@ export async function POST(req: NextRequest) {
   }
   const body = parse.data;
   const startTs = new Date(body.start_ts);
-  const endTs = tierEndTs(startTs, body.tier as PackageTier);
+  const endTs = tierEndTs(startTs, body.tier as PackageTier, body.actual_days);
 
   // --- 2. Basic time validation (no I/O)
   if (startTs < new Date()) {
@@ -138,6 +144,7 @@ export async function POST(req: NextRequest) {
   const rawBreakdown = calculatePrice({
     packages,
     tier: body.tier as PackageTier,
+    actualDays: body.actual_days,
     extraHelmetCount: body.extra_helmet_count,
     hasOriginalDL: true,
     includeMobileHolder: body.mobile_holder,
@@ -151,7 +158,7 @@ export async function POST(req: NextRequest) {
       })
     : 0;
   const breakdown = couponDiscountAmount > 0
-    ? calculatePrice({ packages, tier: body.tier as PackageTier, extraHelmetCount: body.extra_helmet_count, hasOriginalDL: true, includeMobileHolder: body.mobile_holder, couponDiscount: couponDiscountAmount })
+    ? calculatePrice({ packages, tier: body.tier as PackageTier, actualDays: body.actual_days, extraHelmetCount: body.extra_helmet_count, hasOriginalDL: true, includeMobileHolder: body.mobile_holder, couponDiscount: couponDiscountAmount })
     : rawBreakdown;
 
   // --- 8. Commission split

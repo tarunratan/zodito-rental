@@ -11,7 +11,10 @@ export type VendorStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 export type BikeOwnerType = 'platform' | 'vendor';
 export type BikeCategory = 'scooter' | 'bike_sub125' | 'bike_sub150' | 'bike_plus150';
 export type BikeListingStatus = 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'inactive';
-export type PackageTier = '6hr' | '12hr' | '24hr' | '2day' | '3day' | '7day' | '15day' | '30day';
+export type PackageTier =
+  | '6hr' | '12hr' | '24hr' | '36hr' | '48hr' | '60hr' | '72hr' | '96hr' | '120hr' | '144hr'
+  | '2day' | '3day' | '7day' | '15day' | '30day'
+  | 'weekly_flex' | 'monthly_flex';
 export type BookingStatus =
   | 'pending_payment'
   | 'confirmed'
@@ -23,7 +26,7 @@ export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded' | 'partia
 
 export interface User {
   id: string;
-  auth_id: string;          // Supabase auth.users UUID
+  auth_id: string;
   email: string | null;
   phone: string | null;
   first_name: string | null;
@@ -37,6 +40,8 @@ export interface User {
   kyc_rejection_reason: string | null;
   kyc_submitted_at: string | null;
   kyc_reviewed_at: string | null;
+  address: string | null;
+  profile_photo_url: string | null;
   created_at: string;
   updated_at: string;
 }

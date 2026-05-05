@@ -6,28 +6,38 @@ import { cn } from '@/lib/utils';
 import type { BikeCategory } from '@/lib/supabase/types';
 
 type BikeRow = any;
+type VehicleType = 'all' | 'scooter' | 'motorcycle';
 
-const CATEGORIES: Array<{ id: BikeCategory | 'all'; label: string; icon: string }> = [
-  { id: 'all', label: 'All Bikes', icon: '🏍️' },
-  { id: 'scooter', label: 'Scooters', icon: '🛵' },
-  { id: 'bike_sub125', label: 'Under 125cc', icon: '🏍️' },
-  { id: 'bike_sub150', label: '125–150cc', icon: '🏍️' },
-  { id: 'bike_plus150', label: '150cc+', icon: '🏁' },
+const VEHICLE_TYPES: Array<{ id: VehicleType; label: string; icon: string }> = [
+  { id: 'all',        label: 'All',         icon: '🚗' },
+  { id: 'scooter',    label: 'Scooters',    icon: '🛵' },
+  { id: 'motorcycle', label: 'Motorcycles', icon: '🏍️' },
+];
+
+const CC_FILTERS: Array<{ id: BikeCategory | 'all'; label: string }> = [
+  { id: 'all',          label: 'All CC' },
+  { id: 'bike_sub125',  label: '< 125cc' },
+  { id: 'bike_sub150',  label: '125–150cc' },
+  { id: 'bike_plus150', label: '150cc+' },
 ];
 
 const SORTS = [
-  { id: 'newest', label: 'Newest' },
-  { id: 'price_asc', label: 'Price: Low → High' },
+  { id: 'newest',     label: 'Newest' },
+  { id: 'price_asc',  label: 'Price: Low → High' },
   { id: 'price_desc', label: 'Price: High → Low' },
 ];
 
 const DURATIONS = [
-  { label: '6 hrs',  hrs: 6 },
-  { label: '12 hrs', hrs: 12 },
-  { label: '1 day',  hrs: 24 },
-  { label: '2 days', hrs: 48 },
-  { label: '3 days', hrs: 72 },
-  { label: '7 days', hrs: 168 },
+  { label: '12 hrs',  hrs: 12 },
+  { label: '24 hrs',  hrs: 24 },
+  { label: '36 hrs',  hrs: 36 },
+  { label: '2 days',  hrs: 48 },
+  { label: '60 hrs',  hrs: 60 },
+  { label: '3 days',  hrs: 72 },
+  { label: '4 days',  hrs: 96 },
+  { label: '5 days',  hrs: 120 },
+  { label: '6 days',  hrs: 144 },
+  { label: '7 days',  hrs: 168 },
   { label: '15 days', hrs: 360 },
   { label: '30 days', hrs: 720 },
 ];
@@ -139,7 +149,8 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
   const [searched, setSearched] = useState(false);
   const [dateError, setDateError] = useState<string | null>(null);
 
-  const [cat, setCat] = useState<(typeof CATEGORIES)[number]['id']>('all');
+  const [vehicleType, setVehicleType] = useState<VehicleType>('all');
+  const [ccFilter, setCcFilter] = useState<(typeof CC_FILTERS)[number]['id']>('all');
   const [sort, setSort] = useState('newest');
   const [query, setQuery] = useState('');
   const [ownerFilter, setOwnerFilter] = useState<'all' | 'platform' | 'vendor'>('all');
@@ -188,7 +199,11 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
 
   const filtered = useMemo(() => {
     let list = bikes.slice();
-    if (cat !== 'all') list = list.filter((b: BikeRow) => b.model?.category === cat);
+    // Vehicle type filter
+    if (vehicleType === 'scooter')    list = list.filter((b: BikeRow) => b.model?.category === 'scooter');
+    if (vehicleType === 'motorcycle') list = list.filter((b: BikeRow) => b.model?.category !== 'scooter');
+    // CC sub-filter (only when showing motorcycles or all)
+    if (ccFilter !== 'all' && vehicleType !== 'scooter') list = list.filter((b: BikeRow) => b.model?.category === ccFilter);
     if (ownerFilter !== 'all') list = list.filter((b: BikeRow) => b.owner_type === ownerFilter);
     if (query) {
       const q = query.toLowerCase();
@@ -198,10 +213,10 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
       );
     }
     const priceOf = (b: BikeRow) => b.model?.packages?.find((p: any) => p.tier === '24hr')?.price ?? Infinity;
-    if (sort === 'price_asc') list.sort((a: BikeRow, b: BikeRow) => priceOf(a) - priceOf(b));
+    if (sort === 'price_asc')  list.sort((a: BikeRow, b: BikeRow) => priceOf(a) - priceOf(b));
     else if (sort === 'price_desc') list.sort((a: BikeRow, b: BikeRow) => priceOf(b) - priceOf(a));
     return list;
-  }, [bikes, cat, sort, query, ownerFilter]);
+  }, [bikes, vehicleType, ccFilter, sort, query, ownerFilter]);
 
   // Which duration chip is active (null if user manually set a custom range)
   const activeDurationHrs = useMemo(() => {
@@ -380,7 +395,9 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
         <div>
           <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight">Find your ride</h2>
           <p className="text-muted mt-1 text-sm md:text-base">
-            {searched ? `${filtered.length} available for your dates` : `${filtered.length} bikes listed`}
+            {searched
+              ? `${filtered.length} ${vehicleType === 'scooter' ? 'scooter' : vehicleType === 'motorcycle' ? 'motorcycle' : 'vehicle'}${filtered.length !== 1 ? 's' : ''} available for your dates`
+              : `${filtered.length} ${vehicleType === 'scooter' ? 'scooter' : vehicleType === 'motorcycle' ? 'motorcycle' : 'vehicle'}${filtered.length !== 1 ? 's' : ''} listed`}
           </p>
         </div>
         <div className="flex gap-2 w-full md:w-auto">
@@ -397,14 +414,34 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
         </div>
       </div>
 
-      {/* Category chips */}
-      <div className="flex flex-wrap gap-2 mb-3">
-        {CATEGORIES.map(c => (
-          <button key={c.id} onClick={() => setCat(c.id)} className={cn('chip', cat === c.id && 'chip-active')}>
-            <span className="mr-1.5">{c.icon}</span>{c.label}
+      {/* Vehicle type — top-level tabs */}
+      <div className="flex gap-1 mb-3 p-1 bg-border/30 rounded-xl w-fit">
+        {VEHICLE_TYPES.map(v => (
+          <button
+            key={v.id}
+            onClick={() => { setVehicleType(v.id); setCcFilter('all'); }}
+            className={cn(
+              'flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all',
+              vehicleType === v.id
+                ? 'bg-white shadow text-primary'
+                : 'text-muted hover:text-primary'
+            )}
+          >
+            <span>{v.icon}</span>{v.label}
           </button>
         ))}
       </div>
+
+      {/* CC sub-filter — only shown for motorcycles */}
+      {vehicleType !== 'scooter' && (
+        <div className="flex flex-wrap gap-2 mb-3">
+          {CC_FILTERS.map(c => (
+            <button key={c.id} onClick={() => setCcFilter(c.id)} className={cn('chip', ccFilter === c.id && 'chip-active')}>
+              {c.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex gap-2 mb-8 text-xs">
         {(['all', 'platform', 'vendor'] as const).map(o => (
