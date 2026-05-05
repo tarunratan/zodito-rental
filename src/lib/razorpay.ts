@@ -8,19 +8,15 @@
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 
-let _instance: Razorpay | null = null;
 function rzp(): Razorpay {
-  if (!_instance) {
-    const key_id     = process.env.RAZORPAY_KEY_ID;
-    const key_secret = process.env.RAZORPAY_KEY_SECRET;
-    if (!key_id || !key_secret) {
-      throw new Error(
-        `Razorpay env vars missing: ${!key_id ? 'RAZORPAY_KEY_ID ' : ''}${!key_secret ? 'RAZORPAY_KEY_SECRET' : ''}`.trim()
-      );
-    }
-    _instance = new Razorpay({ key_id, key_secret });
+  const key_id     = process.env.RAZORPAY_KEY_ID;
+  const key_secret = process.env.RAZORPAY_KEY_SECRET;
+  if (!key_id || !key_secret) {
+    throw new Error(
+      `Razorpay env vars missing: ${!key_id ? 'RAZORPAY_KEY_ID ' : ''}${!key_secret ? 'RAZORPAY_KEY_SECRET' : ''}`.trim()
+    );
   }
-  return _instance;
+  return new Razorpay({ key_id, key_secret });
 }
 
 /**
