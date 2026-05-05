@@ -145,12 +145,31 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
 
   const allStatuses = ['all', 'confirmed', 'ongoing', 'pending_payment', 'completed', 'cancelled', 'payment_failed'];
   const counts = allStatuses.reduce<Record<string, number>>((acc, s) => {
-    acc[s] = s === 'all' ? bookings.length : bookings.filter(b => b.status === s).length;
+    if (s === 'all') { acc[s] = bookings.length; return acc; }
+    if (s === 'ongoing') {
+      acc[s] = bookings.filter(b =>
+        b.status === 'ongoing' || (b.status === 'confirmed' && new Date(b.start_ts) <= new Date())
+      ).length;
+      return acc;
+    }
+    acc[s] = bookings.filter(b => b.status === s).length;
     return acc;
   }, {});
 
+  const now = new Date();
+
+  // "ongoing" filter: actual ongoing + confirmed bookings whose pickup time has passed
+  function matchesFilter(b: Booking) {
+    if (filter === 'all') return true;
+    if (filter === 'ongoing') {
+      return b.status === 'ongoing' ||
+        (b.status === 'confirmed' && new Date(b.start_ts) <= now);
+    }
+    return b.status === filter;
+  }
+
   const filtered = bookings.filter(b => {
-    if (filter !== 'all' && b.status !== filter) return false;
+    if (!matchesFilter(b)) return false;
     if (search) {
       const q = search.toLowerCase();
       const c = customerInfo(b);
