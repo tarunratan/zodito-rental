@@ -15,12 +15,12 @@ export default async function AdminBookingsPage() {
     const [rawBookingsRes, allBikesRes] = await Promise.all([
       supabase
         .from('bookings')
-        .select('id, booking_number, status, payment_status, total_amount, base_price, gst_amount, security_deposit, package_tier, start_ts, end_ts, picked_up_at, returned_at, cancelled_at, cancellation_reason, razorpay_payment_id, final_km_used, excess_km_charge, damage_charge, notes, created_at, user_id, bike_id, source, customer_name, customer_phone, booking_lat, booking_lng, booking_ip')
+        .select('id, booking_number, status, payment_status, total_amount, base_price, gst_amount, security_deposit, package_tier, km_limit, start_ts, end_ts, picked_up_at, returned_at, cancelled_at, cancellation_reason, razorpay_payment_id, final_km_used, excess_km_charge, damage_charge, notes, created_at, user_id, bike_id, source, customer_name, customer_phone, alternate_phone, advance_paid, pending_amount, odometer_reading, helmets_provided, original_dl_taken, payment_method_detail, payment_proof_url, booking_lat, booking_lng, booking_ip, kyc_dl_front_url, kyc_dl_back_url, kyc_aadhaar_front_url, kyc_aadhaar_back_url, kyc_selfie_url')
         .order('created_at', { ascending: false })
         .limit(200),
       supabase
         .from('bikes')
-        .select('id, emoji, registration_number, color, model_id, is_active, listing_status')
+        .select('id, emoji, image_url, registration_number, color, model_id, is_active, listing_status')
         .order('created_at', { ascending: false }),
     ]);
 

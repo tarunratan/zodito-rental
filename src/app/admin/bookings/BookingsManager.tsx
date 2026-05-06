@@ -39,6 +39,11 @@ type Booking = {
   booking_lat?: number | null;
   booking_lng?: number | null;
   booking_ip?: string | null;
+  kyc_dl_front_url?: string | null;
+  kyc_dl_back_url?: string | null;
+  kyc_aadhaar_front_url?: string | null;
+  kyc_aadhaar_back_url?: string | null;
+  kyc_selfie_url?: string | null;
   user: { id: string; email: string | null; first_name: string | null; last_name: string | null; phone: string | null } | null;
   bike: { id: string; registration_number: string | null; color: string | null; emoji: string; image_url?: string | null; model: { display_name: string } | null } | null;
 };
@@ -76,6 +81,70 @@ function fmt(ts: string | null) {
 
 function rupee(n: number) {
   return `₹${Number(n).toLocaleString('en-IN')}`;
+}
+
+function BookingKycDocs({ booking }: { booking: Booking }) {
+  const [urls, setUrls] = useState<Record<string, string> | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function loadUrls() {
+    if (urls !== null) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/bookings/kyc-urls?booking_id=${booking.id}`);
+      if (res.ok) setUrls(await res.json());
+    } catch { /* silent */ }
+    finally { setLoading(false); }
+  }
+
+  const DOC_LABELS: Record<string, string> = {
+    dl_front: 'DL Front', dl_back: 'DL Back',
+    aadhaar_front: 'Aadhaar Front', aadhaar_back: 'Aadhaar Back',
+    selfie: 'Selfie',
+  };
+
+  const hasPaths = [
+    booking.kyc_dl_front_url, booking.kyc_dl_back_url,
+    booking.kyc_aadhaar_front_url, booking.kyc_aadhaar_back_url,
+    booking.kyc_selfie_url,
+  ].filter(Boolean);
+
+  return (
+    <div className="rounded-xl border-2 border-blue-200 overflow-hidden mt-4">
+      <div className="px-4 py-2 bg-blue-50 flex items-center justify-between">
+        <span className="text-xs font-bold uppercase tracking-wide text-blue-700">🪪 KYC Documents — {hasPaths.length}/5</span>
+        {urls === null && (
+          <button
+            onClick={loadUrls}
+            disabled={loading}
+            className="text-[11px] text-blue-600 font-semibold hover:underline disabled:opacity-60"
+          >
+            {loading ? 'Loading…' : 'View documents →'}
+          </button>
+        )}
+      </div>
+      {urls && (
+        <div className="p-3 bg-white flex flex-wrap gap-3">
+          {Object.entries(DOC_LABELS).map(([key, label]) => {
+            const signedUrl = urls[key];
+            return (
+              <div key={key} className="text-center">
+                <p className="text-[10px] text-muted uppercase tracking-wide mb-1">{label}</p>
+                {signedUrl ? (
+                  <a href={signedUrl} target="_blank" rel="noopener noreferrer">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={signedUrl} alt={label} className="w-24 h-24 object-cover rounded-lg border border-border hover:opacity-90 transition-opacity" />
+                  </a>
+                ) : (
+                  <div className="w-24 h-24 rounded-lg border border-dashed border-border bg-bg flex items-center justify-center text-2xl">—</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function BookingLocation({ booking }: { booking: Booking }) {
@@ -136,6 +205,16 @@ function BookingLocation({ booking }: { booking: Booking }) {
 
 type BikeOption = { id: string; emoji: string; registration_number: string | null; model: { display_name: string } | null };
 
+type ManualTab = 'customer' | 'kyc' | 'trip' | 'payment' | 'handover';
+
+const MANUAL_TABS: { key: ManualTab; label: string; icon: string }[] = [
+  { key: 'customer', label: 'Customer',  icon: '👤' },
+  { key: 'kyc',      label: 'KYC Docs',  icon: '🪪' },
+  { key: 'trip',     label: 'Trip',      icon: '🏍️' },
+  { key: 'payment',  label: 'Payment',   icon: '💰' },
+  { key: 'handover', label: 'Handover',  icon: '✅' },
+];
+
 const EMPTY_MANUAL = {
   bike_id: '', customer_name: '', customer_phone: '', customer_email: '',
   alternate_phone: '',
@@ -147,6 +226,11 @@ const EMPTY_MANUAL = {
   helmets_provided: '0',
   original_dl_taken: false,
   notes: '',
+  kyc_dl_front_url:      '',
+  kyc_dl_back_url:       '',
+  kyc_aadhaar_front_url: '',
+  kyc_aadhaar_back_url:  '',
+  kyc_selfie_url:        '',
 };
 
 export function BookingsManager({ initialBookings, allBikes = [] }: { initialBookings: Booking[]; allBikes?: BikeOption[] }) {
@@ -226,6 +310,32 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
   const [manualForm, setManualForm] = useState({ ...EMPTY_MANUAL });
   const [manualLoading, setManualLoading] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
+  const [manualTab, setManualTab] = useState<ManualTab>('customer');
+  const [kycUploading, setKycUploading] = useState<Record<string, boolean>>({});
+
+  async function uploadKycDoc(file: File, docType: string) {
+    setKycUploading(p => ({ ...p, [docType]: true }));
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('doc_type', docType);
+    try {
+      const res = await fetch('/api/admin/bookings/kyc-upload', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (res.ok && data.path) {
+        setManualForm(f => ({ ...f, [`kyc_${docType}_url`]: data.path }));
+      } else {
+        setManualError(data.error ?? 'Upload failed');
+      }
+    } catch {
+      setManualError('Network error during upload');
+    } finally {
+      setKycUploading(p => ({ ...p, [docType]: false }));
+    }
+  }
+
+  // KYC docs count for tab badge
+  const kycCount = ['kyc_dl_front_url','kyc_dl_back_url','kyc_aadhaar_front_url','kyc_aadhaar_back_url','kyc_selfie_url']
+    .filter(k => (manualForm as any)[k]).length;
 
   const allStatuses = ['all', 'awaiting_pickup', 'confirmed', 'ongoing', 'pending_payment', 'completed', 'cancelled', 'payment_failed'];
 
@@ -342,6 +452,11 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
         original_dl_taken: manualForm.original_dl_taken,
         payment_method_detail: manualForm.payment_method_detail || undefined,
         payment_proof_url: manualForm.payment_proof_url.trim() || undefined,
+        kyc_dl_front_url:      manualForm.kyc_dl_front_url      || undefined,
+        kyc_dl_back_url:       manualForm.kyc_dl_back_url       || undefined,
+        kyc_aadhaar_front_url: manualForm.kyc_aadhaar_front_url || undefined,
+        kyc_aadhaar_back_url:  manualForm.kyc_aadhaar_back_url  || undefined,
+        kyc_selfie_url:        manualForm.kyc_selfie_url        || undefined,
         notes: manualForm.notes || undefined,
       }),
     });
@@ -360,7 +475,7 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
     <div>
       <div className="flex items-center justify-between mb-4">
         <h2 className="font-semibold text-lg">All Bookings</h2>
-        <button onClick={() => { setShowManual(true); setManualForm({ ...EMPTY_MANUAL }); setManualError(null); }}
+        <button onClick={() => { setShowManual(true); setManualForm({ ...EMPTY_MANUAL }); setManualError(null); setManualTab('customer'); }}
           className="text-sm px-3 py-1.5 bg-accent text-white rounded-lg hover:bg-accent/90 font-medium">
           + Manual Booking
         </button>
@@ -623,6 +738,11 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                             </div>
                           </div>
 
+                          {/* ── KYC Documents ── */}
+                          {(b.kyc_dl_front_url || b.kyc_dl_back_url || b.kyc_aadhaar_front_url || b.kyc_aadhaar_back_url || b.kyc_selfie_url) && (
+                            <BookingKycDocs booking={b} />
+                          )}
+
                           {/* ── Booking Location ── */}
                           <BookingLocation booking={b} />
                         </td>
@@ -753,148 +873,298 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
         </div>
       )}
 
-      {/* Manual booking modal */}
+      {/* Manual booking modal — tabbed */}
       {showManual && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white dark:bg-primary rounded-xl shadow-2xl w-full max-w-lg my-4 overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <div className="bg-white dark:bg-primary rounded-xl shadow-2xl w-full max-w-xl my-4 overflow-hidden flex flex-col max-h-[92vh]">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
               <h3 className="font-semibold text-lg">Manual / Offline Booking</h3>
-              <button onClick={() => setShowManual(false)} className="text-muted hover:text-primary text-xl">✕</button>
+              <button onClick={() => setShowManual(false)} className="text-muted hover:text-primary text-xl leading-none">✕</button>
             </div>
 
-            <div className="px-5 py-4 space-y-4 max-h-[75vh] overflow-y-auto">
+            {/* Tab bar */}
+            <div className="flex border-b border-border shrink-0 overflow-x-auto">
+              {MANUAL_TABS.map(tab => {
+                const isKyc = tab.key === 'kyc';
+                const active = manualTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    onClick={() => setManualTab(tab.key)}
+                    className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
+                      active
+                        ? 'border-accent text-accent'
+                        : 'border-transparent text-muted hover:text-primary hover:border-border'
+                    }`}
+                  >
+                    <span>{tab.icon}</span>
+                    {tab.label}
+                    {isKyc && kycCount > 0 && (
+                      <span className="ml-0.5 text-[9px] bg-green-500 text-white rounded-full px-1.5 py-0.5 font-bold">{kycCount}/5</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
 
-              {/* ── Bike ── */}
-              <div>
-                <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1">Bike <span className="text-danger">*</span></label>
-                <select value={manualForm.bike_id} onChange={e => setManualForm(f => ({ ...f, bike_id: e.target.value }))} className="input-field w-full">
-                  <option value="">Select a bike…</option>
-                  {allBikes.map(b => (
-                    <option key={b.id} value={b.id}>
-                      {b.emoji} {b.model?.display_name ?? 'Unknown'}{b.registration_number ? ` · ${b.registration_number}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            {/* Tab content */}
+            <div className="px-5 py-4 space-y-3 overflow-y-auto flex-1">
 
-              {/* ── Customer Info ── */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-muted uppercase tracking-wide">Customer Info</p>
-                <input value={manualForm.customer_name} onChange={e => setManualForm(f => ({ ...f, customer_name: e.target.value }))}
-                  className="input-field w-full" placeholder="Full name *" />
-                <div className="grid grid-cols-2 gap-2">
-                  <input value={manualForm.customer_phone} onChange={e => setManualForm(f => ({ ...f, customer_phone: e.target.value }))}
-                    className="input-field w-full" placeholder="Phone *" type="tel" />
-                  <input value={manualForm.alternate_phone} onChange={e => setManualForm(f => ({ ...f, alternate_phone: e.target.value }))}
-                    className="input-field w-full" placeholder="Alternate phone" type="tel" />
+              {/* ── Customer tab ── */}
+              {manualTab === 'customer' && (
+                <div className="space-y-3">
+                  <p className="text-[10px] text-muted uppercase tracking-widest font-semibold">Customer Details</p>
+                  <input value={manualForm.customer_name} onChange={e => setManualForm(f => ({ ...f, customer_name: e.target.value }))}
+                    className="input-field w-full" placeholder="Full name *" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] text-muted block mb-0.5">Primary phone *</label>
+                      <input value={manualForm.customer_phone} onChange={e => setManualForm(f => ({ ...f, customer_phone: e.target.value }))}
+                        className="input-field w-full" placeholder="+91 98765 43210" type="tel" />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-muted block mb-0.5">Alternate phone</label>
+                      <input value={manualForm.alternate_phone} onChange={e => setManualForm(f => ({ ...f, alternate_phone: e.target.value }))}
+                        className="input-field w-full" placeholder="Optional" type="tel" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-muted block mb-0.5">Email</label>
+                    <input value={manualForm.customer_email} onChange={e => setManualForm(f => ({ ...f, customer_email: e.target.value }))}
+                      className="input-field w-full" placeholder="Optional" type="email" />
+                  </div>
+                  <button onClick={() => setManualTab('kyc')}
+                    className="w-full mt-2 py-2 text-sm text-accent border border-accent/30 rounded-lg hover:bg-accent/5 transition-colors">
+                    Next: KYC Docs →
+                  </button>
                 </div>
-                <input value={manualForm.customer_email} onChange={e => setManualForm(f => ({ ...f, customer_email: e.target.value }))}
-                  className="input-field w-full" placeholder="Email (optional)" type="email" />
-              </div>
+              )}
 
-              {/* ── Trip Dates ── */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-muted uppercase tracking-wide">Trip Dates</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-[11px] text-muted mb-0.5 block">Pickup *</label>
-                    <input type="datetime-local" value={manualForm.start_ts} onChange={e => setManualForm(f => ({ ...f, start_ts: e.target.value }))}
-                      className="input-field w-full text-sm" />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-muted mb-0.5 block">Drop-off *</label>
-                    <input type="datetime-local" value={manualForm.end_ts} min={manualForm.start_ts} onChange={e => setManualForm(f => ({ ...f, end_ts: e.target.value }))}
-                      className="input-field w-full text-sm" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-[11px] text-muted mb-0.5 block">KM Limit</label>
-                    <input value={manualForm.km_limit} onChange={e => setManualForm(f => ({ ...f, km_limit: e.target.value }))}
-                      className="input-field w-full" placeholder="e.g. 200" type="number" min="0" />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-muted mb-0.5 block">Odometer at pickup (km)</label>
-                    <input value={manualForm.odometer_reading} onChange={e => setManualForm(f => ({ ...f, odometer_reading: e.target.value }))}
-                      className="input-field w-full" placeholder="e.g. 12540" type="number" min="0" />
-                  </div>
-                </div>
-              </div>
+              {/* ── KYC Docs tab ── */}
+              {manualTab === 'kyc' && (
+                <div className="space-y-4">
+                  <p className="text-[10px] text-muted uppercase tracking-widest font-semibold">KYC Documents</p>
+                  <p className="text-xs text-muted -mt-1">All fields optional — upload what you have. Files go directly to secure storage.</p>
 
-              {/* ── Financials ── */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-muted uppercase tracking-wide">Financials</p>
-                <div className="grid grid-cols-2 gap-2">
+                  {/* DL */}
                   <div>
-                    <label className="text-[11px] text-muted mb-0.5 block">Total Amount (₹)</label>
-                    <input value={manualForm.total_amount} onChange={e => setManualForm(f => ({ ...f, total_amount: e.target.value }))}
-                      className="input-field w-full" placeholder="0" type="number" min="0" step="1" />
+                    <p className="text-xs font-semibold text-primary mb-2">Driving Licence</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <DocSlot
+                        label="Front"
+                        docType="dl_front"
+                        value={manualForm.kyc_dl_front_url}
+                        uploading={!!kycUploading['dl_front']}
+                        onUpload={f => uploadKycDoc(f, 'dl_front')}
+                        onClear={() => setManualForm(p => ({ ...p, kyc_dl_front_url: '' }))}
+                      />
+                      <DocSlot
+                        label="Back"
+                        docType="dl_back"
+                        value={manualForm.kyc_dl_back_url}
+                        uploading={!!kycUploading['dl_back']}
+                        onUpload={f => uploadKycDoc(f, 'dl_back')}
+                        onClear={() => setManualForm(p => ({ ...p, kyc_dl_back_url: '' }))}
+                      />
+                    </div>
                   </div>
+
+                  {/* Aadhaar */}
                   <div>
-                    <label className="text-[11px] text-muted mb-0.5 block">Advance Paid (₹)</label>
-                    <input value={manualForm.advance_paid} onChange={e => setManualForm(f => ({ ...f, advance_paid: e.target.value }))}
-                      className="input-field w-full" placeholder="0" type="number" min="0" step="1" />
-                    <p className="text-[10px] text-muted mt-0.5">0 if not yet collected</p>
+                    <p className="text-xs font-semibold text-primary mb-2">Aadhaar Card</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <DocSlot
+                        label="Front"
+                        docType="aadhaar_front"
+                        value={manualForm.kyc_aadhaar_front_url}
+                        uploading={!!kycUploading['aadhaar_front']}
+                        onUpload={f => uploadKycDoc(f, 'aadhaar_front')}
+                        onClear={() => setManualForm(p => ({ ...p, kyc_aadhaar_front_url: '' }))}
+                      />
+                      <DocSlot
+                        label="Back"
+                        docType="aadhaar_back"
+                        value={manualForm.kyc_aadhaar_back_url}
+                        uploading={!!kycUploading['aadhaar_back']}
+                        onUpload={f => uploadKycDoc(f, 'aadhaar_back')}
+                        onClear={() => setManualForm(p => ({ ...p, kyc_aadhaar_back_url: '' }))}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Selfie */}
+                  <div>
+                    <p className="text-xs font-semibold text-primary mb-2">Selfie with Document</p>
+                    <div className="max-w-[50%]">
+                      <DocSlot
+                        label="Selfie"
+                        docType="selfie"
+                        value={manualForm.kyc_selfie_url}
+                        uploading={!!kycUploading['selfie']}
+                        onUpload={f => uploadKycDoc(f, 'selfie')}
+                        onClear={() => setManualForm(p => ({ ...p, kyc_selfie_url: '' }))}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 mt-2">
+                    <button onClick={() => setManualTab('customer')} className="flex-1 py-2 text-sm text-muted border border-border rounded-lg hover:bg-border/50 transition-colors">← Back</button>
+                    <button onClick={() => setManualTab('trip')} className="flex-1 py-2 text-sm text-accent border border-accent/30 rounded-lg hover:bg-accent/5 transition-colors">Next: Trip →</button>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+              )}
+
+              {/* ── Trip tab ── */}
+              {manualTab === 'trip' && (
+                <div className="space-y-3">
+                  <p className="text-[10px] text-muted uppercase tracking-widest font-semibold">Trip Details</p>
                   <div>
-                    <label className="text-[11px] text-muted mb-0.5 block">Security Deposit (₹)</label>
-                    <input value={manualForm.security_deposit} onChange={e => setManualForm(f => ({ ...f, security_deposit: e.target.value }))}
-                      className="input-field w-full" placeholder="500" type="number" min="0" step="1" />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-muted mb-0.5 block">Payment Method</label>
-                    <select value={manualForm.payment_method_detail} onChange={e => setManualForm(f => ({ ...f, payment_method_detail: e.target.value as any }))}
-                      className="input-field w-full text-sm">
-                      <option value="">— select —</option>
-                      <option value="cash">Cash</option>
-                      <option value="upi">UPI</option>
-                      <option value="online">Online (Razorpay)</option>
-                      <option value="partial_online">Partial (online + cash)</option>
+                    <label className="text-[11px] text-muted block mb-0.5">Bike *</label>
+                    <select value={manualForm.bike_id} onChange={e => setManualForm(f => ({ ...f, bike_id: e.target.value }))} className="input-field w-full">
+                      <option value="">Select a bike…</option>
+                      {allBikes.map(b => (
+                        <option key={b.id} value={b.id}>
+                          {b.emoji} {b.model?.display_name ?? 'Unknown'}{b.registration_number ? ` · ${b.registration_number}` : ''}
+                        </option>
+                      ))}
                     </select>
                   </div>
-                </div>
-                <div>
-                  <label className="text-[11px] text-muted mb-0.5 block">Payment Proof URL <span className="text-muted">(optional)</span></label>
-                  <input value={manualForm.payment_proof_url} onChange={e => setManualForm(f => ({ ...f, payment_proof_url: e.target.value }))}
-                    className="input-field w-full" placeholder="https://…" type="url" />
-                  <p className="text-[10px] text-muted mt-0.5">Paste a link to a screenshot or receipt image</p>
-                </div>
-              </div>
-
-              {/* ── Handover Checklist ── */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-muted uppercase tracking-wide">Handover Checklist</p>
-                <div className="grid grid-cols-2 gap-2 items-end">
-                  <div>
-                    <label className="text-[11px] text-muted mb-0.5 block">Helmets Provided</label>
-                    <input value={manualForm.helmets_provided} onChange={e => setManualForm(f => ({ ...f, helmets_provided: e.target.value }))}
-                      className="input-field w-full" placeholder="0" type="number" min="0" max="5" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] text-muted block mb-0.5">Pickup date & time *</label>
+                      <input type="datetime-local" value={manualForm.start_ts} onChange={e => setManualForm(f => ({ ...f, start_ts: e.target.value }))}
+                        className="input-field w-full text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-muted block mb-0.5">Drop-off date & time *</label>
+                      <input type="datetime-local" value={manualForm.end_ts} min={manualForm.start_ts} onChange={e => setManualForm(f => ({ ...f, end_ts: e.target.value }))}
+                        className="input-field w-full text-sm" />
+                    </div>
                   </div>
-                  <label className="flex items-center gap-2 cursor-pointer select-none pb-2">
-                    <input
-                      type="checkbox"
-                      checked={manualForm.original_dl_taken}
-                      onChange={e => setManualForm(f => ({ ...f, original_dl_taken: e.target.checked }))}
-                      className="w-4 h-4 accent-accent"
-                    />
-                    <span className="text-sm font-medium">Original DL taken</span>
-                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] text-muted block mb-0.5">KM limit</label>
+                      <input value={manualForm.km_limit} onChange={e => setManualForm(f => ({ ...f, km_limit: e.target.value }))}
+                        className="input-field w-full" placeholder="e.g. 200" type="number" min="0" />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-muted block mb-0.5">Odometer at pickup (km)</label>
+                      <input value={manualForm.odometer_reading} onChange={e => setManualForm(f => ({ ...f, odometer_reading: e.target.value }))}
+                        className="input-field w-full" placeholder="e.g. 12540" type="number" min="0" />
+                    </div>
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <button onClick={() => setManualTab('kyc')} className="flex-1 py-2 text-sm text-muted border border-border rounded-lg hover:bg-border/50 transition-colors">← Back</button>
+                    <button onClick={() => setManualTab('payment')} className="flex-1 py-2 text-sm text-accent border border-accent/30 rounded-lg hover:bg-accent/5 transition-colors">Next: Payment →</button>
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {/* ── Remarks ── */}
-              <div>
-                <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1">Remarks / Notes</label>
-                <textarea value={manualForm.notes} onChange={e => setManualForm(f => ({ ...f, notes: e.target.value }))}
-                  className="input-field w-full h-16 resize-none" placeholder="Any internal notes about this booking…" />
-              </div>
+              {/* ── Payment tab ── */}
+              {manualTab === 'payment' && (
+                <div className="space-y-3">
+                  <p className="text-[10px] text-muted uppercase tracking-widest font-semibold">Financials</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] text-muted block mb-0.5">Total Amount (₹)</label>
+                      <input value={manualForm.total_amount} onChange={e => setManualForm(f => ({ ...f, total_amount: e.target.value }))}
+                        className="input-field w-full" placeholder="0" type="number" min="0" step="1" />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-muted block mb-0.5">Advance Paid (₹)</label>
+                      <input value={manualForm.advance_paid} onChange={e => setManualForm(f => ({ ...f, advance_paid: e.target.value }))}
+                        className="input-field w-full" placeholder="0" type="number" min="0" step="1" />
+                      <p className="text-[10px] text-muted mt-0.5">0 if not yet collected</p>
+                    </div>
+                  </div>
+                  {manualForm.total_amount && manualForm.advance_paid && (
+                    <div className="p-2.5 rounded-lg bg-orange-50 border border-orange-200 text-xs text-orange-700">
+                      Pending at pickup: <span className="font-bold">₹{Math.max(0, parseFloat(manualForm.total_amount || '0') - parseFloat(manualForm.advance_paid || '0')).toLocaleString('en-IN')}</span>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] text-muted block mb-0.5">Security Deposit (₹)</label>
+                      <input value={manualForm.security_deposit} onChange={e => setManualForm(f => ({ ...f, security_deposit: e.target.value }))}
+                        className="input-field w-full" placeholder="500" type="number" min="0" step="1" />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-muted block mb-0.5">Payment Method</label>
+                      <select value={manualForm.payment_method_detail} onChange={e => setManualForm(f => ({ ...f, payment_method_detail: e.target.value as any }))}
+                        className="input-field w-full text-sm">
+                        <option value="">— select —</option>
+                        <option value="cash">Cash</option>
+                        <option value="upi">UPI</option>
+                        <option value="online">Online (Razorpay)</option>
+                        <option value="partial_online">Partial (online + cash)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-muted block mb-0.5">Payment Proof URL</label>
+                    <input value={manualForm.payment_proof_url} onChange={e => setManualForm(f => ({ ...f, payment_proof_url: e.target.value }))}
+                      className="input-field w-full" placeholder="https://…" type="url" />
+                    <p className="text-[10px] text-muted mt-0.5">Paste a link to a screenshot or receipt</p>
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <button onClick={() => setManualTab('trip')} className="flex-1 py-2 text-sm text-muted border border-border rounded-lg hover:bg-border/50 transition-colors">← Back</button>
+                    <button onClick={() => setManualTab('handover')} className="flex-1 py-2 text-sm text-accent border border-accent/30 rounded-lg hover:bg-accent/5 transition-colors">Next: Handover →</button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Handover tab ── */}
+              {manualTab === 'handover' && (
+                <div className="space-y-3">
+                  <p className="text-[10px] text-muted uppercase tracking-widest font-semibold">Handover Checklist</p>
+                  <div className="grid grid-cols-2 gap-2 items-end">
+                    <div>
+                      <label className="text-[11px] text-muted block mb-0.5">Helmets Provided</label>
+                      <input value={manualForm.helmets_provided} onChange={e => setManualForm(f => ({ ...f, helmets_provided: e.target.value }))}
+                        className="input-field w-full" placeholder="0" type="number" min="0" max="5" />
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer select-none pb-1">
+                      <input type="checkbox" checked={manualForm.original_dl_taken}
+                        onChange={e => setManualForm(f => ({ ...f, original_dl_taken: e.target.checked }))}
+                        className="w-4 h-4 accent-accent" />
+                      <span className="text-sm font-medium">Original DL taken</span>
+                    </label>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-muted block mb-0.5">Remarks / Notes</label>
+                    <textarea value={manualForm.notes} onChange={e => setManualForm(f => ({ ...f, notes: e.target.value }))}
+                      className="input-field w-full h-20 resize-none" placeholder="Any internal notes about this booking…" />
+                  </div>
+
+                  {/* Summary strip */}
+                  <div className="rounded-lg border border-border bg-bg p-3 space-y-1 text-xs">
+                    <p className="font-semibold text-[11px] uppercase tracking-wide text-muted mb-2">Booking Summary</p>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                      <span className="text-muted">Customer</span>
+                      <span className="font-medium">{manualForm.customer_name || '—'}</span>
+                      <span className="text-muted">Phone</span>
+                      <span className="font-medium">{manualForm.customer_phone || '—'}</span>
+                      <span className="text-muted">Pickup</span>
+                      <span className="font-medium">{manualForm.start_ts ? new Date(manualForm.start_ts).toLocaleString('en-IN',{dateStyle:'short',timeStyle:'short'}) : '—'}</span>
+                      <span className="text-muted">Drop-off</span>
+                      <span className="font-medium">{manualForm.end_ts ? new Date(manualForm.end_ts).toLocaleString('en-IN',{dateStyle:'short',timeStyle:'short'}) : '—'}</span>
+                      <span className="text-muted">Total</span>
+                      <span className="font-medium">₹{parseFloat(manualForm.total_amount||'0').toLocaleString('en-IN')}</span>
+                      <span className="text-muted">KYC docs</span>
+                      <span className={`font-medium ${kycCount > 0 ? 'text-green-600' : 'text-orange-500'}`}>{kycCount}/5 uploaded</span>
+                    </div>
+                  </div>
+
+                  <button onClick={() => setManualTab('payment')} className="w-full py-2 text-sm text-muted border border-border rounded-lg hover:bg-border/50 transition-colors">← Back</button>
+                </div>
+              )}
 
               {manualError && <p className="text-xs text-danger bg-danger/10 px-3 py-2 rounded-lg">{manualError}</p>}
             </div>
 
-            <div className="flex justify-end gap-3 px-5 py-4 border-t border-border">
+            {/* Footer */}
+            <div className="flex justify-end gap-3 px-5 py-4 border-t border-border shrink-0">
               <button onClick={() => setShowManual(false)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-border/50">Cancel</button>
               <button onClick={createManualBooking} disabled={manualLoading}
                 className="px-4 py-2 text-sm bg-accent text-white rounded-lg hover:bg-accent/90 disabled:opacity-50">
@@ -903,6 +1173,49 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── DocSlot: file upload slot for KYC docs in manual booking form ─────────────
+function DocSlot({
+  label, value, uploading, onUpload, onClear,
+}: {
+  label: string;
+  docType: string;
+  value: string;
+  uploading: boolean;
+  onUpload: (f: File) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="rounded-lg border-2 border-dashed border-border bg-bg/50 p-3 flex flex-col items-center gap-2 text-center min-h-[96px] justify-center transition-colors hover:border-accent/40">
+      {uploading ? (
+        <div className="space-y-1">
+          <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-[10px] text-muted">Uploading…</p>
+        </div>
+      ) : value ? (
+        <div className="space-y-1.5 w-full">
+          <div className="text-green-500 text-xl leading-none">✓</div>
+          <p className="text-[10px] font-semibold text-green-700">{label} — saved</p>
+          <button type="button" onClick={onClear} className="text-[10px] text-red-400 hover:text-red-600 underline">Remove</button>
+        </div>
+      ) : (
+        <label className="cursor-pointer w-full block">
+          <input
+            type="file"
+            accept="image/*,application/pdf"
+            className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) onUpload(f); e.target.value = ''; }}
+          />
+          <div className="space-y-1 pointer-events-none">
+            <div className="text-2xl">📷</div>
+            <p className="text-[10px] font-semibold text-muted">{label}</p>
+            <p className="text-[10px] text-accent">Tap to upload</p>
+          </div>
+        </label>
       )}
     </div>
   );

@@ -33,6 +33,13 @@ const schema = z.object({
   helmets_provided: z.number().int().min(0).max(5).default(0),
   original_dl_taken: z.boolean().default(false),
 
+  // ── KYC documents (optional — admin may upload at any time) ───────────────
+  kyc_dl_front_url:      z.string().optional().or(z.literal('')),
+  kyc_dl_back_url:       z.string().optional().or(z.literal('')),
+  kyc_aadhaar_front_url: z.string().optional().or(z.literal('')),
+  kyc_aadhaar_back_url:  z.string().optional().or(z.literal('')),
+  kyc_selfie_url:        z.string().optional().or(z.literal('')),
+
   // ── Remarks ────────────────────────────────────────────────────────────────
   notes: z.string().optional(),
 }).superRefine((d, ctx) => {
@@ -63,6 +70,7 @@ export async function POST(req: NextRequest) {
     total_amount, advance_paid, security_deposit, payment_method_detail, payment_proof_url,
     km_limit, odometer_reading, package_tier,
     helmets_provided, original_dl_taken,
+    kyc_dl_front_url, kyc_dl_back_url, kyc_aadhaar_front_url, kyc_aadhaar_back_url, kyc_selfie_url,
     notes,
   } = parse.data;
 
@@ -157,6 +165,11 @@ export async function POST(req: NextRequest) {
       original_dl_taken,
       payment_method_detail: payment_method_detail ?? null,
       payment_proof_url: payment_proof_url || null,
+      kyc_dl_front_url:      kyc_dl_front_url      || null,
+      kyc_dl_back_url:       kyc_dl_back_url       || null,
+      kyc_aadhaar_front_url: kyc_aadhaar_front_url || null,
+      kyc_aadhaar_back_url:  kyc_aadhaar_back_url  || null,
+      kyc_selfie_url:        kyc_selfie_url        || null,
     })
     .select('id, booking_number')
     .single();
