@@ -27,12 +27,15 @@ export async function GET(
   const toIso     = toTs.toISOString();
   const bikeId    = params.id;
 
+  // pending_payment expires after 15 minutes
+  const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+
   const [bookingRes, bikeRes] = await Promise.all([
     supabase
       .from('bookings')
       .select('id')
       .eq('bike_id', bikeId)
-      .not('status', 'in', '(cancelled,payment_failed)')
+      .or(`status.in.(confirmed,ongoing),and(status.eq.pending_payment,created_at.gt.${fifteenMinAgo})`)
       .lt('start_ts', toIso)
       .gt('end_ts', fromIso)
       .limit(1)

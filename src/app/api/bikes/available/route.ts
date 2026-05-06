@@ -26,12 +26,15 @@ export async function GET(req: NextRequest) {
   const fromIso = fromTs.toISOString();
   const toIso = toTs.toISOString();
 
+  // pending_payment bookings expire after 15 minutes — exclude stale ones
+  const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+
   // Parallel: bookings overlap + freeze overlap — independent reads
   const [bookedRes, frozenRes] = await Promise.all([
     supabase
       .from('bookings')
       .select('bike_id')
-      .not('status', 'in', '(cancelled,payment_failed)')
+      .or(`status.in.(confirmed,ongoing),and(status.eq.pending_payment,created_at.gt.${fifteenMinAgo})`)
       .lt('start_ts', toIso)
       .gt('end_ts', fromIso),
     supabase

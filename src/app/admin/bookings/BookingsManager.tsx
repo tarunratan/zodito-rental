@@ -61,7 +61,7 @@ const PAYMENT_COLORS: Record<string, string> = {
 
 function fmt(ts: string | null) {
   if (!ts) return '—';
-  return new Date(ts).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
+  return new Date(ts).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
 }
 
 function rupee(n: number) {
@@ -170,28 +170,32 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
   const [manualLoading, setManualLoading] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
 
-  const allStatuses = ['all', 'confirmed', 'ongoing', 'pending_payment', 'completed', 'cancelled', 'payment_failed'];
+  const allStatuses = ['all', 'awaiting_pickup', 'confirmed', 'ongoing', 'pending_payment', 'completed', 'cancelled', 'payment_failed'];
+
+  const now = new Date();
+
   const counts = allStatuses.reduce<Record<string, number>>((acc, s) => {
     if (s === 'all') { acc[s] = bookings.length; return acc; }
-    if (s === 'ongoing') {
-      acc[s] = bookings.filter(b =>
-        b.status === 'ongoing' || (b.status === 'confirmed' && new Date(b.start_ts) <= new Date())
-      ).length;
+    if (s === 'awaiting_pickup') {
+      acc[s] = bookings.filter(b => b.status === 'confirmed' && new Date(b.start_ts) <= now).length;
+      return acc;
+    }
+    if (s === 'confirmed') {
+      acc[s] = bookings.filter(b => b.status === 'confirmed' && new Date(b.start_ts) > now).length;
       return acc;
     }
     acc[s] = bookings.filter(b => b.status === s).length;
     return acc;
   }, {});
 
-  const now = new Date();
+  function isOverdue(b: Booking) {
+    return b.status === 'confirmed' && new Date(b.start_ts) <= now;
+  }
 
-  // "ongoing" filter: actual ongoing + confirmed bookings whose pickup time has passed
   function matchesFilter(b: Booking) {
     if (filter === 'all') return true;
-    if (filter === 'ongoing') {
-      return b.status === 'ongoing' ||
-        (b.status === 'confirmed' && new Date(b.start_ts) <= now);
-    }
+    if (filter === 'awaiting_pickup') return isOverdue(b);
+    if (filter === 'confirmed') return b.status === 'confirmed' && !isOverdue(b);
     return b.status === filter;
   }
 
@@ -213,7 +217,9 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
     return true;
   });
 
-  async function updateStatus(booking_id: string, status: string, notes?: string) {
+  async function updateStatus(booking_id: string, action: string, notes?: string) {
+    // no_show is a UI alias for cancellation with a pre-filled reason
+    const status = action === 'no_show' ? 'cancelled' : action;
     setLoading(booking_id);
     setActionError(null);
     try {
@@ -289,22 +295,28 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
       </div>
 
       <div className="flex flex-wrap gap-2 mb-3">
-        {['all', 'confirmed', 'ongoing', 'pending_payment', 'completed', 'cancelled'].map(s => (
-          <button
-            key={s}
-            onClick={() => setFilter(s)}
-            className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-colors flex items-center gap-1 ${
-              filter === s ? 'bg-accent text-white' : 'bg-border/60 text-muted hover:bg-border'
-            }`}
-          >
-            {s.replace('_', ' ')}
-            {counts[s] > 0 && (
-              <span className={`font-bold px-1.5 py-0.5 rounded-full text-[10px] ${filter === s ? 'bg-white/20' : 'bg-muted/20'}`}>
-                {counts[s]}
-              </span>
-            )}
-          </button>
-        ))}
+        {allStatuses.filter(s => s !== 'payment_failed').map(s => {
+          const label = s === 'awaiting_pickup' ? 'Awaiting Pickup' : s.replace(/_/g, ' ');
+          const isUrgent = s === 'awaiting_pickup' && counts[s] > 0;
+          return (
+            <button
+              key={s}
+              onClick={() => setFilter(s)}
+              className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-colors flex items-center gap-1 ${
+                filter === s
+                  ? isUrgent ? 'bg-orange-500 text-white' : 'bg-accent text-white'
+                  : isUrgent ? 'bg-orange-100 text-orange-700 hover:bg-orange-200' : 'bg-border/60 text-muted hover:bg-border'
+              }`}
+            >
+              {isUrgent && '⚠ '}{label}
+              {counts[s] > 0 && (
+                <span className={`font-bold px-1.5 py-0.5 rounded-full text-[10px] ${filter === s ? 'bg-white/20' : 'bg-muted/20'}`}>
+                  {counts[s]}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       <div className="mb-4">
@@ -387,9 +399,15 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${STATUS_COLORS[b.status] ?? ''}`}>
-                          {b.status.replace('_', ' ')}
-                        </span>
+                        {isOverdue(b) ? (
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">
+                            Awaiting Pickup
+                          </span>
+                        ) : (
+                          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${STATUS_COLORS[b.status] ?? ''}`}>
+                            {b.status.replace(/_/g, ' ')}
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1.5" onClick={e => e.stopPropagation()}>
@@ -399,13 +417,26 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                               Mark Pickup
                             </button>
                           )}
+                          {isOverdue(b) && (
+                            <button
+                              onClick={() => {
+                                setActionModal({ id: b.id, action: 'no_show' });
+                                setActionNotes('Customer no-show — bike released');
+                                setActionError(null);
+                              }}
+                              disabled={loading === b.id}
+                              className="text-xs px-2 py-1 bg-red-50 text-red-500 rounded hover:bg-red-100 transition-colors disabled:opacity-50"
+                            >
+                              No-show
+                            </button>
+                          )}
                           {b.status === 'ongoing' && (
                             <button onClick={() => { setActionModal({ id: b.id, action: 'completed' }); setActionError(null); }} disabled={loading === b.id}
                               className="text-xs px-2 py-1 bg-green-50 text-green-600 rounded hover:bg-green-100 transition-colors disabled:opacity-50">
                               Mark Return
                             </button>
                           )}
-                          {['confirmed', 'ongoing', 'pending_payment'].includes(b.status) && (
+                                          {['confirmed', 'ongoing', 'pending_payment'].includes(b.status) && (
                             <button onClick={() => { setActionModal({ id: b.id, action: 'cancelled' }); setActionNotes(''); setActionError(null); }}
                               className="text-xs px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 transition-colors">
                               Cancel
@@ -484,12 +515,16 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
             <h3 className="font-semibold capitalize">
               {actionModal.action === 'ongoing' ? 'Mark as Picked Up?' :
                actionModal.action === 'completed' ? 'Mark as Returned?' :
+               actionModal.action === 'no_show' ? 'Mark as No-show?' :
                actionModal.action === 'cancelled' ? 'Cancel Booking?' : 'Process Refund?'}
             </h3>
-            {['cancelled', 'completed'].includes(actionModal.action) && (
+            {actionModal.action === 'no_show' && (
+              <p className="text-xs text-muted">Customer did not show up for pickup. This will cancel the booking and free the bike.</p>
+            )}
+            {['cancelled', 'completed', 'no_show'].includes(actionModal.action) && (
               <textarea value={actionNotes} onChange={e => setActionNotes(e.target.value)}
                 className="input-field w-full h-20 resize-none"
-                placeholder={actionModal.action === 'cancelled' ? 'Cancellation reason (optional)' : 'Return notes (optional)'} />
+                placeholder={actionModal.action === 'completed' ? 'Return notes (optional)' : 'Cancellation reason'} />
             )}
             {actionError && (
               <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
@@ -506,7 +541,7 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
               <button
                 onClick={() => updateStatus(actionModal.id, actionModal.action, actionNotes)}
                 disabled={loading === actionModal.id}
-                className={`px-4 py-2 text-sm text-white rounded-lg disabled:opacity-60 ${actionModal.action === 'cancelled' ? 'bg-red-500 hover:bg-red-600' : 'bg-accent hover:bg-accent-hover'}`}
+                className={`px-4 py-2 text-sm text-white rounded-lg disabled:opacity-60 ${['cancelled', 'no_show'].includes(actionModal.action) ? 'bg-red-500 hover:bg-red-600' : 'bg-accent hover:bg-accent-hover'}`}
               >
                 {loading === actionModal.id ? 'Updating…' : 'Confirm'}
               </button>

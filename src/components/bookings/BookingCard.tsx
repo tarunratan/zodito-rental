@@ -23,6 +23,7 @@ export function BookingCard({ booking }: { booking: Booking }) {
   const isVendor = bike.owner_type === 'vendor';
   const canCancel = booking.status === 'confirmed' || booking.status === 'pending_payment';
   const paid = booking.status === 'confirmed' || booking.status === 'ongoing' || booking.status === 'completed';
+  const pickupOverdue = booking.status === 'confirmed' && new Date(booking.start_ts) <= new Date();
 
   return (
     <div className="card p-4 md:p-5">
@@ -84,6 +85,13 @@ export function BookingCard({ booking }: { booking: Booking }) {
           {isVendor && !paid && (
             <div className="mt-3 text-[11px] text-muted italic">
               Pickup address shown once payment is confirmed
+            </div>
+          )}
+
+          {/* Overdue pickup warning */}
+          {pickupOverdue && (
+            <div className="mt-3 px-3 py-2 bg-orange-50 border border-orange-200 rounded-lg text-xs text-orange-700 font-medium">
+              ⚠ Pickup time has passed — please contact the rental shop to confirm pickup or cancel.
             </div>
           )}
 
