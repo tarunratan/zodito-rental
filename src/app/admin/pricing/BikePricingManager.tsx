@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { TIER_LABELS, TIER_ORDER, isFlexTier, FLEX_TIER_RANGES } from '@/lib/pricing';
+import { TIER_LABELS, ADMIN_TIER_LABELS, TIER_ORDER, isFlexTier, FLEX_TIER_RANGES } from '@/lib/pricing';
 import type { PackageTier } from '@/lib/supabase/types';
 import { formatINR } from '@/lib/utils';
 
@@ -240,7 +240,7 @@ export function BikePricingManager({ initialBikes }: { initialBikes: Bike[] }) {
                       >
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold">{TIER_LABELS[pkg.tier]}</span>
+                            <span className="text-sm font-semibold">{ADMIN_TIER_LABELS[pkg.tier] ?? TIER_LABELS[pkg.tier]}</span>
                             {flex && (
                               <span className="text-[10px] bg-purple-100 text-purple-700 font-bold px-1.5 py-0.5 rounded-full">per day</span>
                             )}

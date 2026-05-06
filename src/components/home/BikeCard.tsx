@@ -14,15 +14,32 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
     : `/bikes/${bike.id}`;
 
   const packages: any[] = bike.model?.packages ?? [];
+  const customPackages: any[] = (bike.custom_packages ?? []).filter((p: any) => p.is_active);
   const pkg12 = packages.find((p: any) => p.tier === '12hr');
   const pkg24 = packages.find((p: any) => p.tier === '24hr');
 
+  // Minimum price across all packages (standard + active custom)
+  const allPrices = [
+    ...packages.map((p: any) => Number(p.price)),
+    ...customPackages.map((p: any) => Number(p.price)),
+  ].filter(v => v > 0);
+  const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : null;
+  const minPkg = minPrice !== null
+    ? (customPackages.find((p: any) => Number(p.price) === minPrice) ?? packages.find((p: any) => Number(p.price) === minPrice))
+    : null;
+
   // Determine price/label to show for the searched duration.
-  // Tries exact tier match first, then falls back to 24hr daily rate × days.
+  // Checks custom packages first (exact duration_hours match), then standard tiers, then fallback.
   const searchDisplay: { price: number; label: string; km: number } | null = (() => {
     if (!searchFrom || !searchTo) return null;
     const searchHrs = Math.round((new Date(searchTo).getTime() - new Date(searchFrom).getTime()) / 3_600_000);
     if (searchHrs <= 0) return null;
+
+    // Check custom packages first — exact duration_hours match
+    const customMatch = customPackages.find((p: any) => p.duration_hours === searchHrs);
+    if (customMatch) {
+      return { price: Number(customMatch.price), label: customMatch.label, km: customMatch.km_limit };
+    }
 
     // Try exact tier match by hour count
     const tierMap: Array<[string, number]> = [
@@ -43,7 +60,15 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
       }
     }
 
-    // No exact tier — use 24hr daily rate × days as fallback
+    // No exact match — check if a custom package is close (within 1hr)
+    const nearCustom = customPackages
+      .map((p: any) => ({ ...p, diff: Math.abs(p.duration_hours - searchHrs) }))
+      .sort((a: any, b: any) => a.diff - b.diff)[0];
+    if (nearCustom && nearCustom.diff <= 1) {
+      return { price: Number(nearCustom.price), label: nearCustom.label, km: nearCustom.km_limit };
+    }
+
+    // Fallback to 24hr daily rate × days
     if (pkg24 && searchHrs >= 12) {
       if (searchHrs <= 24) return { price: Number(pkg24.price), label: '24 hrs', km: pkg24.km_limit };
       const days = Math.ceil(searchHrs / 24);
@@ -136,8 +161,14 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
               <div>
                 <div className="text-[10px] text-muted uppercase tracking-wide">Starts at</div>
                 <div className="flex items-baseline gap-1">
-                  <span className="font-display font-bold text-xl text-primary">{pkg12 ? formatINR(pkg12.price) : '—'}</span>
-                  <span className="text-xs text-muted">/ 12 hrs</span>
+                  <span className="font-display font-bold text-xl text-primary">
+                    {minPrice !== null ? formatINR(minPrice) : '—'}
+                  </span>
+                  {minPkg && (
+                    <span className="text-xs text-muted">
+                      / {minPkg.label ?? (minPkg.tier === '12hr' ? '12 hrs' : minPkg.tier === '24hr' ? '24 hrs' : minPkg.tier)}
+                    </span>
+                  )}
                 </div>
               </div>
               {pkg24 && (

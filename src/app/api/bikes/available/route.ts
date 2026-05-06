@@ -57,7 +57,8 @@ export async function GET(req: NextRequest) {
       model:bike_models!inner(id, name, display_name, category, cc,
         packages:bike_model_packages(tier, price, km_limit)
       ),
-      vendor:vendors(id, business_name, pickup_area)
+      vendor:vendors(id, business_name, pickup_area),
+      custom_packages(id, label, duration_hours, price, km_limit, is_active)
     `)
     .eq('is_active', true)
     .eq('listing_status', 'approved')

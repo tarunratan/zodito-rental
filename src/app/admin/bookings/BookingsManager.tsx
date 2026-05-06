@@ -186,6 +186,42 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
     }
   }
 
+  const [extendModal, setExtendModal] = useState<{ id: string; number: string; currentEnd: string } | null>(null);
+  const [extendNewEnd, setExtendNewEnd] = useState('');
+  const [extendLoading, setExtendLoading] = useState(false);
+  const [extendError, setExtendError] = useState<string | null>(null);
+
+  async function extendBooking() {
+    if (!extendModal || !extendNewEnd) return;
+    if (new Date(extendNewEnd) <= new Date(extendModal.currentEnd)) {
+      setExtendError('New end time must be after current end time');
+      return;
+    }
+    setExtendLoading(true);
+    setExtendError(null);
+    try {
+      const res = await fetch('/api/admin/bookings/extend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ booking_id: extendModal.id, new_end_ts: new Date(extendNewEnd).toISOString() }),
+      });
+      if (res.ok) {
+        setBookings(prev => prev.map(b =>
+          b.id === extendModal.id ? { ...b, end_ts: new Date(extendNewEnd).toISOString() } : b
+        ));
+        setExtendModal(null);
+        setExtendNewEnd('');
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setExtendError(data.error ?? 'Failed to extend booking');
+      }
+    } catch {
+      setExtendError('Network error — please try again');
+    } finally {
+      setExtendLoading(false);
+    }
+  }
+
   const [showManual, setShowManual] = useState(false);
   const [manualForm, setManualForm] = useState({ ...EMPTY_MANUAL });
   const [manualLoading, setManualLoading] = useState(false);
@@ -463,6 +499,22 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                               Mark Pickup
                             </button>
                           )}
+                          {['confirmed', 'ongoing'].includes(b.status) && (
+                            <button
+                              onClick={() => {
+                                const localEnd = new Date(b.end_ts);
+                                const pad = (n: number) => n.toString().padStart(2, '0');
+                                const localStr = `${localEnd.getFullYear()}-${pad(localEnd.getMonth()+1)}-${pad(localEnd.getDate())}T${pad(localEnd.getHours())}:${pad(localEnd.getMinutes())}`;
+                                setExtendModal({ id: b.id, number: b.booking_number, currentEnd: b.end_ts });
+                                setExtendNewEnd(localStr);
+                                setExtendError(null);
+                              }}
+                              disabled={loading === b.id}
+                              className="text-xs px-2 py-1 bg-purple-50 text-purple-600 rounded hover:bg-purple-100 transition-colors disabled:opacity-50"
+                            >
+                              Extend
+                            </button>
+                          )}
                           {isOverdue(b) && (
                             <button
                               onClick={() => {
@@ -652,6 +704,49 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                 className="px-4 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-60"
               >
                 {deleteLoading ? 'Deleting…' : 'Yes, delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Extend booking modal */}
+      {extendModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-primary rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-4">
+            <h3 className="font-semibold">Extend Booking {extendModal.number}</h3>
+            <div>
+              <p className="text-xs text-muted mb-1">Current end time</p>
+              <p className="text-sm font-medium">{fmt(extendModal.currentEnd)}</p>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-muted uppercase tracking-wide block mb-1">New drop-off time</label>
+              <input
+                type="datetime-local"
+                value={extendNewEnd}
+                min={new Date(extendModal.currentEnd).toISOString().slice(0, 16)}
+                onChange={e => setExtendNewEnd(e.target.value)}
+                className="input-field w-full"
+              />
+              {extendNewEnd && new Date(extendNewEnd) > new Date(extendModal.currentEnd) && (
+                <p className="text-[11px] text-purple-600 mt-1">
+                  +{Math.round((new Date(extendNewEnd).getTime() - new Date(extendModal.currentEnd).getTime()) / 3_600_000)} hrs extension
+                </p>
+              )}
+            </div>
+            {extendError && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{extendError}</p>
+            )}
+            <div className="flex justify-end gap-3">
+              <button onClick={() => { setExtendModal(null); setExtendError(null); }} className="border border-border rounded-lg hover:bg-border/40 text-sm px-4 py-2">
+                Cancel
+              </button>
+              <button
+                onClick={extendBooking}
+                disabled={extendLoading}
+                className="px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-60"
+              >
+                {extendLoading ? 'Extending…' : 'Extend Booking'}
               </button>
             </div>
           </div>

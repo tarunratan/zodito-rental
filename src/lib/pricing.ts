@@ -64,6 +64,22 @@ export const TIER_ORDER: PackageTier[] = [
   '7day', 'weekly_flex', '15day', 'monthly_flex', '30day',
 ];
 
+// Admin-only descriptive labels with duration range + suggested km defaults
+export const ADMIN_TIER_LABELS: Partial<Record<PackageTier, string>> = {
+  '12hr':         'Up to 12 hrs  /  100 km',
+  '24hr':         '12 – 24 hrs  /  140 km',
+  '2day':         '36 – 48 hrs  /  280 km',
+  '3day':         '60 – 72 hrs  /  420 km',
+  '96hr':         '72 – 96 hrs  /  420 km',
+  '120hr':        '96 – 120 hrs  /  560 km',
+  '144hr':        '120 – 144 hrs  /  700 km',
+  '7day':         '7 days  /  700 km',
+  'weekly_flex':  'Weekly flex (7 – 14 days)',
+  '15day':        '15 days',
+  'monthly_flex': 'Monthly flex (15 – 29 days)',
+  '30day':        '30 days',
+};
+
 export const FLEX_TIER_RANGES: Record<'weekly_flex' | 'monthly_flex', { min: number; max: number }> = {
   weekly_flex:  { min: 7,  max: 14 },
   monthly_flex: { min: 15, max: 29 },
