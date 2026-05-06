@@ -44,7 +44,7 @@ async function fetchBike(id: string) {
     // Admin-created custom duration packages for this bike
     supabase
       .from('custom_packages')
-      .select('id, bike_id, label, duration_hours, price, km_limit, is_active')
+      .select('id, bike_id, label, min_duration_hours, duration_hours, price, km_limit, is_active')
       .eq('bike_id', id)
       .eq('is_active', true)
       .order('duration_hours', { ascending: true })

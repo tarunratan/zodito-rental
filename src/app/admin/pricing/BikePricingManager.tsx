@@ -19,6 +19,7 @@ type PkgRow = {
 type CustomPkg = {
   id: string;
   label: string;
+  min_duration_hours: number;
   duration_hours: number;
   price: number;
   km_limit: number;
@@ -43,7 +44,7 @@ type PanelProps = {
   onResetAll: () => void;
   onSave: () => void;
   onDeleteCustom: (id: string) => void;
-  onAddCustom: (pkg: { label: string; duration_hours: number; price: number; km_limit: number }) => void;
+  onAddCustom: (pkg: { label: string; min_duration_hours: number; duration_hours: number; price: number; km_limit: number }) => void;
   addingCustom: boolean;
   onClose: () => void;
 };
@@ -55,34 +56,38 @@ function PricingEditPanel({
 }: PanelProps) {
   const [customLabel, setCustomLabel]   = useState('');
   const [customUnit, setCustomUnit]     = useState<'days' | 'hours'>('days');
-  const [customDays, setCustomDays]     = useState('');
-  const [customHours, setCustomHours]   = useState('');
+  const [customFromVal, setCustomFromVal] = useState('');
+  const [customToVal, setCustomToVal]     = useState('');
   const [customPrice, setCustomPrice]   = useState('');
   const [customKm, setCustomKm]         = useState('');
   const [formErr, setFormErr]           = useState('');
 
   function resetForm() {
     setCustomLabel(''); setCustomUnit('days');
-    setCustomDays(''); setCustomHours('');
+    setCustomFromVal(''); setCustomToVal('');
     setCustomPrice(''); setCustomKm(''); setFormErr('');
   }
 
-  const durationHours = customUnit === 'days'
-    ? Math.round((parseFloat(customDays) || 0) * 24)
-    : (parseInt(customHours, 10) || 0);
+  const fromHours = customUnit === 'days'
+    ? Math.round((parseFloat(customFromVal) || 0) * 24)
+    : (parseInt(customFromVal, 10) || 0);
+  const toHours = customUnit === 'days'
+    ? Math.round((parseFloat(customToVal) || 0) * 24)
+    : (parseInt(customToVal, 10) || 0);
 
   function handleAdd() {
     if (!customLabel.trim()) { setFormErr('Label is required'); return; }
-    if (durationHours < 1) { setFormErr('Enter a valid duration'); return; }
+    if (toHours < 1) { setFormErr('Enter a valid upper bound'); return; }
+    if (toHours <= fromHours) { setFormErr('Upper bound must be greater than lower bound'); return; }
     const price = parseFloat(customPrice);
     if (isNaN(price) || price < 0) { setFormErr('Enter a valid price'); return; }
     const km = parseInt(customKm, 10) || 0;
     setFormErr('');
-    onAddCustom({ label: customLabel.trim(), duration_hours: durationHours, price, km_limit: km });
+    onAddCustom({ label: customLabel.trim(), min_duration_hours: fromHours, duration_hours: toHours, price, km_limit: km });
     resetForm();
   }
 
-  const previewReady = customLabel.trim() && durationHours > 0 && customPrice;
+  const previewReady = customLabel.trim() && toHours > 0 && customPrice;
 
   return (
     <div className="flex flex-col h-full">
@@ -175,6 +180,14 @@ function PricingEditPanel({
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-sm">{cp.label}</div>
                         <div className="text-[11px] text-muted mt-0.5">
+                          {cp.min_duration_hours > 0 && (
+                            <>
+                              {cp.min_duration_hours % 24 === 0
+                                ? `${cp.min_duration_hours / 24}d`
+                                : `${cp.min_duration_hours}h`}
+                              {' – '}
+                            </>
+                          )}
                           {cp.duration_hours % 24 === 0
                             ? `${cp.duration_hours / 24} days`
                             : `${cp.duration_hours} hrs`}
@@ -209,53 +222,66 @@ function PricingEditPanel({
                   />
                 </div>
 
-                {/* Duration toggle: Days / Hours */}
+                {/* Duration range: From → To */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-[10px] text-muted uppercase tracking-wide">
-                      Duration <span className="text-danger">*</span>
+                      Duration range <span className="text-danger">*</span>
                     </label>
                     <div className="flex rounded-lg overflow-hidden border border-border text-[10px] font-bold">
                       <button
                         type="button"
-                        onClick={() => { setCustomUnit('days'); setCustomHours(''); }}
+                        onClick={() => { setCustomUnit('days'); setCustomFromVal(''); setCustomToVal(''); }}
                         className={`px-3 py-1.5 transition-colors ${customUnit === 'days' ? 'bg-accent text-white' : 'bg-bg text-muted hover:bg-border/60'}`}
                       >Days</button>
                       <button
                         type="button"
-                        onClick={() => { setCustomUnit('hours'); setCustomDays(''); }}
+                        onClick={() => { setCustomUnit('hours'); setCustomFromVal(''); setCustomToVal(''); }}
                         className={`px-3 py-1.5 transition-colors ${customUnit === 'hours' ? 'bg-accent text-white' : 'bg-bg text-muted hover:bg-border/60'}`}
                       >Hours</button>
                     </div>
                   </div>
 
-                  {customUnit === 'days' ? (
-                    <div className="relative">
-                      <input
-                        type="number" inputMode="decimal" min={0.5} step={0.5}
-                        placeholder="e.g. 15"
-                        value={customDays}
-                        onChange={e => setCustomDays(e.target.value)}
-                        className="input-field text-sm py-2 px-3 w-full pr-14"
-                      />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted pointer-events-none">days</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-muted block mb-1">
+                        From (lower bound)
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number" inputMode="decimal" min={0} step={customUnit === 'days' ? 0.5 : 1}
+                          placeholder="0"
+                          value={customFromVal}
+                          onChange={e => setCustomFromVal(e.target.value)}
+                          className="input-field text-sm py-2 px-3 w-full pr-12"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted pointer-events-none">
+                          {customUnit === 'days' ? 'days' : 'hrs'}
+                        </span>
+                      </div>
                     </div>
-                  ) : (
-                    <div className="relative">
-                      <input
-                        type="number" inputMode="numeric" min={1} step={1}
-                        placeholder="e.g. 360"
-                        value={customHours}
-                        onChange={e => setCustomHours(e.target.value)}
-                        className="input-field text-sm py-2 px-3 w-full pr-12"
-                      />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted pointer-events-none">hrs</span>
+                    <div>
+                      <label className="text-[10px] text-muted block mb-1">
+                        To (upper bound) <span className="text-danger">*</span>
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number" inputMode="decimal" min={customUnit === 'days' ? 0.5 : 1} step={customUnit === 'days' ? 0.5 : 1}
+                          placeholder={customUnit === 'days' ? 'e.g. 9' : 'e.g. 216'}
+                          value={customToVal}
+                          onChange={e => setCustomToVal(e.target.value)}
+                          className="input-field text-sm py-2 px-3 w-full pr-12"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted pointer-events-none">
+                          {customUnit === 'days' ? 'days' : 'hrs'}
+                        </span>
+                      </div>
                     </div>
-                  )}
-                  {durationHours > 0 && (
+                  </div>
+                  {(fromHours > 0 || toHours > 0) && (
                     <p className="text-[10px] text-accent mt-1">
-                      = {durationHours} hrs
-                      {durationHours % 24 === 0 ? ` (${durationHours / 24} days)` : ''}
+                      {fromHours > 0 ? `${fromHours}h` : '0h'} – {toHours}h
+                      {toHours % 24 === 0 ? ` (${fromHours / 24}d – ${toHours / 24}d)` : ''}
                     </p>
                   )}
                 </div>
@@ -293,7 +319,10 @@ function PricingEditPanel({
                     <span className="font-semibold">{customLabel}</span>
                     <span className="text-muted">·</span>
                     <span>
-                      {durationHours % 24 === 0 ? `${durationHours / 24} days` : `${durationHours} hrs`}
+                      {fromHours > 0
+                        ? `${fromHours % 24 === 0 ? `${fromHours / 24}d` : `${fromHours}h`} – `
+                        : ''}
+                      {toHours % 24 === 0 ? `${toHours / 24} days` : `${toHours} hrs`}
                     </span>
                     <span className="text-muted">·</span>
                     <span className="text-accent font-bold">{formatINR(parseFloat(customPrice) || 0)}</span>
@@ -424,7 +453,7 @@ export function BikePricingManager({ initialBikes }: { initialBikes: Bike[] }) {
     }
   }
 
-  async function addCustomPackage(pkg: { label: string; duration_hours: number; price: number; km_limit: number }) {
+  async function addCustomPackage(pkg: { label: string; min_duration_hours: number; duration_hours: number; price: number; km_limit: number }) {
     if (!editingBike) return;
     setAddingCustom(true); setError(null); setSuccess(null);
     try {
@@ -436,7 +465,11 @@ export function BikePricingManager({ initialBikes }: { initialBikes: Bike[] }) {
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? 'Failed to add package'); return; }
       setCustomPkgs(prev =>
-        [...prev, data.package].sort((a: CustomPkg, b: CustomPkg) => a.duration_hours - b.duration_hours)
+        [...prev, data.package].sort((a: CustomPkg, b: CustomPkg) =>
+          a.min_duration_hours !== b.min_duration_hours
+            ? a.min_duration_hours - b.min_duration_hours
+            : a.duration_hours - b.duration_hours
+        )
       );
       setSuccess('Custom package added');
     } catch {

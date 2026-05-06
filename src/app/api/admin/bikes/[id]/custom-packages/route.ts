@@ -7,10 +7,14 @@ import { isMockMode } from '@/lib/mock';
 export const runtime = 'nodejs';
 
 const createSchema = z.object({
-  label:          z.string().min(1).max(80),
-  duration_hours: z.number().int().min(1).max(720),
-  price:          z.number().nonnegative(),
-  km_limit:       z.number().int().nonnegative(),
+  label:              z.string().min(1).max(80),
+  min_duration_hours: z.number().int().min(0).default(0),
+  duration_hours:     z.number().int().min(1).max(8760),
+  price:              z.number().nonnegative(),
+  km_limit:           z.number().int().nonnegative(),
+}).refine(d => d.duration_hours > d.min_duration_hours, {
+  message: 'Upper bound must be greater than lower bound',
+  path: ['duration_hours'],
 });
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
@@ -20,7 +24,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     const supabase = createSupabaseAdmin();
     const { data, error } = await supabase
       .from('custom_packages')
-      .select('id, label, duration_hours, price, km_limit, is_active, created_at')
+      .select('id, label, min_duration_hours, duration_hours, price, km_limit, is_active, created_at')
       .eq('bike_id', params.id)
       .order('duration_hours', { ascending: true });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

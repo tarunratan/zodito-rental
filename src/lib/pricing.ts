@@ -120,7 +120,8 @@ export interface CustomPackage {
   id: string;
   bike_id: string;
   label: string;
-  duration_hours: number;
+  min_duration_hours: number;  // lower bound (0 = from the start)
+  duration_hours: number;      // upper bound
   price: number;
   km_limit: number;
   is_active: boolean;
@@ -173,9 +174,9 @@ export function coveringTier(
       }))
     : [];
 
-  // Admin-created custom packages — each acts as a fixed-duration bracket
+  // Admin-created custom packages — range bracket [min_duration_hours, duration_hours]
   const customBrackets: Bracket[] = customPackages
-    .filter(p => p.is_active)
+    .filter(p => p.is_active && durationHours >= (p.min_duration_hours ?? 0))
     .map(p => ({
       maxHours: p.duration_hours,
       result: (): TierResult => ({ type: 'custom' as const, pkg: p }),

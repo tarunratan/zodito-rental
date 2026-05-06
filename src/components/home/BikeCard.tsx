@@ -35,8 +35,10 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
     const searchHrs = Math.round((new Date(searchTo).getTime() - new Date(searchFrom).getTime()) / 3_600_000);
     if (searchHrs <= 0) return null;
 
-    // Check custom packages first — exact duration_hours match
-    const customMatch = customPackages.find((p: any) => p.duration_hours === searchHrs);
+    // Check custom packages first — range match (smallest bracket covering the duration)
+    const customMatch = customPackages
+      .filter((p: any) => searchHrs >= (p.min_duration_hours ?? 0) && searchHrs <= p.duration_hours)
+      .sort((a: any, b: any) => a.duration_hours - b.duration_hours)[0] ?? null;
     if (customMatch) {
       return { price: Number(customMatch.price), label: customMatch.label, km: customMatch.km_limit };
     }
@@ -58,14 +60,6 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
           return { price: Number(pkg.price), label, km: pkg.km_limit };
         }
       }
-    }
-
-    // No exact match — check if a custom package is close (within 1hr)
-    const nearCustom = customPackages
-      .map((p: any) => ({ ...p, diff: Math.abs(p.duration_hours - searchHrs) }))
-      .sort((a: any, b: any) => a.diff - b.diff)[0];
-    if (nearCustom && nearCustom.diff <= 1) {
-      return { price: Number(nearCustom.price), label: nearCustom.label, km: nearCustom.km_limit };
     }
 
     // Fallback to 24hr daily rate × days

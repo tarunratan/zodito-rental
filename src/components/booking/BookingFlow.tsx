@@ -118,8 +118,9 @@ export function BookingFlow({
   const endTs = useMemo(() => {
     if (!pickupTs || !tierResult) return null;
     if (tierResult.type === 'standard') return tierEndTs(pickupTs, tierResult.tier, tierResult.actualDays);
-    return new Date(pickupTs.getTime() + tierResult.pkg.duration_hours * 3_600_000);
-  }, [pickupTs, tierResult]);
+    // Custom range package: use actual booked duration, not the package upper bound
+    return new Date(pickupTs.getTime() + durationHours * 3_600_000);
+  }, [pickupTs, tierResult, durationHours]);
 
   // Real-time per-bike availability check — must be after endTs declaration to avoid TDZ
   useEffect(() => {
