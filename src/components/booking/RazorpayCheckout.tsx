@@ -34,6 +34,7 @@ export function RazorpayCheckout({
   setSubmitting,
   setError,
   totalAmount,
+  securityDeposit,
 }: {
   bikeId: string;
   tier: PackageTier;
@@ -48,6 +49,7 @@ export function RazorpayCheckout({
   setSubmitting: (b: boolean) => void;
   setError: (s: string | null) => void;
   totalAmount: number;
+  securityDeposit: number;
 }) {
   const router = useRouter();
   const [scriptReady, setScriptReady] = useState(false);
@@ -269,9 +271,19 @@ export function RazorpayCheckout({
             <span className="text-sm text-green-700">Payment</span>
             <span className="font-semibold text-green-900">Cash / UPI at pickup</span>
           </div>
+          <div className="flex items-center justify-between py-2 border-b border-green-200">
+            <span className="text-sm text-green-700">Rental amount</span>
+            <span className="font-semibold text-green-900">{totalLabel}</span>
+          </div>
+          {securityDeposit > 0 && (
+            <div className="flex items-center justify-between py-2 border-b border-green-200">
+              <span className="text-sm text-green-700">Security deposit <span className="text-[10px] text-green-600">(refunded after drop-off)</span></span>
+              <span className="font-semibold text-green-900">₹{securityDeposit.toLocaleString('en-IN')}</span>
+            </div>
+          )}
           <div className="flex items-center justify-between py-2">
-            <span className="text-sm text-green-700">Amount due at pickup</span>
-            <span className="font-bold text-green-900">{totalLabel}</span>
+            <span className="text-sm font-bold text-green-700">Total at pickup</span>
+            <span className="font-bold text-green-900">₹{(totalAmount + securityDeposit).toLocaleString('en-IN')}</span>
           </div>
           <Link
             href={`/my-bookings?success=${confirmedBooking.id}`}

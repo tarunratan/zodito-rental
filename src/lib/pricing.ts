@@ -264,7 +264,8 @@ export function calculatePrice(params: {
   const subtotal            = basePrice + extraHelmetCharge + mobileHolderCharge;
   const gstAmount           = round2(subtotal * GST_RATE);
   const couponDiscount      = Math.min(round2(rawDiscount), round2(subtotal + gstAmount));
-  const totalAmount         = round2(subtotal + gstAmount - couponDiscount + securityDeposit);
+  // Security deposit is always collected at pickup (cash/UPI) — never charged online.
+  const totalAmount         = round2(subtotal + gstAmount - couponDiscount);
 
   return {
     basePrice, kmLimit, extraHelmetCount, extraHelmetCharge,

@@ -360,6 +360,7 @@ export function BookingFlow({
               setSubmitting={setSubmitting}
               setError={setError}
               totalAmount={breakdown?.totalAmount ?? 0}
+              securityDeposit={breakdown?.securityDeposit ?? 0}
             />
           ) : (
             <div className="mt-4 p-4 border-2 border-accent/30 rounded-xl text-center space-y-3">

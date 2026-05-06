@@ -72,7 +72,6 @@ export function OrderSummary({
               success
             />
           )}
-          <Row label="Security deposit" value={formatINR(breakdown.securityDeposit)} muted note="cash/UPI at pickup" />
         </div>
       )}
 
@@ -94,6 +93,16 @@ export function OrderSummary({
           <span className="font-display font-bold text-xl text-accent">
             {formatINR(breakdown.totalAmount)}
           </span>
+        </div>
+      )}
+
+      {breakdown && breakdown.securityDeposit > 0 && (
+        <div className="mt-2 pt-2 border-t border-dashed border-border flex items-baseline justify-between text-sm">
+          <span className="text-muted">
+            Security deposit
+            <span className="text-[10px] ml-1">(cash/UPI at pickup)</span>
+          </span>
+          <span className="text-muted font-semibold">{formatINR(breakdown.securityDeposit)}</span>
         </div>
       )}
 
