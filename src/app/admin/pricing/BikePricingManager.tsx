@@ -90,7 +90,7 @@ function PricingEditPanel({
   const previewReady = customLabel.trim() && toHours > 0 && customPrice;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 pt-4 pb-3 border-b border-border shrink-0">
         <div className="w-10 h-10 rounded-lg overflow-hidden bg-primary/5 flex items-center justify-center shrink-0">
@@ -106,7 +106,7 @@ function PricingEditPanel({
       </div>
 
       {/* Scrollable body */}
-      <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3 space-y-2">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-2">
         {loadingPkg ? (
           <div className="space-y-2 pt-1">
             {TIER_ORDER.map(t => <div key={t} className="h-[72px] rounded-lg bg-border/30 animate-pulse" />)}
@@ -576,7 +576,7 @@ export function BikePricingManager({ initialBikes }: { initialBikes: Bike[] }) {
 
         {/* ── Desktop sidebar ── */}
         {editingBike ? (
-          <div className="hidden lg:flex flex-col card overflow-hidden sticky top-20 max-h-[88vh]">
+          <div className="hidden lg:flex flex-col card overflow-hidden sticky top-20 h-[88vh]">
             <PricingEditPanel key={editingBike.id} {...panelProps} />
           </div>
         ) : (
