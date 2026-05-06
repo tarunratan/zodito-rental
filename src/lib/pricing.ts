@@ -58,26 +58,23 @@ export const TIER_LABELS: Record<PackageTier, string> = {
   'monthly_flex': 'Monthly (15-29 days)',
 };
 
-// Canonical order for admin pricing panel — clean, no redundant hourly duplicates
+// Canonical order for admin pricing panel — exactly the 10 tiers shown in the UI
 export const TIER_ORDER: PackageTier[] = [
-  '12hr', '24hr', '2day', '3day', '96hr', '120hr', '144hr',
-  '7day', 'weekly_flex', '15day', 'monthly_flex', '30day',
+  '12hr', '24hr', '36hr', '2day', '60hr', '3day', '96hr', '120hr', '144hr', '7day',
 ];
 
 // Admin-only descriptive labels with duration range + suggested km defaults
 export const ADMIN_TIER_LABELS: Partial<Record<PackageTier, string>> = {
-  '12hr':         'Up to 12 hrs  /  100 km',
-  '24hr':         '12 – 24 hrs  /  140 km',
-  '2day':         '36 – 48 hrs  /  280 km',
-  '3day':         '60 – 72 hrs  /  420 km',
-  '96hr':         '72 – 96 hrs  /  420 km',
-  '120hr':        '96 – 120 hrs  /  560 km',
-  '144hr':        '120 – 144 hrs  /  700 km',
-  '7day':         '7 days  /  700 km',
-  'weekly_flex':  'Weekly flex (7 – 14 days)',
-  '15day':        '15 days',
-  'monthly_flex': 'Monthly flex (15 – 29 days)',
-  '30day':        '30 days',
+  '12hr':  '1hr – 12 hrs  /  100 km',
+  '24hr':  '12hrs – 24 hrs  /  140 km',
+  '36hr':  '24 hrs – 36hrs  /  240 km',
+  '2day':  '36hrs – 48hrs  /  280 km',
+  '60hr':  '48hrs – 60hrs  /  380 km',
+  '3day':  '60hrs – 72hrs  /  420 km',
+  '96hr':  '72hrs – 96hrs  /  420 km',
+  '120hr': '96hrs – 120hrs  /  560 km',
+  '144hr': '120hrs – 144hrs  /  700 km',
+  '7day':  '7 days  /  700 km',
 };
 
 export const FLEX_TIER_RANGES: Record<'weekly_flex' | 'monthly_flex', { min: number; max: number }> = {
