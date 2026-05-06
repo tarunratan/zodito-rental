@@ -83,20 +83,6 @@ export function BookingFlow({
     }
   }, [pickupTs]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Real-time per-bike availability check — covers online, cash, and manual bookings
-  useEffect(() => {
-    if (!pickupTs || !endTs) { setBikeAvailable(null); return; }
-    let cancelled = false;
-    setAvailabilityChecking(true);
-    fetch(
-      `/api/bikes/${bike.id}/available?from=${encodeURIComponent(pickupTs.toISOString())}&to=${encodeURIComponent(endTs.toISOString())}`,
-    )
-      .then(r => r.json())
-      .then(d => { if (!cancelled) { setBikeAvailable(d.available !== false); setAvailabilityChecking(false); } })
-      .catch(() => { if (!cancelled) { setBikeAvailable(null); setAvailabilityChecking(false); } });
-    return () => { cancelled = true; };
-  }, [pickupTs?.getTime(), endTs?.getTime(), bike.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const [extraHelmets, setExtraHelmets] = useState(0);
   const [mobileHolder, setMobileHolder] = useState(false);
   const [appliedCoupon, setAppliedCoupon] = useState<AppliedCoupon | null>(null);
@@ -134,6 +120,20 @@ export function BookingFlow({
     if (tierResult.type === 'standard') return tierEndTs(pickupTs, tierResult.tier, tierResult.actualDays);
     return new Date(pickupTs.getTime() + tierResult.pkg.duration_hours * 3_600_000);
   }, [pickupTs, tierResult]);
+
+  // Real-time per-bike availability check — must be after endTs declaration to avoid TDZ
+  useEffect(() => {
+    if (!pickupTs || !endTs) { setBikeAvailable(null); return; }
+    let cancelled = false;
+    setAvailabilityChecking(true);
+    fetch(
+      `/api/bikes/${bike.id}/available?from=${encodeURIComponent(pickupTs.toISOString())}&to=${encodeURIComponent(endTs.toISOString())}`,
+    )
+      .then(r => r.json())
+      .then(d => { if (!cancelled) { setBikeAvailable(d.available !== false); setAvailabilityChecking(false); } })
+      .catch(() => { if (!cancelled) { setBikeAvailable(null); setAvailabilityChecking(false); } });
+    return () => { cancelled = true; };
+  }, [pickupTs?.getTime(), endTs?.getTime(), bike.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const breakdown = useMemo(() => {
     if (!tierResult) return null;
