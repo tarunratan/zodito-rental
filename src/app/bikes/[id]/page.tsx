@@ -146,9 +146,6 @@ export default async function BikeDetailPage({ params }: { params: { id: string 
               </span>
               <span className="text-sm text-muted">/ 24 hrs</span>
             </div>
-            <div className="text-xs text-muted mt-1">
-              + 18% GST · ₹500 refundable security deposit
-            </div>
           </div>
 
           <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
