@@ -83,11 +83,29 @@ export function BookingFlow({
     }
   }, [pickupTs]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Real-time per-bike availability check — covers online, cash, and manual bookings
+  useEffect(() => {
+    if (!pickupTs || !endTs) { setBikeAvailable(null); return; }
+    let cancelled = false;
+    setAvailabilityChecking(true);
+    fetch(
+      `/api/bikes/${bike.id}/available?from=${encodeURIComponent(pickupTs.toISOString())}&to=${encodeURIComponent(endTs.toISOString())}`,
+    )
+      .then(r => r.json())
+      .then(d => { if (!cancelled) { setBikeAvailable(d.available !== false); setAvailabilityChecking(false); } })
+      .catch(() => { if (!cancelled) { setBikeAvailable(null); setAvailabilityChecking(false); } });
+    return () => { cancelled = true; };
+  }, [pickupTs?.getTime(), endTs?.getTime(), bike.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [extraHelmets, setExtraHelmets] = useState(0);
   const [mobileHolder, setMobileHolder] = useState(false);
   const [appliedCoupon, setAppliedCoupon] = useState<AppliedCoupon | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Per-bike availability — re-checked whenever pickup or computed end time changes
+  const [bikeAvailable, setBikeAvailable] = useState<boolean | null>(null);
+  const [availabilityChecking, setAvailabilityChecking] = useState(false);
 
   const availableTiers = useMemo<PackageTier[]>(
     () => bike.model.packages.map((p: any) => p.tier),
@@ -147,7 +165,7 @@ export function BookingFlow({
   const noPackage        = !!tierResult && !breakdown;
   const durationTooLong  = durationHours > 720;
   const durationTooShort = durationHours > 0 && durationHours < 12;
-  const canProceed       = !!pickupTs && pickupValid && !!returnTs && !!tierResult && !!breakdown;
+  const canProceed       = !!pickupTs && pickupValid && !!returnTs && !!tierResult && !!breakdown && bikeAvailable !== false && !availabilityChecking;
 
   const showKycNudge = kycStatus && kycStatus !== 'approved';
 
@@ -185,6 +203,17 @@ export function BookingFlow({
 
   const durationBanner = (() => {
     if (!pickupTs || !returnTs) return null;
+    if (bikeAvailable === false) return (
+      <div className="p-3.5 bg-danger/8 border border-danger/30 rounded-lg text-sm text-danger font-medium">
+        🔒 This bike is already booked for these dates. Please select a different time slot.
+      </div>
+    );
+    if (availabilityChecking) return (
+      <div className="p-3.5 bg-border/20 rounded-lg text-sm text-muted flex items-center gap-2">
+        <span className="w-4 h-4 border-2 border-muted/30 border-t-muted rounded-full animate-spin shrink-0" />
+        Checking availability…
+      </div>
+    );
     if (durationTooShort) return (
       <div className="p-3 bg-danger/8 border border-danger/30 rounded-lg text-sm text-danger">
         Minimum booking is 12 hours. Please select a later return time.
@@ -284,6 +313,18 @@ export function BookingFlow({
               <div className="mt-3 text-xs text-danger bg-danger/8 rounded-lg p-2.5">
                 ⚠️ Pickup must be within store hours (6 AM – 10 PM) and in the future.{' '}
                 <button onClick={() => setExpandedForm(true)} className="underline font-semibold">Change time →</button>
+              </div>
+            )}
+            {bikeAvailable === false && (
+              <div className="mt-3 p-3 bg-danger/8 border border-danger/30 rounded-lg text-sm text-danger font-medium">
+                🔒 Already booked for these dates.{' '}
+                <button onClick={() => setExpandedForm(true)} className="underline font-semibold">Change time →</button>
+              </div>
+            )}
+            {availabilityChecking && (
+              <div className="mt-3 flex items-center gap-2 text-xs text-muted">
+                <span className="w-3.5 h-3.5 border-2 border-muted/30 border-t-muted rounded-full animate-spin shrink-0" />
+                Checking availability…
               </div>
             )}
           </div>

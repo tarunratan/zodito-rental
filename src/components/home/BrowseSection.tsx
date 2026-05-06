@@ -143,7 +143,7 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
   const [toVal, setToVal] = useState(() => defaultTo(defaultFrom()));
   const [availableBikes, setAvailableBikes] = useState<BikeRow[] | null>(null);
   const [unavailableCount, setUnavailableCount] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // true until first availability check completes
   const [searched, setSearched] = useState(false);
   const [dateError, setDateError] = useState<string | null>(null);
 
@@ -156,7 +156,8 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
   const [showCustom, setShowCustom] = useState(false);
   const [customHrsInput, setCustomHrsInput] = useState('');
 
-  const bikes = availableBikes ?? initialBikes;
+  // Never show the unfiltered initialBikes — wait for the availability check to complete
+  const bikes = availableBikes ?? [];
 
   const fetchAvailable = useCallback(async (from: string, to: string) => {
     setDateError(null);
@@ -451,7 +452,18 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
         ))}
       </div>
 
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="card p-4 animate-pulse">
+              <div className="h-40 bg-border/40 rounded-lg mb-3" />
+              <div className="h-4 bg-border/40 rounded w-3/4 mb-2" />
+              <div className="h-3 bg-border/30 rounded w-1/2 mb-4" />
+              <div className="h-8 bg-border/30 rounded-lg" />
+            </div>
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="text-center py-20 text-muted">
           <div className="text-5xl mb-3">{searched ? '🔒' : '🔍'}</div>
           <p className="font-semibold mb-1">{searched ? 'No bikes available for these dates' : 'No bikes match your filters'}</p>
