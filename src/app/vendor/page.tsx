@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentAppUser } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode, mockBookingsStore, MOCK_BIKES } from '@/lib/mock';
+import { VendorBikeCard } from '@/components/vendor/VendorBikeCard';
 import { formatINR, formatDateTime } from '@/lib/utils';
 import { TIER_LABELS } from '@/lib/pricing';
 
@@ -231,40 +232,6 @@ function Kpi({ label, value, sub, accent }: { label: string; value: string; sub:
   );
 }
 
-function VendorBikeCard({ bike }: { bike: any }) {
-  const status = bike.listing_status;
-  const styles: Record<string, { bg: string; text: string; label: string }> = {
-    draft: { bg: 'bg-border', text: 'text-muted', label: 'Draft' },
-    pending_approval: { bg: 'bg-warning/15', text: 'text-warning', label: 'Pending Review' },
-    approved: { bg: 'bg-success/15', text: 'text-success', label: 'Live' },
-    rejected: { bg: 'bg-danger/15', text: 'text-danger', label: 'Rejected' },
-    inactive: { bg: 'bg-muted/15', text: 'text-muted', label: 'Inactive' },
-  };
-  const s = styles[status] ?? styles.draft;
-
-  return (
-    <div className="card p-4">
-      <div className="flex items-start gap-3">
-        <div className="text-4xl">{bike.emoji}</div>
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold text-sm line-clamp-1">{bike.model.display_name}</div>
-          <div className="text-xs text-muted mt-0.5">{bike.color} · {bike.year}</div>
-          <div className="flex items-center gap-2 mt-2 flex-wrap">
-            <span className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${s.bg} ${s.text}`}>
-              {s.label}
-            </span>
-            {!bike.is_active && status === 'approved' && (
-              <span className="text-[10px] text-muted">· paused</span>
-            )}
-          </div>
-          {bike.registration_number && (
-            <div className="text-[10px] text-muted mt-2">{bike.registration_number}</div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function StatusPill({ status }: { status: string }) {
   const styles: Record<string, string> = {

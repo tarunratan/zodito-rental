@@ -79,6 +79,8 @@ export function BikesTab({
 
   // local models list so newly created models appear without a page reload
   const [models, setModels]       = useState<Model[]>(initialModels);
+  // local bikes list so is_active toggle is reflected instantly without reload
+  const [bikes, setBikes]         = useState<Bike[]>(allBikes);
 
   const [subTab, setSubTab]       = useState<'all' | 'pending'>('all');
   const [showForm, setShowForm]   = useState(false);
@@ -198,6 +200,21 @@ export function BikesTab({
     }
   }
 
+  async function toggleActive(bike: Bike) {
+    const next = !bike.is_active;
+    // Optimistic update
+    setBikes(prev => prev.map(b => b.id === bike.id ? { ...b, is_active: next } : b));
+    const res = await fetch(`/api/admin/bikes/${bike.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active: next }),
+    });
+    if (!res.ok) {
+      // Revert on failure
+      setBikes(prev => prev.map(b => b.id === bike.id ? { ...b, is_active: bike.is_active } : b));
+    }
+  }
+
   async function deleteBike(id: string) {
     await fetch(`/api/admin/bikes/${id}`, { method: 'DELETE' });
     setDeleteConfirm(null);
@@ -250,7 +267,7 @@ export function BikesTab({
     return !!bike.frozen_until && new Date(bike.frozen_until) > new Date();
   }
 
-  const displayBikes = subTab === 'pending' ? pendingBikes : allBikes;
+  const displayBikes = subTab === 'pending' ? bikes.filter(b => b.listing_status === 'pending_approval') : bikes;
 
   // Group models by category for the select
   const grouped = models.reduce<Record<string, Model[]>>((acc, m) => {
@@ -285,7 +302,7 @@ export function BikesTab({
                 subTab === t ? 'bg-accent text-white' : 'text-muted hover:text-primary'
               }`}
             >
-              {t === 'all' ? `All (${allBikes.length})` : `Pending (${pendingBikes.length})`}
+              {t === 'all' ? `All (${bikes.length})` : `Pending (${bikes.filter(b => b.listing_status === 'pending_approval').length})`}
             </button>
           ))}
         </div>
@@ -348,6 +365,21 @@ export function BikesTab({
                   ) : bike.listing_status === 'approved' ? (
                     <button onClick={() => { setFreezeTarget(bike); setFreezeFrom(''); setFreezeUntil(''); setFreezeReason(''); }} className="text-xs px-3 py-1.5 bg-warning/10 text-warning rounded-lg hover:bg-warning/20 font-medium">Freeze</button>
                   ) : null}
+                  {/* Listing on/off toggle */}
+                  <button
+                    onClick={() => toggleActive(bike)}
+                    title={bike.is_active ? 'Listed — click to hide from customers' : 'Hidden — click to list for customers'}
+                    className={`relative inline-flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      bike.is_active
+                        ? 'bg-green-50 text-green-700 hover:bg-green-100'
+                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}
+                  >
+                    <span className={`w-7 h-4 rounded-full relative transition-colors ${bike.is_active ? 'bg-green-500' : 'bg-gray-300'}`}>
+                      <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-all ${bike.is_active ? 'left-3.5' : 'left-0.5'}`} />
+                    </span>
+                    {bike.is_active ? 'Listed' : 'Hidden'}
+                  </button>
                   <button onClick={() => openEdit(bike)} className="text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-border/50 font-medium">Edit</button>
                   <button onClick={() => setDeleteConfirm(bike.id)} className="text-xs px-3 py-1.5 bg-danger/10 text-danger rounded-lg hover:bg-danger/20 font-medium">Delete</button>
                 </div>
