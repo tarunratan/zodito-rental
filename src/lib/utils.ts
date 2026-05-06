@@ -18,6 +18,7 @@ export function formatDateShort(d: Date | string): string {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
+    timeZone: 'Asia/Kolkata',
   }).format(date);
 }
 
@@ -27,6 +28,7 @@ export function formatTime12h(d: Date | string): string {
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
+    timeZone: 'Asia/Kolkata',
   }).format(date);
 }
 
