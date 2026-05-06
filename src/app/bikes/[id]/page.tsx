@@ -76,7 +76,6 @@ export default async function BikeDetailPage({ params }: { params: { id: string 
   if (!bike) notFound();
   const kycStatus = user?.kyc_status ?? null;
 
-  const pkg24 = bike.model.packages.find((p: any) => p.tier === '24hr');
   const isVendor = bike.owner_type === 'vendor';
 
   return (
@@ -137,15 +136,6 @@ export default async function BikeDetailPage({ params }: { params: { id: string 
             {bike.total_rides > 0 && (
               <span>• {bike.total_rides} rides</span>
             )}
-          </div>
-
-          <div className="mt-6 p-4 bg-accent/5 border border-accent/20 rounded-card">
-            <div className="flex items-baseline gap-2">
-              <span className="font-display font-bold text-3xl text-primary">
-                {pkg24 ? formatINR(pkg24.price) : '—'}
-              </span>
-              <span className="text-sm text-muted">/ 24 hrs</span>
-            </div>
           </div>
 
           <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
