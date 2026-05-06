@@ -22,8 +22,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, mock: true });
   }
 
-  // Verify signature. If this fails, the webhook will never confirm it either,
-  // so we mark the booking as failed right here.
   const valid = verifyPaymentSignature({
     razorpay_order_id: body.razorpay_order_id,
     razorpay_payment_id: body.razorpay_payment_id,
@@ -40,17 +38,32 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid payment signature' }, { status: 400 });
   }
 
-  // Mark booking confirmed. The webhook is the authoritative source and will
-  // overwrite this if anything changes, but for UX we flip immediately so the
-  // user sees "Confirmed" right away.
+  // Fetch booking to determine partial vs full payment (advance_paid set at creation for partial)
+  const { data: booking } = await supabase
+    .from('bookings')
+    .select('total_amount, advance_paid, pending_amount')
+    .eq('id', body.booking_id)
+    .single();
+
+  // Partial: advance_paid > 0 and pending_amount > 0 (set at creation)
+  const isPartial = booking && booking.advance_paid > 0 && booking.pending_amount > 0;
+
+  const update: Record<string, unknown> = {
+    status: 'confirmed',
+    payment_status: isPartial ? 'partially_paid' : 'paid',
+    razorpay_payment_id: body.razorpay_payment_id,
+    razorpay_signature: body.razorpay_signature,
+  };
+
+  // For full payment: mark the entire amount as received
+  if (!isPartial && booking) {
+    update.advance_paid    = booking.total_amount;
+    update.pending_amount  = 0;
+  }
+
   const { error } = await supabase
     .from('bookings')
-    .update({
-      status: 'confirmed',
-      payment_status: 'paid',
-      razorpay_payment_id: body.razorpay_payment_id,
-      razorpay_signature: body.razorpay_signature,
-    })
+    .update(update)
     .eq('id', body.booking_id);
 
   if (error) {
@@ -58,5 +71,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Update failed' }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({
+    ok: true,
+    is_partial: isPartial ?? false,
+    pending_amount: isPartial ? booking?.pending_amount : 0,
+  });
 }

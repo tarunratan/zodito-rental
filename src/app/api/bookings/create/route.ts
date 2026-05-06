@@ -31,6 +31,8 @@ const bodySchema = z.object({
   extra_helmet_count: z.number().int().min(0).max(3).default(0),
   mobile_holder: z.boolean().default(false),
   payment_method: z.enum(['online', 'at_pickup']).default('online'),
+  // 'partial' = pay 20% now via Razorpay, rest at pickup
+  payment_type: z.enum(['full', 'partial']).default('full'),
   coupon_code: z.string().optional(),
   booking_lat: z.number(),
   booking_lng: z.number(),
@@ -204,6 +206,13 @@ export async function POST(req: NextRequest) {
     req.headers.get('x-real-ip') ??
     null;
 
+  // For partial payment: charge exactly 20% of total upfront; rest at pickup.
+  const isPartial = body.payment_method === 'online' && body.payment_type === 'partial';
+  const partialAdvance = isPartial ? Math.ceil(breakdown.totalAmount * 0.20) : 0;
+  const pendingAmount  = isPartial
+    ? breakdown.totalAmount - partialAdvance
+    : body.payment_method === 'at_pickup' ? breakdown.totalAmount : 0;
+
   // --- 10. Insert booking — use admin client (user identity verified above, user_id explicitly set)
   //          This avoids creating a second Supabase server client just for RLS
   const { data: booking, error: insertErr } = await admin
@@ -226,6 +235,9 @@ export async function POST(req: NextRequest) {
       coupon_code: couponRow?.code ?? null,
       coupon_discount: breakdown.couponDiscount,
       total_amount: breakdown.totalAmount,
+      advance_paid: partialAdvance,
+      pending_amount: pendingAmount,
+      payment_method_detail: isPartial ? 'partial_online' : body.payment_method === 'at_pickup' ? 'cash' : 'online',
       platform_commission,
       vendor_payout,
       status: body.payment_method === 'at_pickup' ? 'confirmed' : 'pending_payment',
@@ -270,9 +282,11 @@ export async function POST(req: NextRequest) {
   }
 
   // --- 12. Online — create Razorpay order
+  // For partial payment: charge only the 20% advance; for full: charge total.
+  const razorpayAmount = isPartial ? partialAdvance : breakdown.totalAmount;
   try {
     const order = await createRazorpayOrder({
-      amountRupees: breakdown.totalAmount,
+      amountRupees: razorpayAmount,
       bookingId: booking.id,
       bookingNumber: booking.booking_number,
       userId: user.id,
@@ -285,6 +299,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       booking_id: booking.id,
       booking_number: booking.booking_number,
+      is_partial: isPartial,
+      pending_amount: pendingAmount,
       razorpay: {
         order_id: order.id,
         amount: order.amount,

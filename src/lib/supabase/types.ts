@@ -22,7 +22,7 @@ export type BookingStatus =
   | 'completed'
   | 'cancelled'
   | 'payment_failed';
-export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded' | 'partially_refunded';
+export type PaymentStatus = 'pending' | 'paid' | 'partially_paid' | 'failed' | 'refunded' | 'partially_refunded';
 
 export interface User {
   id: string;

@@ -12,6 +12,7 @@ type Booking = {
   gst_amount: number;
   security_deposit: number;
   package_tier: string;
+  km_limit: number;
   start_ts: string;
   end_ts: string;
   picked_up_at: string | null;
@@ -27,11 +28,19 @@ type Booking = {
   source?: string;
   customer_name?: string | null;
   customer_phone?: string | null;
+  alternate_phone?: string | null;
+  advance_paid?: number;
+  pending_amount?: number;
+  odometer_reading?: number | null;
+  helmets_provided?: number;
+  original_dl_taken?: boolean;
+  payment_method_detail?: string | null;
+  payment_proof_url?: string | null;
   booking_lat?: number | null;
   booking_lng?: number | null;
   booking_ip?: string | null;
   user: { id: string; email: string | null; first_name: string | null; last_name: string | null; phone: string | null } | null;
-  bike: { id: string; registration_number: string | null; color: string | null; emoji: string; model: { display_name: string } | null } | null;
+  bike: { id: string; registration_number: string | null; color: string | null; emoji: string; image_url?: string | null; model: { display_name: string } | null } | null;
 };
 
 function customerInfo(b: Booking) {
@@ -55,6 +64,7 @@ const STATUS_COLORS: Record<string, string> = {
 const PAYMENT_COLORS: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-700',
   paid: 'bg-green-100 text-green-700',
+  partially_paid: 'bg-orange-100 text-orange-700',
   failed: 'bg-red-100 text-red-700',
   refunded: 'bg-blue-100 text-blue-700',
 };
@@ -126,7 +136,18 @@ function BookingLocation({ booking }: { booking: Booking }) {
 
 type BikeOption = { id: string; emoji: string; registration_number: string | null; model: { display_name: string } | null };
 
-const EMPTY_MANUAL = { bike_id: '', customer_name: '', customer_phone: '', customer_email: '', total_amount: '', start_ts: '', end_ts: '', notes: '' };
+const EMPTY_MANUAL = {
+  bike_id: '', customer_name: '', customer_phone: '', customer_email: '',
+  alternate_phone: '',
+  start_ts: '', end_ts: '',
+  total_amount: '', advance_paid: '', security_deposit: '', km_limit: '',
+  odometer_reading: '',
+  payment_method_detail: '' as '' | 'cash' | 'upi' | 'online' | 'partial_online',
+  payment_proof_url: '',
+  helmets_provided: '0',
+  original_dl_taken: false,
+  notes: '',
+};
 
 export function BookingsManager({ initialBookings, allBikes = [] }: { initialBookings: Booking[]; allBikes?: BikeOption[] }) {
   const [bookings, setBookings] = useState<Booking[]>(initialBookings);
@@ -258,6 +279,12 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
       setManualError('Bike, customer name, phone, and dates are all required');
       return;
     }
+    const totalAmt   = manualForm.total_amount   ? parseFloat(manualForm.total_amount)   : 0;
+    const advanceAmt = manualForm.advance_paid    ? parseFloat(manualForm.advance_paid)   : 0;
+    if (advanceAmt > totalAmt) {
+      setManualError('Advance paid cannot exceed total amount');
+      return;
+    }
     setManualLoading(true);
     const res = await fetch('/api/admin/bookings/manual', {
       method: 'POST',
@@ -267,9 +294,18 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
         customer_name: manualForm.customer_name.trim(),
         customer_phone: manualForm.customer_phone.trim(),
         customer_email: manualForm.customer_email.trim() || undefined,
+        alternate_phone: manualForm.alternate_phone.trim() || undefined,
         start_ts: new Date(manualForm.start_ts).toISOString(),
         end_ts: new Date(manualForm.end_ts).toISOString(),
-        total_amount: manualForm.total_amount ? parseFloat(manualForm.total_amount) : 0,
+        total_amount: totalAmt,
+        advance_paid: advanceAmt,
+        security_deposit: manualForm.security_deposit ? parseFloat(manualForm.security_deposit) : 0,
+        km_limit: manualForm.km_limit ? parseInt(manualForm.km_limit) : 0,
+        odometer_reading: manualForm.odometer_reading ? parseInt(manualForm.odometer_reading) : undefined,
+        helmets_provided: parseInt(manualForm.helmets_provided) || 0,
+        original_dl_taken: manualForm.original_dl_taken,
+        payment_method_detail: manualForm.payment_method_detail || undefined,
+        payment_proof_url: manualForm.payment_proof_url.trim() || undefined,
         notes: manualForm.notes || undefined,
       }),
     });
@@ -379,8 +415,13 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                         })()}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-lg">{b.bike?.emoji ?? '🏍️'}</span>
+                        <div className="flex items-center gap-2">
+                          <div className="w-9 h-9 rounded-md bg-border/40 flex items-center justify-center shrink-0 overflow-hidden">
+                            {b.bike?.image_url
+                              ? <img src={b.bike.image_url} alt="" className="w-full h-full object-cover" />
+                              : <span className="text-lg">{b.bike?.emoji ?? '🏍️'}</span>
+                            }
+                          </div>
                           <div>
                             <div className="font-medium text-xs">{b.bike?.model?.display_name ?? '—'}</div>
                             <div className="text-xs text-muted font-mono">{b.bike?.registration_number ?? '—'}</div>
@@ -395,8 +436,13 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                       <td className="px-4 py-3">
                         <div className="font-semibold">{rupee(b.total_amount)}</div>
                         <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-full ${PAYMENT_COLORS[b.payment_status] ?? ''}`}>
-                          {b.payment_status}
+                          {b.payment_status.replace(/_/g, ' ')}
                         </span>
+                        {(b.pending_amount ?? 0) > 0 && (
+                          <div className="text-[10px] text-orange-600 font-semibold mt-0.5">
+                            ₹{Number(b.pending_amount).toLocaleString('en-IN')} pending
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         {isOverdue(b) ? (
@@ -475,6 +521,15 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                               {b.excess_km_charge > 0 && <p>Excess KM: {rupee(b.excess_km_charge)}</p>}
                               {b.damage_charge > 0 && <p>Damage: {rupee(b.damage_charge)}</p>}
                               <p className="font-semibold mt-1">Total: {rupee(b.total_amount)}</p>
+                              {(b.advance_paid ?? 0) > 0 && (
+                                <p className="text-green-700 text-xs">Paid: {rupee(b.advance_paid ?? 0)}</p>
+                              )}
+                              {(b.pending_amount ?? 0) > 0 && (
+                                <p className="text-orange-600 font-semibold text-xs">Pending: {rupee(b.pending_amount ?? 0)}</p>
+                              )}
+                              {b.payment_method_detail && (
+                                <p className="text-xs text-muted capitalize mt-0.5">via {b.payment_method_detail.replace(/_/g, ' ')}</p>
+                              )}
                             </div>
                             <div>
                               <p className="text-xs font-semibold text-muted uppercase mb-1">Timeline</p>
@@ -482,18 +537,38 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                               {b.returned_at && <p className="text-xs">Returned: {fmt(b.returned_at)}</p>}
                               {b.cancelled_at && <p className="text-xs text-red-500">Cancelled: {fmt(b.cancelled_at)}</p>}
                               {b.final_km_used != null && <p className="text-xs">KM used: {b.final_km_used}</p>}
+                              {b.odometer_reading != null && <p className="text-xs">Odometer: {b.odometer_reading} km</p>}
+                              {b.km_limit > 0 && <p className="text-xs">KM limit: {b.km_limit} km</p>}
                             </div>
                             <div>
-                              <p className="text-xs font-semibold text-muted uppercase mb-1">Payment</p>
+                              <p className="text-xs font-semibold text-muted uppercase mb-1">Handover</p>
                               {b.razorpay_payment_id && <p className="text-xs font-mono text-muted">{b.razorpay_payment_id}</p>}
-                              <p className="text-xs capitalize">{b.payment_status}</p>
+                              <p className="text-xs capitalize">{b.payment_status.replace(/_/g, ' ')}</p>
+                              {(b.helmets_provided ?? 0) > 0 && <p className="text-xs">Helmets: {b.helmets_provided}</p>}
+                              <p className="text-xs">{b.original_dl_taken ? '✅ DL taken' : '— DL not taken'}</p>
+                              {b.alternate_phone && <p className="text-xs text-muted">Alt ph: {b.alternate_phone}</p>}
                             </div>
-                            {(b.notes || b.cancellation_reason) && (
-                              <div>
-                                <p className="text-xs font-semibold text-muted uppercase mb-1">Notes</p>
-                                <p className="text-xs text-muted">{b.notes || b.cancellation_reason}</p>
-                              </div>
-                            )}
+                            <div>
+                              {(b.notes || b.cancellation_reason) && (
+                                <>
+                                  <p className="text-xs font-semibold text-muted uppercase mb-1">Notes</p>
+                                  <p className="text-xs text-muted">{b.notes || b.cancellation_reason}</p>
+                                </>
+                              )}
+                              {b.payment_proof_url && (
+                                <div className="mt-2">
+                                  <p className="text-xs font-semibold text-muted uppercase mb-1">Payment Proof</p>
+                                  <a
+                                    href={b.payment_proof_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-accent underline"
+                                  >
+                                    View proof →
+                                  </a>
+                                </div>
+                              )}
+                            </div>
                           </div>
 
                           {/* ── Booking Location ── */}
@@ -585,76 +660,146 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
 
       {/* Manual booking modal */}
       {showManual && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-primary rounded-xl shadow-2xl w-full max-w-md p-5 space-y-4">
-            <div className="flex items-center justify-between">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-primary rounded-xl shadow-2xl w-full max-w-lg my-4 overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <h3 className="font-semibold text-lg">Manual / Offline Booking</h3>
               <button onClick={() => setShowManual(false)} className="text-muted hover:text-primary text-xl">✕</button>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium mb-1">Bike <span className="text-danger">*</span></label>
-              <select value={manualForm.bike_id} onChange={e => setManualForm(f => ({ ...f, bike_id: e.target.value }))} className="input-field w-full">
-                <option value="">Select a bike…</option>
-                {allBikes.map(b => (
-                  <option key={b.id} value={b.id}>
-                    {b.emoji} {b.model?.display_name ?? 'Unknown'}{b.registration_number ? ` · ${b.registration_number}` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <div className="px-5 py-4 space-y-4 max-h-[75vh] overflow-y-auto">
 
-            {/* Customer info */}
-            <div>
-              <label className="block text-xs font-medium mb-1">Customer name <span className="text-red-500">*</span></label>
-              <input value={manualForm.customer_name} onChange={e => setManualForm(f => ({ ...f, customer_name: e.target.value }))}
-                className="input-field w-full" placeholder="Full name" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
+              {/* ── Bike ── */}
               <div>
-                <label className="block text-xs font-medium mb-1">Phone <span className="text-red-500">*</span></label>
-                <input value={manualForm.customer_phone} onChange={e => setManualForm(f => ({ ...f, customer_phone: e.target.value }))}
-                  className="input-field w-full" placeholder="+91 98765 43210" type="tel" />
+                <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1">Bike <span className="text-danger">*</span></label>
+                <select value={manualForm.bike_id} onChange={e => setManualForm(f => ({ ...f, bike_id: e.target.value }))} className="input-field w-full">
+                  <option value="">Select a bike…</option>
+                  {allBikes.map(b => (
+                    <option key={b.id} value={b.id}>
+                      {b.emoji} {b.model?.display_name ?? 'Unknown'}{b.registration_number ? ` · ${b.registration_number}` : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
-              <div>
-                <label className="block text-xs font-medium mb-1">Email <span className="text-xs text-muted font-normal">(optional)</span></label>
+
+              {/* ── Customer Info ── */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-muted uppercase tracking-wide">Customer Info</p>
+                <input value={manualForm.customer_name} onChange={e => setManualForm(f => ({ ...f, customer_name: e.target.value }))}
+                  className="input-field w-full" placeholder="Full name *" />
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={manualForm.customer_phone} onChange={e => setManualForm(f => ({ ...f, customer_phone: e.target.value }))}
+                    className="input-field w-full" placeholder="Phone *" type="tel" />
+                  <input value={manualForm.alternate_phone} onChange={e => setManualForm(f => ({ ...f, alternate_phone: e.target.value }))}
+                    className="input-field w-full" placeholder="Alternate phone" type="tel" />
+                </div>
                 <input value={manualForm.customer_email} onChange={e => setManualForm(f => ({ ...f, customer_email: e.target.value }))}
-                  className="input-field w-full" placeholder="customer@email.com" type="email" />
+                  className="input-field w-full" placeholder="Email (optional)" type="email" />
               </div>
+
+              {/* ── Trip Dates ── */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-muted uppercase tracking-wide">Trip Dates</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] text-muted mb-0.5 block">Pickup *</label>
+                    <input type="datetime-local" value={manualForm.start_ts} onChange={e => setManualForm(f => ({ ...f, start_ts: e.target.value }))}
+                      className="input-field w-full text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-muted mb-0.5 block">Drop-off *</label>
+                    <input type="datetime-local" value={manualForm.end_ts} min={manualForm.start_ts} onChange={e => setManualForm(f => ({ ...f, end_ts: e.target.value }))}
+                      className="input-field w-full text-sm" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] text-muted mb-0.5 block">KM Limit</label>
+                    <input value={manualForm.km_limit} onChange={e => setManualForm(f => ({ ...f, km_limit: e.target.value }))}
+                      className="input-field w-full" placeholder="e.g. 200" type="number" min="0" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-muted mb-0.5 block">Odometer at pickup (km)</label>
+                    <input value={manualForm.odometer_reading} onChange={e => setManualForm(f => ({ ...f, odometer_reading: e.target.value }))}
+                      className="input-field w-full" placeholder="e.g. 12540" type="number" min="0" />
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Financials ── */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-muted uppercase tracking-wide">Financials</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] text-muted mb-0.5 block">Total Amount (₹)</label>
+                    <input value={manualForm.total_amount} onChange={e => setManualForm(f => ({ ...f, total_amount: e.target.value }))}
+                      className="input-field w-full" placeholder="0" type="number" min="0" step="1" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-muted mb-0.5 block">Advance Paid (₹)</label>
+                    <input value={manualForm.advance_paid} onChange={e => setManualForm(f => ({ ...f, advance_paid: e.target.value }))}
+                      className="input-field w-full" placeholder="0" type="number" min="0" step="1" />
+                    <p className="text-[10px] text-muted mt-0.5">0 if not yet collected</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] text-muted mb-0.5 block">Security Deposit (₹)</label>
+                    <input value={manualForm.security_deposit} onChange={e => setManualForm(f => ({ ...f, security_deposit: e.target.value }))}
+                      className="input-field w-full" placeholder="500" type="number" min="0" step="1" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-muted mb-0.5 block">Payment Method</label>
+                    <select value={manualForm.payment_method_detail} onChange={e => setManualForm(f => ({ ...f, payment_method_detail: e.target.value as any }))}
+                      className="input-field w-full text-sm">
+                      <option value="">— select —</option>
+                      <option value="cash">Cash</option>
+                      <option value="upi">UPI</option>
+                      <option value="online">Online (Razorpay)</option>
+                      <option value="partial_online">Partial (online + cash)</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[11px] text-muted mb-0.5 block">Payment Proof URL <span className="text-muted">(optional)</span></label>
+                  <input value={manualForm.payment_proof_url} onChange={e => setManualForm(f => ({ ...f, payment_proof_url: e.target.value }))}
+                    className="input-field w-full" placeholder="https://…" type="url" />
+                  <p className="text-[10px] text-muted mt-0.5">Paste a link to a screenshot or receipt image</p>
+                </div>
+              </div>
+
+              {/* ── Handover Checklist ── */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-muted uppercase tracking-wide">Handover Checklist</p>
+                <div className="grid grid-cols-2 gap-2 items-end">
+                  <div>
+                    <label className="text-[11px] text-muted mb-0.5 block">Helmets Provided</label>
+                    <input value={manualForm.helmets_provided} onChange={e => setManualForm(f => ({ ...f, helmets_provided: e.target.value }))}
+                      className="input-field w-full" placeholder="0" type="number" min="0" max="5" />
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer select-none pb-2">
+                    <input
+                      type="checkbox"
+                      checked={manualForm.original_dl_taken}
+                      onChange={e => setManualForm(f => ({ ...f, original_dl_taken: e.target.checked }))}
+                      className="w-4 h-4 accent-accent"
+                    />
+                    <span className="text-sm font-medium">Original DL taken</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* ── Remarks ── */}
+              <div>
+                <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1">Remarks / Notes</label>
+                <textarea value={manualForm.notes} onChange={e => setManualForm(f => ({ ...f, notes: e.target.value }))}
+                  className="input-field w-full h-16 resize-none" placeholder="Any internal notes about this booking…" />
+              </div>
+
+              {manualError && <p className="text-xs text-danger bg-danger/10 px-3 py-2 rounded-lg">{manualError}</p>}
             </div>
 
-            {/* Dates */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium mb-1">Pickup <span className="text-red-500">*</span></label>
-                <input type="datetime-local" value={manualForm.start_ts} onChange={e => setManualForm(f => ({ ...f, start_ts: e.target.value }))}
-                  className="input-field w-full text-sm" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium mb-1">Drop-off <span className="text-red-500">*</span></label>
-                <input type="datetime-local" value={manualForm.end_ts} min={manualForm.start_ts} onChange={e => setManualForm(f => ({ ...f, end_ts: e.target.value }))}
-                  className="input-field w-full text-sm" />
-              </div>
-            </div>
-
-            {/* Amount + notes */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium mb-1">Amount collected (₹)</label>
-                <input value={manualForm.total_amount} onChange={e => setManualForm(f => ({ ...f, total_amount: e.target.value }))}
-                  className="input-field w-full" placeholder="0" type="number" min="0" step="1" />
-                <p className="text-[11px] text-muted mt-0.5">Leave 0 if not yet collected</p>
-              </div>
-              <div>
-                <label className="block text-xs font-medium mb-1">Notes</label>
-                <input value={manualForm.notes} onChange={e => setManualForm(f => ({ ...f, notes: e.target.value }))}
-                  className="input-field w-full" placeholder="e.g. Cash collected at pickup" />
-              </div>
-            </div>
-
-            {manualError && <p className="text-xs text-danger bg-danger/10 px-3 py-2 rounded-lg">{manualError}</p>}
-
-            <div className="flex justify-end gap-3 pt-1">
+            <div className="flex justify-end gap-3 px-5 py-4 border-t border-border">
               <button onClick={() => setShowManual(false)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-border/50">Cancel</button>
               <button onClick={createManualBooking} disabled={manualLoading}
                 className="px-4 py-2 text-sm bg-accent text-white rounded-lg hover:bg-accent/90 disabled:opacity-50">

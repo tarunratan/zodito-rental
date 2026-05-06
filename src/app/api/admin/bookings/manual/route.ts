@@ -6,14 +6,43 @@ import { createSupabaseAdmin } from '@/lib/supabase/server';
 export const runtime = 'nodejs';
 
 const schema = z.object({
+  // ── Core fields ────────────────────────────────────────────────────────────
   bike_id: z.string().uuid(),
+  start_ts: z.string(),
+  end_ts: z.string(),
+
+  // ── Customer info ──────────────────────────────────────────────────────────
   customer_name: z.string().min(1, 'Customer name is required'),
   customer_phone: z.string().min(6, 'Phone number is required'),
   customer_email: z.string().email().optional().or(z.literal('')),
-  start_ts: z.string(),
-  end_ts: z.string(),
+  alternate_phone: z.string().optional().or(z.literal('')),
+
+  // ── Trip details ───────────────────────────────────────────────────────────
+  km_limit: z.number().int().min(0).default(0),
+  odometer_reading: z.number().int().min(0).optional(),
+  package_tier: z.string().optional(),           // e.g. '24hr', '12hr' — label only
+
+  // ── Financials ─────────────────────────────────────────────────────────────
   total_amount: z.number().min(0).default(0),
+  advance_paid: z.number().min(0).default(0),
+  security_deposit: z.number().min(0).default(0),
+  payment_method_detail: z.enum(['cash', 'upi', 'online', 'partial_online']).optional(),
+  payment_proof_url: z.string().url().optional().or(z.literal('')),
+
+  // ── Handover checklist ─────────────────────────────────────────────────────
+  helmets_provided: z.number().int().min(0).max(5).default(0),
+  original_dl_taken: z.boolean().default(false),
+
+  // ── Remarks ────────────────────────────────────────────────────────────────
   notes: z.string().optional(),
+}).superRefine((d, ctx) => {
+  if (d.advance_paid > d.total_amount) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['advance_paid'],
+      message: 'Advance paid cannot exceed total amount',
+    });
+  }
 });
 
 export async function POST(req: NextRequest) {
@@ -28,19 +57,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parse.error.issues[0]?.message ?? 'Invalid request' }, { status: 400 });
   }
 
-  const { bike_id, customer_name, customer_phone, start_ts, end_ts, total_amount, notes } = parse.data;
+  const {
+    bike_id, customer_name, customer_phone, customer_email, alternate_phone,
+    start_ts, end_ts,
+    total_amount, advance_paid, security_deposit, payment_method_detail, payment_proof_url,
+    km_limit, odometer_reading, package_tier,
+    helmets_provided, original_dl_taken,
+    notes,
+  } = parse.data;
+
   const startTs = new Date(start_ts);
-  const endTs = new Date(end_ts);
+  const endTs   = new Date(end_ts);
 
   if (endTs <= startTs) {
     return NextResponse.json({ error: 'Drop-off must be after pickup' }, { status: 400 });
   }
 
-  const supabase = createSupabaseAdmin();
-  const startIso = startTs.toISOString();
-  const endIso = endTs.toISOString();
+  const supabase   = createSupabaseAdmin();
+  const startIso   = startTs.toISOString();
+  const endIso     = endTs.toISOString();
 
-  // Parallel: check booking overlap + freeze window — independent reads
+  // Parallel: overlap check + bike freeze check — independent reads
   const [overlapRes, bikeRes] = await Promise.all([
     supabase
       .from('bookings')
@@ -71,11 +108,18 @@ export async function POST(req: NextRequest) {
     const fu = new Date(bike.frozen_until);
     if (ff < endTs && fu > startTs) {
       return NextResponse.json(
-        { error: `Bike is frozen until ${fu.toLocaleString('en-IN')}${bike.freeze_reason ? ': ' + bike.freeze_reason : ''}` },
+        { error: `Bike is frozen until ${fu.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}${bike.freeze_reason ? ': ' + bike.freeze_reason : ''}` },
         { status: 409 }
       );
     }
   }
+
+  // Determine payment status from advance_paid vs total
+  const pendingAmount = Math.max(0, total_amount - advance_paid);
+  const paymentStatus =
+    advance_paid >= total_amount && total_amount > 0 ? 'paid'
+    : advance_paid > 0                               ? 'partially_paid'
+    : 'pending';
 
   const bookingNumber = 'ZD-MNL-' + Date.now().toString(36).toUpperCase();
 
@@ -88,22 +132,31 @@ export async function POST(req: NextRequest) {
       start_ts: startIso,
       end_ts: endIso,
       status: 'confirmed',
-      payment_status: 'paid',
+      payment_status: paymentStatus,
       source: 'manual',
       booking_number: bookingNumber,
       notes: notes || null,
       total_amount,
       base_price: total_amount,
-      km_limit: 0,
-      extra_helmet_count: 0,
-      extra_helmet_price: 0,
-      security_deposit: 0,
+      km_limit,
+      security_deposit,
       subtotal: total_amount,
       gst_amount: 0,
       coupon_discount: 0,
+      extra_helmet_count: helmets_provided,
+      extra_helmet_price: 0,
       platform_commission: total_amount,
       vendor_payout: 0,
-      package_tier: '24hr',
+      package_tier: package_tier ?? '24hr',
+      // Extended offline fields
+      alternate_phone: alternate_phone || null,
+      advance_paid,
+      pending_amount: pendingAmount,
+      odometer_reading: odometer_reading ?? null,
+      helmets_provided,
+      original_dl_taken,
+      payment_method_detail: payment_method_detail ?? null,
+      payment_proof_url: payment_proof_url || null,
     })
     .select('id, booking_number')
     .single();
@@ -113,5 +166,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to create booking: ' + error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, booking_id: booking.id, booking_number: booking.booking_number });
+  return NextResponse.json({
+    ok: true,
+    booking_id: booking.id,
+    booking_number: booking.booking_number,
+    pending_amount: pendingAmount,
+  });
 }
