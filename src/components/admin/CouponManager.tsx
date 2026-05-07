@@ -14,6 +14,7 @@ type Coupon = {
   used_count: number;
   expires_at: string | null;
   is_active: boolean;
+  is_public: boolean;
   created_at: string;
 };
 
@@ -24,6 +25,7 @@ const EMPTY_FORM = {
   discount_value: 18,
   max_uses: '',
   expires_at: '',
+  is_public: false,
 };
 
 export function CouponManager({ initialCoupons }: { initialCoupons: Coupon[] }) {
@@ -32,6 +34,7 @@ export function CouponManager({ initialCoupons }: { initialCoupons: Coupon[] }) 
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -48,6 +51,7 @@ export function CouponManager({ initialCoupons }: { initialCoupons: Coupon[] }) 
           discount_value: form.discount_type === 'gst_waiver' ? 0 : Number(form.discount_value),
           max_uses: form.max_uses ? Number(form.max_uses) : null,
           expires_at: form.expires_at || null,
+          is_public: form.is_public,
         }),
       });
       const data = await res.json();
@@ -72,9 +76,16 @@ export function CouponManager({ initialCoupons }: { initialCoupons: Coupon[] }) 
   }
 
   async function deleteCoupon(id: string) {
-    if (!confirm('Delete this coupon? This cannot be undone.')) return;
+    if (!confirm('Delete this coupon? This will also remove all usage history.')) return;
+    setDeleteError(null);
     const res = await fetch(`/api/admin/coupons/${id}`, { method: 'DELETE' });
-    if (res.ok) setCoupons(prev => prev.filter(c => c.id !== id));
+    if (res.ok) {
+      setCoupons(prev => prev.filter(c => c.id !== id));
+    } else {
+      let msg = 'Failed to delete coupon.';
+      try { const d = await res.json(); msg = d.error || msg; } catch { /* noop */ }
+      setDeleteError(msg);
+    }
   }
 
   return (
@@ -169,6 +180,17 @@ export function CouponManager({ initialCoupons }: { initialCoupons: Coupon[] }) 
                 className="input-field"
               />
             </div>
+            <div className="flex items-end pb-1">
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={form.is_public}
+                  onChange={e => setForm(f => ({ ...f, is_public: e.target.checked }))}
+                  className="w-4 h-4 rounded accent-accent"
+                />
+                <span className="text-sm font-medium">Show in &quot;Available Offers&quot; for customers</span>
+              </label>
+            </div>
           </div>
 
           {formError && <p className="text-xs text-danger">{formError}</p>}
@@ -182,6 +204,12 @@ export function CouponManager({ initialCoupons }: { initialCoupons: Coupon[] }) 
             </button>
           </div>
         </form>
+      )}
+
+      {deleteError && (
+        <div className="mb-4 p-3 bg-danger/10 border border-danger/30 rounded-lg text-xs text-danger">
+          {deleteError}
+        </div>
       )}
 
       {coupons.length === 0 ? (
@@ -200,6 +228,7 @@ export function CouponManager({ initialCoupons }: { initialCoupons: Coupon[] }) 
                   <th className="text-left px-4 py-3 text-xs text-muted font-medium">Uses</th>
                   <th className="text-left px-4 py-3 text-xs text-muted font-medium">Expires</th>
                   <th className="text-left px-4 py-3 text-xs text-muted font-medium">Status</th>
+                  <th className="text-left px-4 py-3 text-xs text-muted font-medium">Visible</th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
@@ -233,6 +262,11 @@ export function CouponManager({ initialCoupons }: { initialCoupons: Coupon[] }) 
                       >
                         {coupon.is_active ? 'Active' : 'Inactive'}
                       </button>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${coupon.is_public ? 'bg-accent/10 text-accent' : 'bg-border text-muted'}`}>
+                        {coupon.is_public ? 'Public' : 'Private'}
+                      </span>
                     </td>
                     <td className="px-4 py-3">
                       <button

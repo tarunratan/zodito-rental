@@ -19,6 +19,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
   await requireAdmin();
   const supabase = createSupabaseAdmin();
+
+  // Remove usage history first to avoid FK constraint blocking deletion
+  const { error: usesError } = await supabase.from('coupon_uses').delete().eq('coupon_id', params.id);
+  if (usesError) return NextResponse.json({ error: 'Failed to clear coupon usage history' }, { status: 500 });
+
   const { error } = await supabase.from('coupons').delete().eq('id', params.id);
   if (error) return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
   return NextResponse.json({ ok: true });

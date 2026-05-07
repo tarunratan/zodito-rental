@@ -1,12 +1,20 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { formatINR } from '@/lib/utils';
 
 export interface AppliedCoupon {
   code: string;
   label: string;
   discountAmount: number;
+}
+
+interface AvailableCoupon {
+  id: string;
+  code: string;
+  label: string;
+  discount_type: 'percent' | 'fixed' | 'gst_waiver';
+  discount_value: number;
 }
 
 interface CouponInputProps {
@@ -16,20 +24,33 @@ interface CouponInputProps {
   onApply: (coupon: AppliedCoupon | null) => void;
 }
 
+function offerLabel(c: AvailableCoupon): string {
+  if (c.discount_type === 'gst_waiver') return 'GST waiver';
+  if (c.discount_type === 'percent') return `${c.discount_value}% off`;
+  return `₹${c.discount_value} off`;
+}
+
 export function CouponInput({ subtotal, gstAmount, applied, onApply }: CouponInputProps) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [offers, setOffers] = useState<AvailableCoupon[]>([]);
 
-  async function handleApply() {
-    if (!input.trim()) return;
+  useEffect(() => {
+    fetch('/api/coupons/available')
+      .then(r => r.json())
+      .then(d => setOffers(d.coupons ?? []))
+      .catch(() => { /* silent */ });
+  }, []);
+
+  async function applyCode(code: string) {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch('/api/coupons/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: input.trim(), subtotal, gst_amount: gstAmount }),
+        body: JSON.stringify({ code, subtotal, gst_amount: gstAmount }),
       });
       const data = await res.json();
       if (!data.valid) {
@@ -76,7 +97,27 @@ export function CouponInput({ subtotal, gstAmount, applied, onApply }: CouponInp
   }
 
   return (
-    <div>
+    <div className="space-y-2.5">
+      {offers.length > 0 && (
+        <div>
+          <p className="text-[10px] font-semibold text-muted uppercase tracking-wider mb-1.5">Available Offers</p>
+          <div className="flex flex-wrap gap-2">
+            {offers.map(offer => (
+              <button
+                key={offer.id}
+                onClick={() => applyCode(offer.code)}
+                disabled={loading}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-accent/30 bg-accent/5 hover:bg-accent/15 transition-colors text-left disabled:opacity-50"
+              >
+                <span className="text-[10px] font-bold text-accent font-mono tracking-wider">{offer.code}</span>
+                <span className="text-[10px] text-muted">·</span>
+                <span className="text-[10px] text-muted">{offerLabel(offer)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex gap-2">
         <div className="relative flex-1">
           <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted text-sm pointer-events-none">🏷</span>
@@ -84,13 +125,13 @@ export function CouponInput({ subtotal, gstAmount, applied, onApply }: CouponInp
             type="text"
             value={input}
             onChange={e => { setInput(e.target.value.toUpperCase()); setError(null); }}
-            onKeyDown={e => e.key === 'Enter' && handleApply()}
+            onKeyDown={e => e.key === 'Enter' && applyCode(input.trim())}
             placeholder="Coupon code"
             className="input-field pl-8 uppercase tracking-wide"
           />
         </div>
         <button
-          onClick={handleApply}
+          onClick={() => applyCode(input.trim())}
           disabled={!input.trim() || loading}
           className="px-4 py-2 text-sm font-semibold bg-accent/10 text-accent border border-accent/30 rounded-lg hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
         >

@@ -12,6 +12,7 @@ const createSchema = z.object({
   discount_value: z.number().min(0),
   max_uses: z.number().int().positive().nullable(),
   expires_at: z.string().nullable(),
+  is_public: z.boolean().default(false),
 });
 
 export async function POST(req: NextRequest) {
