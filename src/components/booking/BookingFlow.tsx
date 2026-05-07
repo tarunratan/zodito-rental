@@ -76,9 +76,13 @@ export function BookingFlow({
     return null;
   });
 
-  // Clear returnTs if it is now before the minimum (pickupTs + 12hrs)
+  // Clear returnTs if it is now before the minimum.
+  // Evening pickups (≥ 18:00) get a 1hr minimum; others need 12hrs.
   useEffect(() => {
-    if (pickupTs && returnTs && returnTs < new Date(pickupTs.getTime() + 12 * 3_600_000)) {
+    if (!pickupTs || !returnTs) return;
+    const isEvening = pickupTs.getHours() >= 18;
+    const minMs = isEvening ? 1 * 3_600_000 : 12 * 3_600_000;
+    if (returnTs < new Date(pickupTs.getTime() + minMs)) {
       setReturnTs(null);
     }
   }, [pickupTs]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -165,7 +169,9 @@ export function BookingFlow({
   const pickupValid      = pickupTs ? isWithinStoreHours(pickupTs) && pickupTs > new Date() : false;
   const noPackage        = !!tierResult && !breakdown;
   const durationTooLong  = durationHours > 720;
-  const durationTooShort = durationHours > 0 && durationHours < 12;
+  // Evening pickups (≥ 18:00) allow short durations (tonight 10 PM or tomorrow 6 AM)
+  const isEveningPickup  = pickupTs ? pickupTs.getHours() >= 18 : false;
+  const durationTooShort = durationHours > 0 && durationHours < 12 && !isEveningPickup;
   const canProceed       = !!pickupTs && pickupValid && !!returnTs && !!tierResult && !!breakdown && bikeAvailable !== false && !availabilityChecking;
 
   const showKycNudge = kycStatus && kycStatus !== 'approved';

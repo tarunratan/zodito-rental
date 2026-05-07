@@ -4,10 +4,10 @@ import { useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { STORE_OPEN_HOUR, STORE_CLOSE_HOUR } from '@/lib/pricing';
 
-// Minimum booking length is one 12hr slot.
-const MIN_DURATION_HOURS = 12;
 // Maximum is 30 days.
 const MAX_DURATION_HOURS = 720;
+// Evening pickups (≥ 18:00) get special handling: allow same-day returns and 6 AM next morning.
+const EVENING_PICKUP_HOUR = 18;
 
 export function ReturnTimePicker({
   pickupTs,
@@ -18,9 +18,15 @@ export function ReturnTimePicker({
   value: Date | null;
   onChange: (d: Date) => void;
 }) {
+  const isEveningPickup = pickupTs.getHours() >= EVENING_PICKUP_HOUR;
+
   const minReturnTs = useMemo(() => {
-    return new Date(pickupTs.getTime() + MIN_DURATION_HOURS * 3_600_000);
-  }, [pickupTs]);
+    if (isEveningPickup) {
+      // Allow returning same day after pickup — no 12hr minimum for evening bookings
+      return new Date(pickupTs.getTime() + 3_600_000); // at least 1 hour after pickup
+    }
+    return new Date(pickupTs.getTime() + 12 * 3_600_000);
+  }, [pickupTs, isEveningPickup]);
 
   const maxReturnTs = useMemo(() => {
     return new Date(pickupTs.getTime() + MAX_DURATION_HOURS * 3_600_000);
@@ -60,7 +66,50 @@ export function ReturnTimePicker({
   const minHourOnDay  = isOnMinDay ? minReturnTs.getHours() : STORE_OPEN_HOUR;
   const timeSlots = buildTimeSlots().filter(s => s.hour >= minHourOnDay);
 
+  // Quick-select options for evening pickups
+  const tonightDate = pickupTs;
+  const tomorrowDate = new Date(pickupTs.getFullYear(), pickupTs.getMonth(), pickupTs.getDate() + 1);
+  const tonightTenPm  = new Date(tonightDate.getFullYear(), tonightDate.getMonth(), tonightDate.getDate(), STORE_CLOSE_HOUR, 0, 0, 0);
+  const tomorrowSixAm = new Date(tomorrowDate.getFullYear(), tomorrowDate.getMonth(), tomorrowDate.getDate(), STORE_OPEN_HOUR, 0, 0, 0);
+  // "Tonight 10 PM" only makes sense if it's more than 1 hour after pickup
+  const showTonightOption = isEveningPickup && tonightTenPm > minReturnTs;
+
   return (
+    <div className="space-y-4">
+      {/* Evening quick-select */}
+      {isEveningPickup && (
+        <div>
+          <p className="text-[10px] text-muted uppercase tracking-widest font-semibold mb-2">Quick select</p>
+          <div className="flex gap-2 flex-wrap">
+            {showTonightOption && (
+              <button
+                onClick={() => onChange(tonightTenPm)}
+                className={cn(
+                  'px-3 py-2 rounded-lg text-xs font-semibold border transition-all',
+                  value && ymd(value) === ymd(tonightTenPm) && value.getHours() === STORE_CLOSE_HOUR
+                    ? 'bg-accent text-white border-accent'
+                    : 'border-accent/50 text-accent hover:bg-accent/10'
+                )}
+              >
+                Tonight 10 PM
+              </button>
+            )}
+            <button
+              onClick={() => onChange(tomorrowSixAm)}
+              className={cn(
+                'px-3 py-2 rounded-lg text-xs font-semibold border transition-all',
+                value && ymd(value) === ymd(tomorrowSixAm) && value.getHours() === STORE_OPEN_HOUR
+                  ? 'bg-accent text-white border-accent'
+                  : 'border-accent/50 text-accent hover:bg-accent/10'
+              )}
+            >
+              Tomorrow 6 AM
+            </button>
+          </div>
+          <p className="text-[10px] text-muted mt-2">Or pick any date &amp; time below</p>
+        </div>
+      )}
+
     <div className="grid md:grid-cols-[1fr_200px] gap-5">
       {/* Calendar */}
       <div>
@@ -147,9 +196,10 @@ export function ReturnTimePicker({
           </div>
         )}
         <p className="text-[10px] text-muted mt-2 leading-relaxed">
-          Store hours: 6 AM – 10 PM
+          Store hours: 6 AM – 10 PM{isEveningPickup ? ' · Evening bookings can return tonight or tomorrow 6 AM' : ''}
         </p>
       </div>
+    </div>
     </div>
   );
 }

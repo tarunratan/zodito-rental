@@ -44,6 +44,7 @@ type Booking = {
   kyc_aadhaar_front_url?: string | null;
   kyc_aadhaar_back_url?: string | null;
   kyc_selfie_url?: string | null;
+  user_id?: string | null;
   user: { id: string; email: string | null; first_name: string | null; last_name: string | null; phone: string | null } | null;
   bike: { id: string; registration_number: string | null; color: string | null; emoji: string; image_url?: string | null; model: { display_name: string } | null } | null;
 };
@@ -103,16 +104,17 @@ function BookingKycDocs({ booking }: { booking: Booking }) {
     selfie: 'Selfie',
   };
 
-  const hasPaths = [
-    booking.kyc_dl_front_url, booking.kyc_dl_back_url,
-    booking.kyc_aadhaar_front_url, booking.kyc_aadhaar_back_url,
-    booking.kyc_selfie_url,
-  ].filter(Boolean);
+  // Count from loaded urls if available; else from booking-level paths (manual bookings)
+  const countLabel = urls !== null
+    ? `${Object.keys(urls).length}/5`
+    : booking.user_id
+    ? '…'
+    : `${[booking.kyc_dl_front_url, booking.kyc_dl_back_url, booking.kyc_aadhaar_front_url, booking.kyc_aadhaar_back_url, booking.kyc_selfie_url].filter(Boolean).length}/5`;
 
   return (
     <div className="rounded-xl border-2 border-blue-200 overflow-hidden mt-4">
       <div className="px-4 py-2 bg-blue-50 flex items-center justify-between">
-        <span className="text-xs font-bold uppercase tracking-wide text-blue-700">🪪 KYC Documents — {hasPaths.length}/5</span>
+        <span className="text-xs font-bold uppercase tracking-wide text-blue-700">🪪 KYC Documents — {countLabel}</span>
         {urls === null && (
           <button
             onClick={loadUrls}
@@ -123,7 +125,10 @@ function BookingKycDocs({ booking }: { booking: Booking }) {
           </button>
         )}
       </div>
-      {urls && (
+      {urls && Object.keys(urls).length === 0 && (
+        <div className="p-3 bg-white text-xs text-muted italic">No KYC documents submitted yet.</div>
+      )}
+      {urls && Object.keys(urls).length > 0 && (
         <div className="p-3 bg-white flex flex-wrap gap-3">
           {Object.entries(DOC_LABELS).map(([key, label]) => {
             const signedUrl = urls[key];
@@ -812,8 +817,8 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                             </div>
                           </div>
 
-                          {/* ── KYC Documents ── */}
-                          {(b.kyc_dl_front_url || b.kyc_dl_back_url || b.kyc_aadhaar_front_url || b.kyc_aadhaar_back_url || b.kyc_selfie_url) && (
+                          {/* ── KYC Documents — show for manual (booking-level docs) and online (user profile docs) ── */}
+                          {(b.kyc_dl_front_url || b.kyc_dl_back_url || b.kyc_aadhaar_front_url || b.kyc_aadhaar_back_url || b.kyc_selfie_url || b.user?.id) && (
                             <BookingKycDocs booking={b} />
                           )}
 
