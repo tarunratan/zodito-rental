@@ -1,20 +1,23 @@
 'use client';
 
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Script from 'next/script';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { cn } from '@/lib/utils';
+import { useState } from 'react';
 import { createSupabaseBrowser } from '@/lib/supabase/client';
 import type { PackageTier } from '@/lib/supabase/types';
+import { useBookingLocation } from './razorpay/useBookingLocation';
+import { buildBookingPayload } from './razorpay/bookingPayload';
+import { openRazorpay } from './razorpay/openRazorpay';
+import { ConfirmedBookingPanel, type ConfirmedBooking } from './razorpay/ConfirmedBookingPanel';
+import { LocationDeniedPanel } from './razorpay/LocationDeniedPanel';
+import { LocationTimeoutPanel } from './razorpay/LocationTimeoutPanel';
+import { PaymentMethodTabs, type PaymentMethod } from './razorpay/PaymentMethodTabs';
 
 declare global {
   interface Window { Razorpay: any; }
 }
 
-type PaymentMethod = 'online' | 'partial_online' | 'at_pickup';
-type CashStatus   = 'idle' | 'confirming' | 'confirmed' | 'failed';
-type LocStatus    = 'pending' | 'granted' | 'denied' | 'timeout';
+type CashStatus = 'idle' | 'confirming' | 'confirmed' | 'failed';
 
 export function RazorpayCheckout({
   bikeId,
@@ -50,39 +53,23 @@ export function RazorpayCheckout({
   securityDeposit: number;
 }) {
   const router = useRouter();
-  const [scriptReady, setScriptReady] = useState(false);
+  const { locationRef, locStatus, requestLocation } = useBookingLocation();
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('online');
-
-  const locationRef = useRef<{ lat: number; lng: number } | null>(null);
-  const [locStatus, setLocStatus] = useState<LocStatus>('pending');
 
   const [cashStatus, setCashStatus]             = useState<CashStatus>('idle');
   const [cashError, setCashError]               = useState<string | null>(null);
-  const [confirmedBooking, setConfirmedBooking] = useState<{ id: string; number: string; pendingAmount?: number } | null>(null);
+  const [confirmedBooking, setConfirmedBooking] = useState<ConfirmedBooking | null>(null);
 
   // Minimum advance for partial payment: 20% rounded up
-  const partialAdvance  = Math.ceil(totalAmount * 0.20);
-  const partialPending  = totalAmount - partialAdvance;
+  const partialAdvance = Math.ceil(totalAmount * 0.20);
+  const partialPending = totalAmount - partialAdvance;
 
-  const requestLocation = useCallback(() => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setLocStatus('timeout');
-      return;
-    }
-    setLocStatus('pending');
-    navigator.geolocation.getCurrentPosition(
-      pos => {
-        locationRef.current = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setLocStatus('granted');
-      },
-      err => {
-        setLocStatus(err.code === 1 ? 'denied' : 'timeout');
-      },
-      { timeout: 10000, maximumAge: 300000, enableHighAccuracy: false }
-    );
-  }, []);
-
-  useEffect(() => { requestLocation(); }, [requestLocation]);
+  const payloadArgs = () => ({
+    bikeId, tier, customPackageId, actualDays, durationHours,
+    pickupTs: pickupTs!,
+    extraHelmets, mobileHolder, couponCode,
+    location: locationRef.current!,
+  });
 
   // ── Cash (Pay at Pickup) ──────────────────────────────────────────────────
   async function handleAtPickup() {
@@ -105,18 +92,7 @@ export function RazorpayCheckout({
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({
-          bike_id: bikeId,
-          ...(customPackageId ? { custom_package_id: customPackageId } : { tier }),
-          ...(actualDays ? { actual_days: actualDays } : {}),
-          ...(customPackageId && durationHours ? { duration_hours: Math.round(durationHours) } : {}),
-          start_ts: pickupTs.toISOString(),
-          extra_helmet_count: extraHelmets,
-          mobile_holder: mobileHolder,
-          booking_lat: locationRef.current.lat,
-          booking_lng: locationRef.current.lng,
-          ...(couponCode ? { coupon_code: couponCode } : {}),
-        }),
+        body: JSON.stringify(buildBookingPayload(payloadArgs())),
       });
 
       if (res.status === 401) {
@@ -151,7 +127,7 @@ export function RazorpayCheckout({
   }
 
   // ── Online (full or partial via Razorpay) ─────────────────────────────────
-  async function buildOnlineBooking(paymentType: 'full' | 'partial') {
+  async function createOnlineBooking(paymentType: 'full' | 'partial') {
     if (!pickupTs || !locationRef.current) return null;
     setError(null);
     setSubmitting(true);
@@ -159,20 +135,7 @@ export function RazorpayCheckout({
     const res = await fetch('/api/bookings/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        bike_id: bikeId,
-        ...(customPackageId ? { custom_package_id: customPackageId } : { tier }),
-        ...(actualDays ? { actual_days: actualDays } : {}),
-        ...(customPackageId && durationHours ? { duration_hours: Math.round(durationHours) } : {}),
-        start_ts: pickupTs.toISOString(),
-        extra_helmet_count: extraHelmets,
-        mobile_holder: mobileHolder,
-        payment_method: 'online',
-        payment_type: paymentType,
-        booking_lat: locationRef.current.lat,
-        booking_lng: locationRef.current.lng,
-        ...(couponCode ? { coupon_code: couponCode } : {}),
-      }),
+      body: JSON.stringify(buildBookingPayload(payloadArgs(), paymentType)),
     });
 
     if (res.redirected || res.status === 401) {
@@ -199,7 +162,7 @@ export function RazorpayCheckout({
 
   async function handleOnline(paymentType: 'full' | 'partial' = 'full') {
     try {
-      const data = await buildOnlineBooking(paymentType);
+      const data = await createOnlineBooking(paymentType);
       if (!data) return;
 
       if (data.mock) {
@@ -207,55 +170,17 @@ export function RazorpayCheckout({
         return;
       }
 
-      if (typeof window.Razorpay === 'undefined') {
-        throw new Error('Payment gateway not loaded yet. Please try again.');
-      }
-
-      const rzp = new window.Razorpay({
-        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-        amount: data.razorpay.amount,
-        currency: data.razorpay.currency,
-        order_id: data.razorpay.order_id,
-        name: 'Zodito Rentals',
-        description: data.is_partial
-          ? `Advance (20%) for Booking ${data.booking_number}`
-          : `Booking ${data.booking_number}`,
-        prefill: data.prefill,
-        theme: { color: '#f97316' },
-        handler: async (resp: any) => {
-          const verifyRes = await fetch('/api/bookings/verify-payment', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              razorpay_order_id: resp.razorpay_order_id,
-              razorpay_payment_id: resp.razorpay_payment_id,
-              razorpay_signature: resp.razorpay_signature,
-              booking_id: data.booking_id,
-            }),
-          });
-          const verifyData = await verifyRes.json().catch(() => ({}));
-          if (data.is_partial) {
-            // Show partial confirmation inline instead of redirecting
-            setConfirmedBooking({
-              id: data.booking_id,
-              number: data.booking_number,
-              pendingAmount: verifyData.pending_amount ?? data.pending_amount,
-            });
-            setCashStatus('confirmed');
-            setSubmitting(false);
-          } else {
-            router.push(`/my-bookings?success=${data.booking_id}`);
-          }
+      openRazorpay({
+        data,
+        onPartialConfirmed: (info) => {
+          setConfirmedBooking(info);
+          setCashStatus('confirmed');
+          setSubmitting(false);
         },
-        modal: { ondismiss: () => setSubmitting(false) },
+        onFullSuccess: (bookingId) => router.push(`/my-bookings?success=${bookingId}`),
+        onError: (msg) => { setError(msg); setSubmitting(false); },
+        onDismiss: () => setSubmitting(false),
       });
-
-      rzp.on('payment.failed', (resp: any) => {
-        setError(resp.error?.description || 'Payment failed. Please try again.');
-        setSubmitting(false);
-      });
-
-      rzp.open();
     } catch (e: any) {
       setError(e.message);
       setSubmitting(false);
@@ -268,77 +193,14 @@ export function RazorpayCheckout({
 
   // ── Confirmed state (cash or partial online) ──────────────────────────────
   if (cashStatus === 'confirmed' && confirmedBooking) {
-    const isPending = (confirmedBooking.pendingAmount ?? 0) > 0;
     return (
-      <div className="mt-4 rounded-2xl border-2 border-green-400 bg-green-50 overflow-hidden">
-        <div className="bg-green-400 px-5 py-3 flex items-center gap-2">
-          <span className="text-white text-xl">✓</span>
-          <span className="text-white font-bold text-base">Booking Confirmed!</span>
-        </div>
-        <div className="p-5 space-y-3">
-          <div className="flex items-center justify-between py-2 border-b border-green-200">
-            <span className="text-sm text-green-700">Booking Number</span>
-            <span className="font-bold text-green-900 font-mono">{confirmedBooking.number}</span>
-          </div>
-
-          {isPending ? (
-            <>
-              <div className="flex items-center justify-between py-2 border-b border-green-200">
-                <span className="text-sm text-green-700">Paid now (advance)</span>
-                <span className="font-semibold text-green-900">
-                  ₹{(confirmedBooking.pendingAmount !== undefined
-                    ? totalAmount - (confirmedBooking.pendingAmount ?? 0)
-                    : partialAdvance
-                  ).toLocaleString('en-IN')}
-                </span>
-              </div>
-              <div className="flex items-center justify-between py-2 border-b border-green-200">
-                <span className="text-sm text-orange-600 font-semibold">Due at pickup</span>
-                <span className="font-bold text-orange-700">
-                  ₹{(confirmedBooking.pendingAmount ?? partialPending).toLocaleString('en-IN')}
-                </span>
-              </div>
-              {securityDeposit > 0 && (
-                <div className="flex items-center justify-between py-2 border-b border-green-200">
-                  <span className="text-sm text-green-700">Security deposit <span className="text-[10px]">(refunded after drop-off)</span></span>
-                  <span className="font-semibold text-green-900">₹{securityDeposit.toLocaleString('en-IN')}</span>
-                </div>
-              )}
-              <p className="text-xs text-orange-700 bg-orange-50 rounded-lg px-3 py-2">
-                Bring cash or UPI to pay the remaining amount at pickup.
-              </p>
-            </>
-          ) : (
-            <>
-              <div className="flex items-center justify-between py-2 border-b border-green-200">
-                <span className="text-sm text-green-700">Payment</span>
-                <span className="font-semibold text-green-900">Cash / UPI at pickup</span>
-              </div>
-              <div className="flex items-center justify-between py-2 border-b border-green-200">
-                <span className="text-sm text-green-700">Rental amount</span>
-                <span className="font-semibold text-green-900">{totalLabel}</span>
-              </div>
-              {securityDeposit > 0 && (
-                <div className="flex items-center justify-between py-2 border-b border-green-200">
-                  <span className="text-sm text-green-700">Security deposit <span className="text-[10px] text-green-600">(refunded after drop-off)</span></span>
-                  <span className="font-semibold text-green-900">₹{securityDeposit.toLocaleString('en-IN')}</span>
-                </div>
-              )}
-              <div className="flex items-center justify-between py-2">
-                <span className="text-sm font-bold text-green-700">Total at pickup</span>
-                <span className="font-bold text-green-900">₹{(totalAmount + securityDeposit).toLocaleString('en-IN')}</span>
-              </div>
-            </>
-          )}
-
-          <Link
-            href={`/my-bookings?success=${confirmedBooking.id}`}
-            className="block w-full text-center py-2.5 mt-1 bg-green-500 hover:bg-green-600 text-white font-semibold rounded-xl text-sm transition-colors"
-          >
-            View My Bookings →
-          </Link>
-        </div>
-      </div>
+      <ConfirmedBookingPanel
+        booking={confirmedBooking}
+        totalAmount={totalAmount}
+        securityDeposit={securityDeposit}
+        partialAdvance={partialAdvance}
+        partialPending={partialPending}
+      />
     );
   }
 
@@ -352,80 +214,8 @@ export function RazorpayCheckout({
     );
   }
 
-  // ── Location DENIED ───────────────────────────────────────────────────────
-  if (locStatus === 'denied') {
-    return (
-      <div className="mt-4 rounded-2xl border-2 border-red-300 bg-red-50 overflow-hidden">
-        <div className="bg-red-500 px-5 py-3 flex items-center gap-2">
-          <span className="text-white text-xl">📍</span>
-          <span className="text-white font-bold text-base">Location Access Required</span>
-        </div>
-        <div className="p-5 space-y-4">
-          <p className="text-sm text-gray-700 leading-relaxed">
-            Zodito requires your location to complete a booking. It is used to
-            verify your pickup point and ensure your safety during the rental.
-          </p>
-          <div className="bg-white rounded-xl border border-red-200 p-4">
-            <p className="text-xs font-bold text-gray-800 mb-2.5">How to enable location access:</p>
-            <ol className="text-xs text-gray-600 space-y-2">
-              <li className="flex items-start gap-2">
-                <span className="bg-red-100 text-red-600 font-bold rounded-full w-4 h-4 flex items-center justify-center shrink-0 mt-0.5 text-[10px]">1</span>
-                Tap the <strong>🔒 lock icon</strong> next to the URL in your browser
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="bg-red-100 text-red-600 font-bold rounded-full w-4 h-4 flex items-center justify-center shrink-0 mt-0.5 text-[10px]">2</span>
-                Find <strong>Location</strong> → set to <strong>Allow</strong>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="bg-red-100 text-red-600 font-bold rounded-full w-4 h-4 flex items-center justify-center shrink-0 mt-0.5 text-[10px]">3</span>
-                Come back here and tap <strong>Try Again</strong>
-              </li>
-            </ol>
-            <p className="text-[11px] text-gray-500 mt-3 pt-3 border-t border-red-100 italic">
-              On iPhone: go to <strong>Settings → Safari → Location</strong> and set to Allow
-            </p>
-          </div>
-          <button
-            onClick={requestLocation}
-            className="w-full py-3 bg-red-500 hover:bg-red-600 active:bg-red-700 text-white font-semibold rounded-xl text-sm transition-colors"
-          >
-            I&apos;ve Enabled Location — Try Again
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Location TIMEOUT ──────────────────────────────────────────────────────
-  if (locStatus === 'timeout') {
-    return (
-      <div className="mt-4 rounded-2xl border-2 border-amber-300 bg-amber-50 overflow-hidden">
-        <div className="bg-amber-400 px-5 py-3 flex items-center gap-2">
-          <span className="text-white text-xl">📍</span>
-          <span className="text-white font-bold text-base">Location Unavailable</span>
-        </div>
-        <div className="p-5 space-y-4">
-          <p className="text-sm text-gray-700 leading-relaxed">
-            We couldn&apos;t get your location. Location is <strong>required</strong> to
-            complete a booking. Please ensure GPS and location services are
-            enabled on your device, then try again.
-          </p>
-          <div className="text-xs text-gray-500 bg-white border border-amber-200 rounded-lg p-3 space-y-1">
-            <p className="font-semibold text-gray-700">Quick checklist:</p>
-            <p>• Enable Wi-Fi or mobile data — improves location accuracy</p>
-            <p>• On Android: pull down from top → tap Location to enable</p>
-            <p>• On iPhone: Settings → Privacy → Location Services → On</p>
-          </div>
-          <button
-            onClick={requestLocation}
-            className="w-full py-3 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-semibold rounded-xl text-sm transition-colors"
-          >
-            Retry Location
-          </button>
-        </div>
-      </div>
-    );
-  }
+  if (locStatus === 'denied')  return <LocationDeniedPanel onRetry={requestLocation} />;
+  if (locStatus === 'timeout') return <LocationTimeoutPanel onRetry={requestLocation} />;
 
   // ── Normal checkout ───────────────────────────────────────────────────────
   const locReady     = locStatus === 'granted';
@@ -433,11 +223,7 @@ export function RazorpayCheckout({
 
   return (
     <>
-      <Script
-        src="https://checkout.razorpay.com/v1/checkout.js"
-        onLoad={() => setScriptReady(true)}
-        strategy="lazyOnload"
-      />
+      <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
 
       {locStatus === 'pending' && (
         <div className="mt-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 border border-border">
@@ -454,27 +240,8 @@ export function RazorpayCheckout({
         </div>
       )}
 
-      {/* Payment method selector — 3 tabs */}
-      <div className="mt-3 grid grid-cols-3 gap-1 p-1 bg-bg rounded-xl border border-border">
-        {([
-          ['online',         '🔒 Pay Full'],
-          ['partial_online', '⚡ Pay 20%'],
-          ['at_pickup',      '🏪 At Pickup'],
-        ] as [PaymentMethod, string][]).map(([method, label]) => (
-          <button
-            key={method}
-            onClick={() => setPaymentMethod(method)}
-            className={cn(
-              'py-2 px-1.5 rounded-lg text-xs font-medium transition-all leading-tight',
-              paymentMethod === method ? 'bg-white shadow-sm text-primary' : 'text-muted hover:text-primary'
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <PaymentMethodTabs value={paymentMethod} onChange={setPaymentMethod} />
 
-      {/* Context text under tab */}
       <div className="mt-2 text-[11px] text-muted text-center leading-relaxed min-h-[2.5rem]">
         {paymentMethod === 'online' && `Pay ${totalLabel} now. Booking confirmed instantly.`}
         {paymentMethod === 'partial_online' && (
