@@ -4,6 +4,7 @@ import { useMemo, useState, useCallback, useEffect } from 'react';
 import { BikeCard } from './BikeCard';
 import { cn } from '@/lib/utils';
 import type { BikeCategory } from '@/lib/supabase/types';
+import { STORE_OPEN_HOUR, STORE_CLOSE_HOUR } from '@/lib/pricing';
 
 type BikeRow = any;
 type VehicleType = 'all' | 'scooter' | 'motorcycle';
@@ -55,6 +56,16 @@ const HOUR_OPTIONS = Array.from({ length: PICKUP_CLOSE - PICKUP_OPEN + 1 }, (_, 
 function toLocalStr(d: Date): string {
   const z = (n: number) => n.toString().padStart(2, '0');
   return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:00`;
+}
+
+// Fixed 12hr return: before 6 PM pickup → 10 PM same day; 6 PM+ pickup → 6 AM next day
+function twelveHrReturn(from: string): string {
+  const d = new Date(from);
+  if (d.getHours() >= 18) {
+    const next = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, STORE_OPEN_HOUR, 0, 0, 0);
+    return toLocalStr(next);
+  }
+  return toLocalStr(new Date(d.getFullYear(), d.getMonth(), d.getDate(), STORE_CLOSE_HOUR, 0, 0, 0));
 }
 
 // Extract the date part "YYYY-MM-DD" from a local string
@@ -220,13 +231,15 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
   // Which duration chip is active (null if user manually set a custom range)
   const activeDurationHrs = useMemo(() => {
     if (!fromVal || !toVal) return null;
+    // 12hr is detected by matching the rule output, not a fixed hour offset
+    if (toVal === twelveHrReturn(fromVal)) return 12;
     const diff = Math.round((new Date(toVal).getTime() - new Date(fromVal).getTime()) / (1000 * 60 * 60));
-    return DURATIONS.find(d => d.hrs === diff)?.hrs ?? null;
+    return DURATIONS.find(d => d.hrs !== 12 && d.hrs === diff)?.hrs ?? null;
   }, [fromVal, toVal]);
 
   function applyDuration(hrs: number) {
     if (!fromVal) return;
-    setToVal(defaultTo(fromVal, hrs));
+    setToVal(hrs === 12 ? twelveHrReturn(fromVal) : defaultTo(fromVal, hrs));
   }
 
   function applyCustomDuration() {
@@ -259,7 +272,9 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
                   if (!newDate) return;
                   const newFrom = combine(newDate, hourPart(fromVal));
                   setFromVal(newFrom);
-                  if (activeDurationHrs) {
+                  if (activeDurationHrs === 12) {
+                    setToVal(twelveHrReturn(newFrom));
+                  } else if (activeDurationHrs) {
                     setToVal(defaultTo(newFrom, activeDurationHrs));
                   } else if (toVal && new Date(toVal) <= new Date(newFrom)) {
                     setToVal(defaultTo(newFrom));
@@ -273,7 +288,9 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
                 onChange={h => {
                   const newFrom = combine(datePart(fromVal), h);
                   setFromVal(newFrom);
-                  if (activeDurationHrs) {
+                  if (activeDurationHrs === 12) {
+                    setToVal(twelveHrReturn(newFrom));
+                  } else if (activeDurationHrs) {
                     setToVal(defaultTo(newFrom, activeDurationHrs));
                   } else if (toVal && new Date(toVal) <= new Date(newFrom)) {
                     setToVal(defaultTo(newFrom));

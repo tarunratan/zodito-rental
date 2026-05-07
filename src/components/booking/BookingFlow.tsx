@@ -11,7 +11,7 @@ import { RazorpayCheckout } from './RazorpayCheckout';
 import {
   calculatePrice, tierEndTs, isWithinStoreHours,
   TIER_LABELS, isFlexTier, coveringTier, formatDuration,
-  STORE_OPEN_HOUR, STORE_CLOSE_HOUR,
+  STORE_OPEN_HOUR, STORE_CLOSE_HOUR, twelveHrReturn,
 } from '@/lib/pricing';
 import type { CustomPackage, TierResult } from '@/lib/pricing';
 import { formatDateTime } from '@/lib/utils';
@@ -76,13 +76,31 @@ export function BookingFlow({
     return null;
   });
 
-  // Clear returnTs if it is now before the minimum.
-  // Evening pickups (≥ 18:00) get a 1hr minimum; others need 12hrs.
+  // Whether the customer is in "12hr mode" (locked preset) or "custom mode" (picks return time)
+  const [use12hr, setUse12hr] = useState(() => {
+    // Default to 12hr mode if no toParam or toParam matches the 12hr rule for the initial pickup
+    if (toParam) return false; // came from search with explicit to-time → custom
+    return true; // fresh booking page → default to 12hr preset
+  });
+
+  // When in 12hr mode and pickup changes, auto-update the return time
   useEffect(() => {
-    if (!pickupTs || !returnTs) return;
-    const isEvening = pickupTs.getHours() >= 18;
-    const minMs = isEvening ? 1 * 3_600_000 : 12 * 3_600_000;
-    if (returnTs < new Date(pickupTs.getTime() + minMs)) {
+    if (use12hr && pickupTs) {
+      setReturnTs(twelveHrReturn(pickupTs));
+    }
+  }, [pickupTs, use12hr]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When switching TO 12hr mode, immediately set the return time
+  useEffect(() => {
+    if (use12hr && pickupTs) {
+      setReturnTs(twelveHrReturn(pickupTs));
+    }
+  }, [use12hr]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When NOT in 12hr mode, clear returnTs if it is before pickup+12hrs
+  useEffect(() => {
+    if (use12hr || !pickupTs || !returnTs) return;
+    if (returnTs < new Date(pickupTs.getTime() + 12 * 3_600_000)) {
       setReturnTs(null);
     }
   }, [pickupTs]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -169,9 +187,8 @@ export function BookingFlow({
   const pickupValid      = pickupTs ? isWithinStoreHours(pickupTs) && pickupTs > new Date() : false;
   const noPackage        = !!tierResult && !breakdown;
   const durationTooLong  = durationHours > 720;
-  // Evening pickups (≥ 18:00) allow short durations (tonight 10 PM or tomorrow 6 AM)
-  const isEveningPickup  = pickupTs ? pickupTs.getHours() >= 18 : false;
-  const durationTooShort = durationHours > 0 && durationHours < 12 && !isEveningPickup;
+  // 12hr mode has fixed times so duration is always valid; custom mode needs ≥12hrs
+  const durationTooShort = !use12hr && durationHours > 0 && durationHours < 12;
   const canProceed       = !!pickupTs && pickupValid && !!returnTs && !!tierResult && !!breakdown && bikeAvailable !== false && !availabilityChecking;
 
   const showKycNudge = kycStatus && kycStatus !== 'approved';
@@ -356,11 +373,65 @@ export function BookingFlow({
             )}
           </Section>
 
-          <Section number={2} title="Return date & time">
+          <Section number={2} title="Duration">
             {!pickupTs ? (
               <p className="text-sm text-muted">Select a pickup time first.</p>
             ) : (
-              <ReturnTimePicker pickupTs={pickupTs} value={returnTs} onChange={setReturnTs} />
+              <div className="space-y-3">
+                {/* ── 12hr locked preset ── */}
+                {bike.model.packages.some((p: any) => p.tier === '12hr') && (
+                  <button
+                    type="button"
+                    onClick={() => setUse12hr(true)}
+                    className={`w-full text-left p-3.5 rounded-xl border-2 transition-all ${
+                      use12hr
+                        ? 'border-accent bg-accent/5'
+                        : 'border-border hover:border-accent/40'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="font-semibold text-sm">12 Hours</span>
+                        <span className="ml-2 text-[10px] bg-accent text-white px-1.5 py-0.5 rounded-full font-bold uppercase">Fixed</span>
+                      </div>
+                      {use12hr && <span className="text-accent text-lg">✓</span>}
+                    </div>
+                    <p className="text-xs text-muted mt-0.5">
+                      Return by{' '}
+                      <strong>
+                        {twelveHrReturn(pickupTs).toLocaleString('en-IN', {
+                          weekday: 'short', month: 'short', day: 'numeric',
+                          hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata',
+                        })}
+                      </strong>
+                    </p>
+                  </button>
+                )}
+
+                {/* ── Longer duration option ── */}
+                <button
+                  type="button"
+                  onClick={() => { setUse12hr(false); setReturnTs(null); }}
+                  className={`w-full text-left p-3.5 rounded-xl border-2 transition-all ${
+                    !use12hr
+                      ? 'border-accent bg-accent/5'
+                      : 'border-border hover:border-accent/40'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-sm">Longer Duration (24hrs, 2 days…)</span>
+                    {!use12hr && <span className="text-accent text-lg">✓</span>}
+                  </div>
+                  <p className="text-xs text-muted mt-0.5">Pick a custom return date &amp; time</p>
+                </button>
+
+                {/* Return time picker — only shown for longer duration */}
+                {!use12hr && (
+                  <div className="pt-1">
+                    <ReturnTimePicker pickupTs={pickupTs} value={returnTs} onChange={setReturnTs} />
+                  </div>
+                )}
+              </div>
             )}
             {durationBanner && <div className="mt-4">{durationBanner}</div>}
           </Section>

@@ -305,11 +305,33 @@ export function computeCouponDiscount(params: {
 
 export function tierEndTs(startTs: Date, tier: PackageTier, actualDays?: number): Date {
   const d = new Date(startTs);
+  if (tier === '12hr') {
+    // 12hr has fixed return times: daytime pickup → 10 PM same day; evening pickup (≥18:00) → 6 AM next day
+    if (d.getHours() >= STORE_OPEN_HOUR && d.getHours() < 18) {
+      d.setHours(STORE_CLOSE_HOUR, 0, 0, 0);
+    } else {
+      d.setDate(d.getDate() + 1);
+      d.setHours(STORE_OPEN_HOUR, 0, 0, 0);
+    }
+    return d;
+  }
   // Use actualDays for flex tiers and for the synthetic per-day 24hr rate (actualDays > 1)
   if (actualDays && actualDays > 0 && (isFlexTier(tier) || actualDays > 1)) {
     d.setHours(d.getHours() + actualDays * 24);
   } else {
     d.setHours(d.getHours() + TIER_HOURS[tier]);
+  }
+  return d;
+}
+
+/** Compute the fixed 12hr return time for a given pickup time (matches tierEndTs logic). */
+export function twelveHrReturn(pickupTs: Date): Date {
+  const d = new Date(pickupTs);
+  if (d.getHours() >= 18) {
+    d.setDate(d.getDate() + 1);
+    d.setHours(STORE_OPEN_HOUR, 0, 0, 0);
+  } else {
+    d.setHours(STORE_CLOSE_HOUR, 0, 0, 0);
   }
   return d;
 }
