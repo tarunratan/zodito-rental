@@ -23,6 +23,7 @@ async function fetchBike(id: string) {
       .select(`
         id, emoji, image_url, image_url_2, image_url_3, color, color_hex, year,
         total_rides, rating_avg, rating_count, owner_type, registration_number,
+        extra_km_rate, late_penalty_hour,
         model:bike_models!inner(
           id, name, display_name, category, cc,
           excess_km_rate, late_hourly_penalty, has_weekend_override, weekend_override_model_id,

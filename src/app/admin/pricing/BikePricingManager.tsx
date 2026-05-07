@@ -46,13 +46,15 @@ type PanelProps = {
   onDeleteCustom: (id: string) => void;
   onAddCustom: (pkg: { label: string; min_duration_hours: number; duration_hours: number; price: number; km_limit: number }) => void;
   addingCustom: boolean;
+  onSavePolicies: (extraKmRate: number, latePenaltyHour: number) => void;
+  savingPolicies: boolean;
   onClose: () => void;
 };
 
 function PricingEditPanel({
   bike, packages, customPkgs, loadingPkg, saving, error, success,
   hasOverride, onUpdateField, onResetTier, onResetAll, onSave,
-  onDeleteCustom, onAddCustom, addingCustom, onClose,
+  onDeleteCustom, onAddCustom, addingCustom, onSavePolicies, savingPolicies, onClose,
 }: PanelProps) {
   const [customLabel, setCustomLabel]   = useState('');
   const [customUnit, setCustomUnit]     = useState<'days' | 'hours'>('days');
@@ -61,6 +63,9 @@ function PricingEditPanel({
   const [customPrice, setCustomPrice]   = useState('');
   const [customKm, setCustomKm]         = useState('');
   const [formErr, setFormErr]           = useState('');
+
+  const [rateKm, setRateKm]           = useState(String(bike.extra_km_rate ?? 3));
+  const [rateLate, setRateLate]       = useState(String(bike.late_penalty_hour ?? 49));
 
   function resetForm() {
     setCustomLabel(''); setCustomUnit('days');
@@ -343,6 +348,40 @@ function PricingEditPanel({
                 </button>
               </div>
             </div>
+
+            {/* ── Policies ── */}
+            <div className="pt-3 border-t border-border">
+              <p className="text-[10px] font-bold text-muted uppercase tracking-widest pb-2">Policies</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-muted uppercase tracking-wide block mb-1">Extra KM rate (₹/km)</label>
+                  <input
+                    type="number" inputMode="decimal" min={0} step={0.5}
+                    value={rateKm}
+                    onChange={e => setRateKm(e.target.value)}
+                    className="input-field text-sm py-2 px-2.5 w-full"
+                    placeholder="3"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted uppercase tracking-wide block mb-1">Late return (₹/hr)</label>
+                  <input
+                    type="number" inputMode="decimal" min={0} step={1}
+                    value={rateLate}
+                    onChange={e => setRateLate(e.target.value)}
+                    className="input-field text-sm py-2 px-2.5 w-full"
+                    placeholder="49"
+                  />
+                </div>
+              </div>
+              <button
+                onClick={() => onSavePolicies(parseFloat(rateKm) || 3, parseFloat(rateLate) || 49)}
+                disabled={savingPolicies}
+                className="mt-3 w-full py-2 text-sm font-semibold border border-accent text-accent rounded-lg hover:bg-accent/5 transition-colors disabled:opacity-60"
+              >
+                {savingPolicies ? 'Saving…' : 'Save Policies'}
+              </button>
+            </div>
           </>
         )}
 
@@ -387,6 +426,7 @@ export function BikePricingManager({ initialBikes }: { initialBikes: Bike[] }) {
   const [success, setSuccess]         = useState<string | null>(null);
   const [addingCustom, setAddingCustom] = useState(false);
   const [showPanel, setShowPanel]     = useState(false);
+  const [savingPolicies, setSavingPolicies] = useState(false);
 
   async function openEditor(bike: Bike) {
     setEditingBike(bike);
@@ -479,6 +519,26 @@ export function BikePricingManager({ initialBikes }: { initialBikes: Bike[] }) {
     }
   }
 
+  async function savePolicies(extraKmRate: number, latePenaltyHour: number) {
+    if (!editingBike) return;
+    setSavingPolicies(true); setError(null); setSuccess(null);
+    try {
+      const res = await fetch(`/api/admin/bikes/${editingBike.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ extra_km_rate: extraKmRate, late_penalty_hour: latePenaltyHour }),
+      });
+      if (!res.ok) { const d = await res.json(); setError(d.error ?? 'Failed to save policies'); return; }
+      setBikes(prev => prev.map(b => b.id === editingBike.id ? { ...b, extra_km_rate: extraKmRate, late_penalty_hour: latePenaltyHour } : b));
+      setEditingBike((prev: Bike | null) => prev ? { ...prev, extra_km_rate: extraKmRate, late_penalty_hour: latePenaltyHour } : prev);
+      setSuccess('Policies saved');
+    } catch {
+      setError('Network error — please try again');
+    } finally {
+      setSavingPolicies(false);
+    }
+  }
+
   async function deleteCustomPackage(pkgId: string) {
     if (!editingBike) return;
     setError(null); setSuccess(null);
@@ -513,6 +573,8 @@ export function BikePricingManager({ initialBikes }: { initialBikes: Bike[] }) {
     onDeleteCustom: deleteCustomPackage,
     onAddCustom: addCustomPackage,
     addingCustom,
+    onSavePolicies: savePolicies,
+    savingPolicies,
     onClose: () => setShowPanel(false),
   };
 

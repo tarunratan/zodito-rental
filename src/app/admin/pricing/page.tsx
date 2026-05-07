@@ -23,6 +23,7 @@ export default async function AdminPricingPage() {
     .from('bikes')
     .select(`
       id, emoji, image_url, color, color_hex, registration_number,
+      extra_km_rate, late_penalty_hour,
       model:bike_models!inner(id, display_name, cc, packages:bike_model_packages(tier, price, km_limit)),
       bike_packages(tier, price, km_limit)
     `)

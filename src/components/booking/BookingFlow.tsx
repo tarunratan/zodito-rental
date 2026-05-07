@@ -379,7 +379,19 @@ export function BookingFlow({
             packageLabel={packageLabel}
             appliedCoupon={appliedCoupon}
             onCouponApply={setAppliedCoupon}
+            extraKmRate={bike.extra_km_rate ?? 3}
+            latePenaltyHour={bike.late_penalty_hour ?? 49}
           />
+
+          {/* Store hours note when drop-off falls outside operating hours */}
+          {endTs && !isWithinStoreHours(endTs) && (
+            <div className="mt-3 p-3 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-800 leading-relaxed">
+              ⏰ Drop-off at <strong>{endTs.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true,timeZone:'Asia/Kolkata'})}</strong> is outside store hours (6 AM – 10:30 PM).
+              Please call us at{' '}
+              <a href="tel:+919392912953" className="font-semibold underline">+91 93929 12953</a>{' '}
+              to arrange return.
+            </div>
+          )}
 
           {error && (
             <div className="mt-3 p-3 bg-danger/10 border border-danger/30 rounded-lg text-xs text-danger">

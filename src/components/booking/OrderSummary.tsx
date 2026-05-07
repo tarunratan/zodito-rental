@@ -14,6 +14,8 @@ export function OrderSummary({
   packageLabel,
   appliedCoupon,
   onCouponApply,
+  extraKmRate,
+  latePenaltyHour,
 }: {
   bike: Bike;
   breakdown: PriceBreakdown | null;
@@ -22,6 +24,8 @@ export function OrderSummary({
   packageLabel: string;
   appliedCoupon: AppliedCoupon | null;
   onCouponApply: (coupon: AppliedCoupon | null) => void;
+  extraKmRate?: number;
+  latePenaltyHour?: number;
 }) {
   return (
     <div className="card p-5">
@@ -107,9 +111,10 @@ export function OrderSummary({
       )}
 
       {breakdown && (
-        <div className="mt-3 text-[10px] text-muted leading-relaxed">
-          Included KM: <span className="font-semibold">{breakdown.kmLimit.toLocaleString('en-IN')}</span>.
-          Excess charged at pickup-day rate.
+        <div className="mt-3 text-[10px] text-muted leading-relaxed flex flex-wrap gap-x-3 gap-y-0.5">
+          <span>Included KM: <span className="font-semibold">{breakdown.kmLimit.toLocaleString('en-IN')} km</span></span>
+          {extraKmRate != null && <span>· Extra ₹<span className="font-semibold">{extraKmRate}</span>/km</span>}
+          {latePenaltyHour != null && <span>· Late return ₹<span className="font-semibold">{latePenaltyHour}</span>/hr</span>}
         </div>
       )}
 

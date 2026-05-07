@@ -43,26 +43,25 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
       return { price: Number(customMatch.price), label: customMatch.label, km: customMatch.km_limit };
     }
 
-    // Try exact tier match by hour count
+    // Try exact tier match by hour count — ordered ascending so smallest covering tier wins
     const tierMap: Array<[string, number]> = [
-      ['12hr',12],['24hr',24],['2day',48],['3day',72],
-      ['96hr',96],['120hr',120],['144hr',144],['7day',168],['15day',360],['30day',720],
+      ['12hr',12],['24hr',24],['36hr',36],['2day',48],['60hr',60],
+      ['3day',72],['96hr',96],['120hr',120],['144hr',144],['7day',168],['15day',360],['30day',720],
     ];
+    const TIER_DISP: Record<string, string> = {
+      '12hr':'12 hrs','24hr':'24 hrs','36hr':'36 hrs','2day':'2 days','60hr':'60 hrs',
+      '3day':'3 days','96hr':'4 days','120hr':'5 days','144hr':'6 days',
+      '7day':'7 days','15day':'15 days','30day':'30 days',
+    };
+    // Find smallest tier bracket that covers searchHrs
     for (const [tier, h] of tierMap) {
-      if (h === searchHrs) {
+      if (searchHrs <= h) {
         const pkg = packages.find((p: any) => p.tier === tier);
-        if (pkg) {
-          const label = tier === '2day' ? '2 days' : tier === '3day' ? '3 days' :
-            tier === '96hr' ? '4 days' : tier === '120hr' ? '5 days' :
-            tier === '144hr' ? '6 days' : tier === '7day' ? '7 days' :
-            tier === '15day' ? '15 days' : tier === '30day' ? '30 days' :
-            tier === '12hr' ? '12 hrs' : '24 hrs';
-          return { price: Number(pkg.price), label, km: pkg.km_limit };
-        }
+        if (pkg) return { price: Number(pkg.price), label: TIER_DISP[tier] ?? tier, km: pkg.km_limit };
       }
     }
 
-    // Fallback to 24hr daily rate × days
+    // Fallback to 24hr daily rate × days (for durations without a matching tier)
     if (pkg24 && searchHrs >= 12) {
       if (searchHrs <= 24) return { price: Number(pkg24.price), label: '24 hrs', km: pkg24.km_limit };
       const days = Math.ceil(searchHrs / 24);

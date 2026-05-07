@@ -247,6 +247,61 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // Handover inline editing (works for all booking types)
+  const [handoverEdit, setHandoverEdit] = useState<Record<string, any>>({});
+  const [handoverSaving, setHandoverSaving] = useState<string | null>(null);
+  const [handoverSaved, setHandoverSaved] = useState<string | null>(null);
+
+  function initHandover(b: Booking) {
+    setHandoverEdit(prev => ({
+      ...prev,
+      [b.id]: {
+        alternate_phone: b.alternate_phone ?? '',
+        odometer_reading: b.odometer_reading ?? '',
+        helmets_provided: b.helmets_provided ?? 0,
+        original_dl_taken: b.original_dl_taken ?? false,
+        notes: b.notes ?? '',
+        pending_amount: b.pending_amount ?? 0,
+      },
+    }));
+  }
+
+  async function saveHandover(bookingId: string) {
+    const h = handoverEdit[bookingId];
+    if (!h) return;
+    setHandoverSaving(bookingId);
+    try {
+      const res = await fetch('/api/admin/bookings/handover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          booking_id: bookingId,
+          alternate_phone: h.alternate_phone || null,
+          odometer_reading: h.odometer_reading !== '' ? Number(h.odometer_reading) : null,
+          helmets_provided: Number(h.helmets_provided) || 0,
+          original_dl_taken: !!h.original_dl_taken,
+          notes: h.notes || null,
+          pending_amount: Number(h.pending_amount) || 0,
+        }),
+      });
+      if (res.ok) {
+        setBookings(prev => prev.map(b => b.id !== bookingId ? b : {
+          ...b,
+          alternate_phone: h.alternate_phone || null,
+          odometer_reading: h.odometer_reading !== '' ? Number(h.odometer_reading) : null,
+          helmets_provided: Number(h.helmets_provided) || 0,
+          original_dl_taken: !!h.original_dl_taken,
+          notes: h.notes || null,
+          pending_amount: Number(h.pending_amount) || 0,
+        }));
+        setHandoverSaved(bookingId);
+        setTimeout(() => setHandoverSaved(null), 2500);
+      }
+    } finally {
+      setHandoverSaving(null);
+    }
+  }
+
   async function deleteBooking(booking_id: string) {
     setDeleteLoading(true);
     setDeleteError(null);
@@ -270,8 +325,10 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
     }
   }
 
-  const [extendModal, setExtendModal] = useState<{ id: string; number: string; currentEnd: string } | null>(null);
+  const [extendModal, setExtendModal] = useState<{ id: string; number: string; currentEnd: string; pendingAmount: number; kmLimit: number } | null>(null);
   const [extendNewEnd, setExtendNewEnd] = useState('');
+  const [extendAmtCollected, setExtendAmtCollected] = useState('');
+  const [extendExtraKm, setExtendExtraKm] = useState('');
   const [extendLoading, setExtendLoading] = useState(false);
   const [extendError, setExtendError] = useState<string | null>(null);
 
@@ -284,19 +341,31 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
     setExtendLoading(true);
     setExtendError(null);
     try {
+      const body: any = { booking_id: extendModal.id, new_end_ts: new Date(extendNewEnd).toISOString() };
+      if (extendAmtCollected) body.amount_collected = parseFloat(extendAmtCollected);
+      if (extendExtraKm) body.extra_km = parseInt(extendExtraKm, 10);
+
       const res = await fetch('/api/admin/bookings/extend', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ booking_id: extendModal.id, new_end_ts: new Date(extendNewEnd).toISOString() }),
+        body: JSON.stringify(body),
       });
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setBookings(prev => prev.map(b =>
-          b.id === extendModal.id ? { ...b, end_ts: new Date(extendNewEnd).toISOString() } : b
-        ));
+        setBookings(prev => prev.map(b => {
+          if (b.id !== extendModal.id) return b;
+          const upd = { ...b, end_ts: new Date(extendNewEnd).toISOString() };
+          if (data.updates?.km_limit != null) upd.km_limit = data.updates.km_limit;
+          if (data.updates?.advance_paid != null) upd.advance_paid = data.updates.advance_paid;
+          if (data.updates?.pending_amount != null) upd.pending_amount = data.updates.pending_amount;
+          if (data.updates?.payment_status) upd.payment_status = data.updates.payment_status;
+          return upd;
+        }));
         setExtendModal(null);
         setExtendNewEnd('');
+        setExtendAmtCollected('');
+        setExtendExtraKm('');
       } else {
-        const data = await res.json().catch(() => ({}));
         setExtendError(data.error ?? 'Failed to extend booking');
       }
     } catch {
@@ -620,8 +689,10 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                                 const localEnd = new Date(b.end_ts);
                                 const pad = (n: number) => n.toString().padStart(2, '0');
                                 const localStr = `${localEnd.getFullYear()}-${pad(localEnd.getMonth()+1)}-${pad(localEnd.getDate())}T${pad(localEnd.getHours())}:${pad(localEnd.getMinutes())}`;
-                                setExtendModal({ id: b.id, number: b.booking_number, currentEnd: b.end_ts });
+                                setExtendModal({ id: b.id, number: b.booking_number, currentEnd: b.end_ts, pendingAmount: b.pending_amount ?? 0, kmLimit: b.km_limit });
                                 setExtendNewEnd(localStr);
+                                setExtendAmtCollected('');
+                                setExtendExtraKm('');
                                 setExtendError(null);
                               }}
                               disabled={loading === b.id}
@@ -669,7 +740,10 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                               Delete
                             </button>
                           )}
-                          <button onClick={() => setExpanded(e => e === b.id ? null : b.id)}
+                          <button onClick={() => {
+                            if (expanded !== b.id) initHandover(b);
+                            setExpanded(e => e === b.id ? null : b.id);
+                          }}
                             className="text-xs px-2 py-1 bg-border text-primary rounded hover:bg-border/70 transition-colors">
                             {expanded === b.id ? 'Hide' : 'Details'}
                           </button>
@@ -741,6 +815,85 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                           {/* ── KYC Documents ── */}
                           {(b.kyc_dl_front_url || b.kyc_dl_back_url || b.kyc_aadhaar_front_url || b.kyc_aadhaar_back_url || b.kyc_selfie_url) && (
                             <BookingKycDocs booking={b} />
+                          )}
+
+                          {/* ── Editable Handover ── */}
+                          {handoverEdit[b.id] && (
+                            <div className="rounded-xl border-2 border-green-200 overflow-hidden mt-4">
+                              <div className="px-4 py-2 bg-green-50 flex items-center justify-between">
+                                <span className="text-xs font-bold uppercase tracking-wide text-green-700">✅ Handover Details</span>
+                                {handoverSaved === b.id && (
+                                  <span className="text-[11px] text-green-600 font-semibold">Saved ✓</span>
+                                )}
+                              </div>
+                              <div className="p-4 bg-white space-y-3">
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="text-[10px] text-muted uppercase tracking-wide block mb-0.5">Alternate Phone</label>
+                                    <input
+                                      type="tel"
+                                      value={handoverEdit[b.id].alternate_phone}
+                                      onChange={e => setHandoverEdit(p => ({ ...p, [b.id]: { ...p[b.id], alternate_phone: e.target.value } }))}
+                                      className="input-field w-full text-sm"
+                                      placeholder="+91 98765 43210"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] text-muted uppercase tracking-wide block mb-0.5">Odometer at Pickup (km)</label>
+                                    <input
+                                      type="number" min={0}
+                                      value={handoverEdit[b.id].odometer_reading}
+                                      onChange={e => setHandoverEdit(p => ({ ...p, [b.id]: { ...p[b.id], odometer_reading: e.target.value } }))}
+                                      className="input-field w-full text-sm"
+                                      placeholder="e.g. 12540"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] text-muted uppercase tracking-wide block mb-0.5">Helmets Provided</label>
+                                    <input
+                                      type="number" min={0} max={5}
+                                      value={handoverEdit[b.id].helmets_provided}
+                                      onChange={e => setHandoverEdit(p => ({ ...p, [b.id]: { ...p[b.id], helmets_provided: e.target.value } }))}
+                                      className="input-field w-full text-sm"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] text-muted uppercase tracking-wide block mb-0.5">Amount Pending (₹)</label>
+                                    <input
+                                      type="number" min={0} step={1}
+                                      value={handoverEdit[b.id].pending_amount}
+                                      onChange={e => setHandoverEdit(p => ({ ...p, [b.id]: { ...p[b.id], pending_amount: e.target.value } }))}
+                                      className="input-field w-full text-sm"
+                                    />
+                                  </div>
+                                </div>
+                                <label className="flex items-center gap-2 cursor-pointer select-none">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!handoverEdit[b.id].original_dl_taken}
+                                    onChange={e => setHandoverEdit(p => ({ ...p, [b.id]: { ...p[b.id], original_dl_taken: e.target.checked } }))}
+                                    className="w-4 h-4 accent-accent"
+                                  />
+                                  <span className="text-sm font-medium">Original DL taken</span>
+                                </label>
+                                <div>
+                                  <label className="text-[10px] text-muted uppercase tracking-wide block mb-0.5">Remarks / Notes</label>
+                                  <textarea
+                                    value={handoverEdit[b.id].notes}
+                                    onChange={e => setHandoverEdit(p => ({ ...p, [b.id]: { ...p[b.id], notes: e.target.value } }))}
+                                    className="input-field w-full h-16 resize-none text-sm"
+                                    placeholder="Any notes…"
+                                  />
+                                </div>
+                                <button
+                                  onClick={() => saveHandover(b.id)}
+                                  disabled={handoverSaving === b.id}
+                                  className="btn-accent text-sm py-2 w-full disabled:opacity-60"
+                                >
+                                  {handoverSaving === b.id ? 'Saving…' : 'Save Handover Details'}
+                                </button>
+                              </div>
+                            </div>
                           )}
 
                           {/* ── Booking Location ── */}
@@ -840,7 +993,7 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
               <p className="text-sm font-medium">{fmt(extendModal.currentEnd)}</p>
             </div>
             <div>
-              <label className="text-xs font-semibold text-muted uppercase tracking-wide block mb-1">New drop-off time</label>
+              <label className="text-xs font-semibold text-muted uppercase tracking-wide block mb-1">New drop-off time <span className="text-danger">*</span></label>
               <input
                 type="datetime-local"
                 value={extendNewEnd}
@@ -853,6 +1006,32 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                   +{Math.round((new Date(extendNewEnd).getTime() - new Date(extendModal.currentEnd).getTime()) / 3_600_000)} hrs extension
                 </p>
               )}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-muted uppercase tracking-wide block mb-1">Amount collected (₹)</label>
+                <input
+                  type="number" min={0} step={1}
+                  value={extendAmtCollected}
+                  onChange={e => setExtendAmtCollected(e.target.value)}
+                  placeholder="0"
+                  className="input-field w-full text-sm"
+                />
+                {extendModal.pendingAmount > 0 && (
+                  <p className="text-[10px] text-orange-600 mt-0.5">Pending: {rupee(extendModal.pendingAmount)}</p>
+                )}
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-muted uppercase tracking-wide block mb-1">Extra KMs added</label>
+                <input
+                  type="number" min={0} step={10}
+                  value={extendExtraKm}
+                  onChange={e => setExtendExtraKm(e.target.value)}
+                  placeholder="0"
+                  className="input-field w-full text-sm"
+                />
+                <p className="text-[10px] text-muted mt-0.5">Current: {extendModal.kmLimit} km</p>
+              </div>
             </div>
             {extendError && (
               <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{extendError}</p>

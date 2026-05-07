@@ -18,6 +18,8 @@ const updateSchema = z.object({
   image_url_3: z.string().url().optional().nullable(),
   listing_status: z.enum(['draft', 'pending_approval', 'approved', 'rejected', 'inactive']).optional(),
   is_active: z.boolean().optional(),
+  extra_km_rate: z.number().min(0).optional(),
+  late_penalty_hour: z.number().min(0).optional(),
 });
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
