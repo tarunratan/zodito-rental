@@ -80,6 +80,9 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
+  if (body.tier === '12hr' && body.actual_days) {
+    return NextResponse.json({ error: 'actual_days is not valid for the 12hr tier' }, { status: 400 });
+  }
 
   const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE, {
     auth: { autoRefreshToken: false, persistSession: false },

@@ -303,36 +303,75 @@ export function computeCouponDiscount(params: {
   return round2(Math.min(discount_value, subtotal + gstAmount));
 }
 
-export function tierEndTs(startTs: Date, tier: PackageTier, actualDays?: number): Date {
-  const d = new Date(startTs);
-  if (tier === '12hr') {
-    // Before 6 PM pickup → return at 10 PM same day (store closes)
-    // At/after 6 PM pickup → return at pickup + 12 hrs (7 PM→7 AM, 8 PM→8 AM, etc.)
-    if (d.getHours() < 18) {
-      d.setHours(STORE_CLOSE_HOUR, 0, 0, 0);
-    } else {
-      d.setHours(d.getHours() + 12, d.getMinutes(), 0, 0);
-    }
-    return d;
+// ── IST helpers (used only here; IST = UTC+5:30) ──────────────────────────────
+function _istComponents(d: Date): { year: number; month: number; date: number; hours: number; minutes: number } {
+  const shifted = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+  return {
+    year:    shifted.getUTCFullYear(),
+    month:   shifted.getUTCMonth(),
+    date:    shifted.getUTCDate(),
+    hours:   shifted.getUTCHours(),
+    minutes: shifted.getUTCMinutes(),
+  };
+}
+
+// Build a UTC Date from IST wall-clock components.
+function _fromIST(year: number, month: number, date: number, hours: number, minutes = 0): Date {
+  return new Date(Date.UTC(year, month, date, hours, minutes) - 5.5 * 60 * 60 * 1000);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Shape returned by calculate12HourSlot. */
+export interface TwelveHrSlot {
+  dropTime: Date;
+  /** Actual rental hours for this slot (may be < 12 for midday pickups). */
+  durationHours: number;
+  zone: 'morning' | 'midday' | 'evening';
+}
+
+/**
+ * Canonical 12-hour rental slot calculator — single source of truth.
+ *
+ * Rules (IST wall-clock hours):
+ *   Zone 1 — Morning  6 AM – 10 AM  → drop = pickup + 12 hrs
+ *   Zone 2 — Midday  11 AM –  5 PM  → drop = same day 10 PM IST (store close)
+ *   Zone 3 — Evening  6 PM – 10 PM  → drop = pickup + 12 hrs (next morning)
+ *
+ * Works correctly on both client (browser/IST) and server (Node/UTC) because
+ * all hour comparisons are done in IST, not in local or UTC time.
+ */
+export function calculate12HourSlot(pickupTs: Date): TwelveHrSlot {
+  const ist = _istComponents(pickupTs);
+  const h   = ist.hours;
+
+  if (h >= 11 && h < 18) {
+    // Zone 2: midday — fixed 10 PM IST same calendar day
+    const dropTime     = _fromIST(ist.year, ist.month, ist.date, STORE_CLOSE_HOUR);
+    const durationHours = (dropTime.getTime() - pickupTs.getTime()) / 3_600_000;
+    return { dropTime, durationHours, zone: 'midday' };
   }
+
+  // Zone 1 (6–10 AM) and Zone 3 (6–10 PM): pickup + 12 hours
+  const dropTime = new Date(pickupTs.getTime() + 12 * 3_600_000);
+  const zone: TwelveHrSlot['zone'] = h <= 10 ? 'morning' : 'evening';
+  return { dropTime, durationHours: 12, zone };
+}
+
+/** Returns just the drop-off Date for a 12hr booking. */
+export function twelveHrReturn(pickupTs: Date): Date {
+  return calculate12HourSlot(pickupTs).dropTime;
+}
+
+export function tierEndTs(startTs: Date, tier: PackageTier, actualDays?: number): Date {
+  if (tier === '12hr') {
+    return calculate12HourSlot(startTs).dropTime;
+  }
+  const d = new Date(startTs);
   // Use actualDays for flex tiers and for the synthetic per-day 24hr rate (actualDays > 1)
   if (actualDays && actualDays > 0 && (isFlexTier(tier) || actualDays > 1)) {
     d.setHours(d.getHours() + actualDays * 24);
   } else {
     d.setHours(d.getHours() + TIER_HOURS[tier]);
-  }
-  return d;
-}
-
-/** Compute the 12hr return time for a given pickup time (matches tierEndTs logic). */
-export function twelveHrReturn(pickupTs: Date): Date {
-  const d = new Date(pickupTs);
-  if (d.getHours() < 18) {
-    // Before 6 PM → return at 10 PM same day
-    d.setHours(STORE_CLOSE_HOUR, 0, 0, 0);
-  } else {
-    // At/after 6 PM → pickup + 12 hours
-    d.setHours(d.getHours() + 12, d.getMinutes(), 0, 0);
   }
   return d;
 }

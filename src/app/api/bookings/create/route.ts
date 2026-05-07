@@ -63,6 +63,10 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
+  // 12hr tier uses a fixed slot formula — actual_days would silently double the price
+  if (body.tier === '12hr' && body.actual_days) {
+    return NextResponse.json({ error: 'actual_days is not valid for the 12hr tier' }, { status: 400 });
+  }
 
   // --- 3. MOCK MODE
   if (isMockMode()) {

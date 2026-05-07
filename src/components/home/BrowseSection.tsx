@@ -4,7 +4,7 @@ import { useMemo, useState, useCallback, useEffect } from 'react';
 import { BikeCard } from './BikeCard';
 import { cn } from '@/lib/utils';
 import type { BikeCategory } from '@/lib/supabase/types';
-import { STORE_OPEN_HOUR, STORE_CLOSE_HOUR } from '@/lib/pricing';
+import { STORE_OPEN_HOUR, STORE_CLOSE_HOUR, calculate12HourSlot } from '@/lib/pricing';
 
 type BikeRow = any;
 type VehicleType = 'all' | 'scooter' | 'motorcycle';
@@ -58,13 +58,9 @@ function toLocalStr(d: Date): string {
   return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:00`;
 }
 
-// 12hr return: before 6 PM pickup → 10 PM same day; at/after 6 PM → pickup + 12 hrs
+// 12hr slot: delegates to the shared IST-aware helper in pricing.ts
 function twelveHrReturn(from: string): string {
-  const d = new Date(from);
-  if (d.getHours() < 18) {
-    return toLocalStr(new Date(d.getFullYear(), d.getMonth(), d.getDate(), STORE_CLOSE_HOUR, 0, 0, 0));
-  }
-  return toLocalStr(new Date(d.getTime() + 12 * 3_600_000));
+  return toLocalStr(calculate12HourSlot(new Date(from)).dropTime);
 }
 
 // Extract the date part "YYYY-MM-DD" from a local string
