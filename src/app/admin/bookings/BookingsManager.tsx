@@ -715,11 +715,11 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                               Extend
                             </button>
                           )}
-                          {isOverdue(b) && (
+                          {(isOverdue(b) || b.status === 'ongoing') && (
                             <button
                               onClick={() => {
                                 setActionModal({ id: b.id, action: 'no_show' });
-                                setActionNotes('Customer no-show — bike released');
+                                setActionNotes(b.status === 'ongoing' ? 'Force cancelled by admin' : 'Customer no-show — bike released');
                                 setActionError(null);
                               }}
                               disabled={loading === b.id}
@@ -734,7 +734,7 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                               Mark Return
                             </button>
                           )}
-                                          {['confirmed', 'ongoing', 'pending_payment'].includes(b.status) && (
+                          {['confirmed', 'pending_payment'].includes(b.status) && (
                             <button onClick={() => { setActionModal({ id: b.id, action: 'cancelled' }); setActionNotes(''); setActionError(null); }}
                               className="text-xs px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 transition-colors">
                               Cancel
@@ -933,7 +933,7 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                actionModal.action === 'cancelled' ? 'Cancel Booking?' : 'Process Refund?'}
             </h3>
             {actionModal.action === 'no_show' && (
-              <p className="text-xs text-muted">Customer did not show up for pickup. This will cancel the booking and free the bike.</p>
+              <p className="text-xs text-muted">This will cancel the booking and free the bike immediately.</p>
             )}
             {['cancelled', 'completed', 'no_show'].includes(actionModal.action) && (
               <textarea value={actionNotes} onChange={e => setActionNotes(e.target.value)}
