@@ -21,6 +21,7 @@ export function RazorpayCheckout({
   tier,
   customPackageId,
   actualDays,
+  durationHours,
   pickupTs,
   extraHelmets,
   mobileHolder,
@@ -36,6 +37,7 @@ export function RazorpayCheckout({
   tier: PackageTier;
   customPackageId?: string;
   actualDays?: number;
+  durationHours?: number;
   pickupTs: Date | null;
   extraHelmets: number;
   mobileHolder: boolean;
@@ -107,6 +109,7 @@ export function RazorpayCheckout({
           bike_id: bikeId,
           ...(customPackageId ? { custom_package_id: customPackageId } : { tier }),
           ...(actualDays ? { actual_days: actualDays } : {}),
+          ...(customPackageId && durationHours ? { duration_hours: Math.round(durationHours) } : {}),
           start_ts: pickupTs.toISOString(),
           extra_helmet_count: extraHelmets,
           mobile_holder: mobileHolder,
@@ -160,6 +163,7 @@ export function RazorpayCheckout({
         bike_id: bikeId,
         ...(customPackageId ? { custom_package_id: customPackageId } : { tier }),
         ...(actualDays ? { actual_days: actualDays } : {}),
+        ...(customPackageId && durationHours ? { duration_hours: Math.round(durationHours) } : {}),
         start_ts: pickupTs.toISOString(),
         extra_helmet_count: extraHelmets,
         mobile_holder: mobileHolder,

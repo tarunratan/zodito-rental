@@ -393,6 +393,7 @@ export function BookingFlow({
               tier={tier ?? '24hr'}
               customPackageId={customPkg?.id}
               actualDays={actualDays && actualDays > 1 ? actualDays : undefined}
+              durationHours={isCustom ? durationHours : undefined}
               pickupTs={pickupTs}
               extraHelmets={extraHelmets}
               mobileHolder={mobileHolder}

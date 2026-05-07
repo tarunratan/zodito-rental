@@ -26,7 +26,7 @@ export async function GET() {
 
   const results = await Promise.all(
     Object.entries(paths).map(([key, path]) =>
-      supabase.storage.from('kyc-docs').createSignedUploadUrl(path).then(r => ({ key, path, r }))
+      supabase.storage.from('kyc-docs').createSignedUploadUrl(path).then((r: any) => ({ key, path, r }))
     )
   );
 

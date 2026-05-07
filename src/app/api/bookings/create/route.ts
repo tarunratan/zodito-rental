@@ -27,6 +27,8 @@ const bodySchema = z.object({
   tier: z.enum(ALL_TIERS).optional(),
   custom_package_id: z.string().uuid().optional(),
   actual_days: z.number().int().min(2).max(29).optional(),
+  // Actual booked hours for custom range packages (e.g. 192 for 8 days in a "7-9 day" bracket)
+  duration_hours: z.number().int().min(1).max(8760).optional(),
   start_ts: z.string(),
   extra_helmet_count: z.number().int().min(0).max(3).default(0),
   mobile_holder: z.boolean().default(false),
@@ -118,9 +120,16 @@ export async function POST(req: NextRequest) {
   if (body.custom_package_id && !customPkg) {
     return NextResponse.json({ error: 'Custom package not found or inactive' }, { status: 404 });
   }
-  const resolvedEndTs = customPkg
-    ? new Date(startTs.getTime() + customPkg.duration_hours * 3_600_000)
-    : endTs;
+  let resolvedEndTs: Date;
+  if (customPkg) {
+    const dh = body.duration_hours ?? customPkg.duration_hours;
+    if (dh < (customPkg.min_duration_hours ?? 0) || dh > customPkg.duration_hours) {
+      return NextResponse.json({ error: 'Booking duration is outside the package range' }, { status: 400 });
+    }
+    resolvedEndTs = new Date(startTs.getTime() + dh * 3_600_000);
+  } else {
+    resolvedEndTs = endTs;
+  }
 
   // --- 5. Check freeze window overlap
   const b = bike as any;

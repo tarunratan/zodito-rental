@@ -118,7 +118,7 @@ function HourPicker({ value, options, onChange }: {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute top-full mt-1 left-0 w-28 bg-white border border-border rounded-xl shadow-xl z-50 overflow-y-auto max-h-52">
+          <div className="absolute top-full mt-1 right-0 w-28 bg-white border border-border rounded-xl shadow-xl z-50 overflow-y-auto max-h-52">
             {options.map(o => (
               <button
                 key={o.value}
