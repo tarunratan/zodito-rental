@@ -90,7 +90,7 @@ function PricingEditPanel({
   const previewReady = customLabel.trim() && toHours > 0 && customPrice;
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col flex-1 min-h-0">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 pt-4 pb-3 border-b border-border shrink-0">
         <div className="w-10 h-10 rounded-lg overflow-hidden bg-primary/5 flex items-center justify-center shrink-0">
@@ -574,9 +574,10 @@ export function BikePricingManager({ initialBikes }: { initialBikes: Bike[] }) {
           })}
         </div>
 
-        {/* ── Desktop sidebar ── */}
+        {/* ── Desktop sidebar — explicit height so inner overflow-y-auto can scroll ── */}
         {editingBike ? (
-          <div className="hidden lg:flex flex-col card overflow-hidden sticky top-20 h-[88vh]">
+          <div className="hidden lg:flex flex-col card overflow-hidden sticky top-20"
+               style={{ height: 'calc(100vh - 6rem)' }}>
             <PricingEditPanel key={editingBike.id} {...panelProps} />
           </div>
         ) : (
@@ -587,13 +588,13 @@ export function BikePricingManager({ initialBikes }: { initialBikes: Bike[] }) {
         )}
       </div>
 
-      {/* ── Mobile bottom sheet ── */}
+      {/* ── Mobile bottom sheet — explicit height so inner overflow-y-auto can scroll ── */}
       {editingBike && showPanel && (
         <>
           <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setShowPanel(false)} />
           <div
             className="fixed inset-x-0 bottom-0 z-50 lg:hidden bg-white rounded-t-2xl shadow-2xl flex flex-col"
-            style={{ maxHeight: '92dvh' }}
+            style={{ height: '92dvh' }}
           >
             <div className="flex justify-center pt-3 pb-1 shrink-0">
               <div className="w-10 h-1 bg-border rounded-full" />
