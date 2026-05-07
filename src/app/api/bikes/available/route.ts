@@ -29,14 +29,21 @@ export async function GET(req: NextRequest) {
   // pending_payment bookings expire after 15 minutes — exclude stale ones
   const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
 
-  // Parallel: bookings overlap + freeze overlap — independent reads
-  const [bookedRes, frozenRes] = await Promise.all([
+  // Three independent reads in parallel:
+  // 1. confirmed/pending_payment — time-overlap check (they end naturally when end_ts passes)
+  // 2. ongoing — unconditional: bike is physically out until Mark Return, regardless of scheduled end_ts
+  // 3. frozen slots — time-overlap check
+  const [timeBlockedRes, ongoingRes, frozenRes] = await Promise.all([
     supabase
       .from('bookings')
       .select('bike_id')
-      .or(`status.in.(confirmed,ongoing),and(status.eq.pending_payment,created_at.gt.${fifteenMinAgo})`)
+      .or(`status.eq.confirmed,and(status.eq.pending_payment,created_at.gt.${fifteenMinAgo})`)
       .lt('start_ts', toIso)
       .gt('end_ts', fromIso),
+    supabase
+      .from('bookings')
+      .select('bike_id')
+      .eq('status', 'ongoing'),
     supabase
       .from('bikes')
       .select('id')
@@ -47,7 +54,8 @@ export async function GET(req: NextRequest) {
   ]);
 
   const unavailableIds = new Set<string>();
-  (bookedRes.data ?? []).forEach((r: any) => unavailableIds.add(r.bike_id));
+  (timeBlockedRes.data ?? []).forEach((r: any) => unavailableIds.add(r.bike_id));
+  (ongoingRes.data ?? []).forEach((r: any) => unavailableIds.add(r.bike_id));
   (frozenRes.data ?? []).forEach((r: any) => unavailableIds.add(r.id));
 
   let query = supabase
