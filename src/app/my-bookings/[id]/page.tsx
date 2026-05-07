@@ -46,8 +46,10 @@ export default async function BookingDetailPage({ params }: { params: { id: stri
 
       <div className="card p-6 mb-4">
         <div className="flex items-start gap-4">
-          <div className="w-20 h-20 rounded-lg bg-primary/5 flex items-center justify-center text-5xl">
-            {bike.emoji}
+          <div className="w-20 h-20 rounded-lg bg-primary/5 flex items-center justify-center text-5xl overflow-hidden shrink-0">
+            {bike.image_url
+              ? <img src={bike.image_url} alt={bike.model.display_name} className="w-full h-full object-cover" /> // eslint-disable-line
+              : <span>{bike.emoji}</span>}
           </div>
           <div>
             <h1 className="font-display font-bold text-2xl">
