@@ -58,14 +58,13 @@ function toLocalStr(d: Date): string {
   return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:00`;
 }
 
-// Fixed 12hr return: before 6 PM pickup → 10 PM same day; 6 PM+ pickup → 6 AM next day
+// 12hr return: before 6 PM pickup → 10 PM same day; at/after 6 PM → pickup + 12 hrs
 function twelveHrReturn(from: string): string {
   const d = new Date(from);
-  if (d.getHours() >= 18) {
-    const next = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, STORE_OPEN_HOUR, 0, 0, 0);
-    return toLocalStr(next);
+  if (d.getHours() < 18) {
+    return toLocalStr(new Date(d.getFullYear(), d.getMonth(), d.getDate(), STORE_CLOSE_HOUR, 0, 0, 0));
   }
-  return toLocalStr(new Date(d.getFullYear(), d.getMonth(), d.getDate(), STORE_CLOSE_HOUR, 0, 0, 0));
+  return toLocalStr(new Date(d.getTime() + 12 * 3_600_000));
 }
 
 // Extract the date part "YYYY-MM-DD" from a local string

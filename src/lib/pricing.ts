@@ -306,12 +306,12 @@ export function computeCouponDiscount(params: {
 export function tierEndTs(startTs: Date, tier: PackageTier, actualDays?: number): Date {
   const d = new Date(startTs);
   if (tier === '12hr') {
-    // 12hr has fixed return times: daytime pickup → 10 PM same day; evening pickup (≥18:00) → 6 AM next day
-    if (d.getHours() >= STORE_OPEN_HOUR && d.getHours() < 18) {
+    // Before 6 PM pickup → return at 10 PM same day (store closes)
+    // At/after 6 PM pickup → return at pickup + 12 hrs (7 PM→7 AM, 8 PM→8 AM, etc.)
+    if (d.getHours() < 18) {
       d.setHours(STORE_CLOSE_HOUR, 0, 0, 0);
     } else {
-      d.setDate(d.getDate() + 1);
-      d.setHours(STORE_OPEN_HOUR, 0, 0, 0);
+      d.setHours(d.getHours() + 12, d.getMinutes(), 0, 0);
     }
     return d;
   }
@@ -324,14 +324,15 @@ export function tierEndTs(startTs: Date, tier: PackageTier, actualDays?: number)
   return d;
 }
 
-/** Compute the fixed 12hr return time for a given pickup time (matches tierEndTs logic). */
+/** Compute the 12hr return time for a given pickup time (matches tierEndTs logic). */
 export function twelveHrReturn(pickupTs: Date): Date {
   const d = new Date(pickupTs);
-  if (d.getHours() >= 18) {
-    d.setDate(d.getDate() + 1);
-    d.setHours(STORE_OPEN_HOUR, 0, 0, 0);
-  } else {
+  if (d.getHours() < 18) {
+    // Before 6 PM → return at 10 PM same day
     d.setHours(STORE_CLOSE_HOUR, 0, 0, 0);
+  } else {
+    // At/after 6 PM → pickup + 12 hours
+    d.setHours(d.getHours() + 12, d.getMinutes(), 0, 0);
   }
   return d;
 }
