@@ -28,16 +28,20 @@ export async function GET(req: NextRequest) {
 
   // pending_payment bookings expire after 15 minutes — exclude stale ones
   const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  // confirmed bookings free the bike 2 hours after pickup if admin hasn't marked ongoing
+  // (no-show / scammer protection — prevents a single bad booking from locking a bike all day)
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
 
   // Three independent reads in parallel:
-  // 1. confirmed/pending_payment — time-overlap check (they end naturally when end_ts passes)
-  // 2. ongoing — unconditional: bike is physically out until Mark Return, regardless of scheduled end_ts
+  // 1. confirmed — time-overlap + start_ts recency (auto-expires 2hrs after unpicked pickup)
+  //    pending_payment — time-overlap + created_at recency (expires 15min)
+  // 2. ongoing — unconditional: bike is physically out until Mark Return, regardless of end_ts
   // 3. frozen slots — time-overlap check
   const [timeBlockedRes, ongoingRes, frozenRes] = await Promise.all([
     supabase
       .from('bookings')
       .select('bike_id')
-      .or(`status.eq.confirmed,and(status.eq.pending_payment,created_at.gt.${fifteenMinAgo})`)
+      .or(`and(status.eq.confirmed,start_ts.gt.${twoHoursAgo}),and(status.eq.pending_payment,created_at.gt.${fifteenMinAgo})`)
       .lt('start_ts', toIso)
       .gt('end_ts', fromIso),
     supabase

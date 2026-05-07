@@ -671,9 +671,18 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                       </td>
                       <td className="px-4 py-3">
                         {isOverdue(b) ? (
-                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">
-                            Awaiting Pickup
-                          </span>
+                          <div className="space-y-0.5">
+                            <span className="block text-[11px] font-semibold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">
+                              Awaiting Pickup
+                            </span>
+                            {(() => {
+                              const minsElapsed = Math.floor((now.getTime() - new Date(b.start_ts).getTime()) / 60000);
+                              const minsLeft = 120 - minsElapsed;
+                              return minsLeft > 0
+                                ? <span className="block text-[10px] text-orange-500 px-2">bike free in ~{minsLeft}m</span>
+                                : <span className="block text-[10px] text-red-500 px-2 font-semibold">bike now visible on site</span>;
+                            })()}
+                          </div>
                         ) : (
                           <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${STATUS_COLORS[b.status] ?? ''}`}>
                             {b.status.replace(/_/g, ' ')}
@@ -762,7 +771,7 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                             <div>
                               <p className="text-xs font-semibold text-muted uppercase mb-1">Pricing</p>
                               <p>Base: {rupee(b.base_price)}</p>
-                              <p>GST: {rupee(b.gst_amount)}</p>
+                              {b.gst_amount > 0 && <p>GST: {rupee(b.gst_amount)}</p>}
                               <p>Deposit: {rupee(b.security_deposit)}</p>
                               {b.excess_km_charge > 0 && <p>Excess KM: {rupee(b.excess_km_charge)}</p>}
                               {b.damage_charge > 0 && <p>Damage: {rupee(b.damage_charge)}</p>}

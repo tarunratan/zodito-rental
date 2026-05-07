@@ -27,17 +27,27 @@ export async function GET(
   const toIso     = toTs.toISOString();
   const bikeId    = params.id;
 
-  // pending_payment expires after 15 minutes
+  // pending_payment expires after 15 minutes; confirmed expires 2hrs after unpicked pickup
   const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const twoHoursAgo   = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
 
-  const [bookingRes, bikeRes] = await Promise.all([
+  const [timeBlockedRes, ongoingRes, bikeRes] = await Promise.all([
+    // confirmed + pending_payment — only block during time window (with recency guard)
     supabase
       .from('bookings')
       .select('id')
       .eq('bike_id', bikeId)
-      .or(`status.in.(confirmed,ongoing),and(status.eq.pending_payment,created_at.gt.${fifteenMinAgo})`)
+      .or(`and(status.eq.confirmed,start_ts.gt.${twoHoursAgo}),and(status.eq.pending_payment,created_at.gt.${fifteenMinAgo})`)
       .lt('start_ts', toIso)
       .gt('end_ts', fromIso)
+      .limit(1)
+      .maybeSingle(),
+    // ongoing — unconditional: bike is physically out until admin marks Return
+    supabase
+      .from('bookings')
+      .select('id')
+      .eq('bike_id', bikeId)
+      .eq('status', 'ongoing')
       .limit(1)
       .maybeSingle(),
     supabase
@@ -47,7 +57,7 @@ export async function GET(
       .maybeSingle(),
   ]);
 
-  if (bookingRes.data) {
+  if (timeBlockedRes.data || ongoingRes.data) {
     return NextResponse.json({ available: false }, { headers: { 'Cache-Control': 'no-store' } });
   }
 
