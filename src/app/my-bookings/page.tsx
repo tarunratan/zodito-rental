@@ -18,6 +18,8 @@ async function fetchBookings() {
   // Use the user's own session — bookings_customer_read RLS policy filters to their rows.
   // This avoids any dependency on the service role key.
   const supabase = await createSupabaseServer();
+  const currentUser = await getCurrentAppUser();
+  if (!currentUser) return [];
   const { data, error } = await supabase
     .from('bookings')
     .select(`
@@ -30,6 +32,7 @@ async function fetchBookings() {
         vendor:vendors(business_name, pickup_area, pickup_address, contact_phone)
       )
     `)
+    .eq('user_id', currentUser.id)
     .order('start_ts', { ascending: false });
 
   if (error) {
