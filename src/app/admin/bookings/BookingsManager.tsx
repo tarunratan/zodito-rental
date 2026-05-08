@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { OnlineBookingDetailModal } from './OnlineBookingDetailModal';
 
 type Booking = {
   id: string;
@@ -387,6 +388,9 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
   const [manualTab, setManualTab] = useState<ManualTab>('customer');
   const [kycUploading, setKycUploading] = useState<Record<string, boolean>>({});
 
+  // Detail modal for online bookings
+  const [detailBooking, setDetailBooking] = useState<Booking | null>(null);
+
   async function uploadKycDoc(file: File, docType: string) {
     setKycUploading(p => ({ ...p, [docType]: true }));
     const fd = new FormData();
@@ -613,7 +617,14 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                     <tr
                       key={b.id}
                       className={`border-b border-border hover:bg-bg/40 cursor-pointer transition-colors ${expanded === b.id ? 'bg-bg/60' : ''}`}
-                      onClick={() => setExpanded(e => e === b.id ? null : b.id)}
+                      onClick={() => {
+                        if (b.source !== 'manual') {
+                          setDetailBooking(b);
+                        } else {
+                          if (expanded !== b.id) initHandover(b);
+                          setExpanded(e => e === b.id ? null : b.id);
+                        }
+                      }}
                     >
                       <td className="px-4 py-3">
                         <div className="font-mono text-xs font-semibold text-accent">{b.booking_number}</div>
@@ -755,11 +766,15 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                             </button>
                           )}
                           <button onClick={() => {
+                            if (b.source !== 'manual') {
+                              setDetailBooking(b);
+                              return;
+                            }
                             if (expanded !== b.id) initHandover(b);
                             setExpanded(e => e === b.id ? null : b.id);
                           }}
                             className="text-xs px-2 py-1 bg-border text-primary rounded hover:bg-border/70 transition-colors">
-                            {expanded === b.id ? 'Hide' : 'Details'}
+                            {b.source !== 'manual' ? 'Details' : (expanded === b.id ? 'Hide' : 'Details')}
                           </button>
                         </div>
                       </td>
@@ -1367,6 +1382,30 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
           </div>
         </div>
       )}
+
+      {/* Online booking detail modal */}
+      <OnlineBookingDetailModal
+        booking={detailBooking}
+        onClose={() => setDetailBooking(null)}
+        onSaved={(updates) => {
+          if (!detailBooking) return;
+          const next = { ...detailBooking, ...updates } as Booking;
+          setDetailBooking(next);
+          setBookings(prev => prev.map(x => x.id === detailBooking.id ? next : x));
+        }}
+        onActioned={(next) => {
+          if (!detailBooking) return;
+          const nowIso = new Date().toISOString();
+          const merged: Booking = { ...detailBooking };
+          if (next.status === 'ongoing') { merged.status = 'ongoing'; merged.picked_up_at = nowIso; }
+          if (next.status === 'completed') { merged.status = 'completed'; merged.returned_at = nowIso; }
+          if (next.status === 'cancelled') { merged.status = 'cancelled'; merged.cancelled_at = nowIso; if (next.cancellation_reason !== undefined) merged.cancellation_reason = next.cancellation_reason; }
+          if (next.status === 'confirmed') { merged.status = 'confirmed'; }
+          if (next.payment_status) merged.payment_status = next.payment_status;
+          setDetailBooking(merged);
+          setBookings(prev => prev.map(x => x.id === detailBooking.id ? merged : x));
+        }}
+      />
     </div>
   );
 }

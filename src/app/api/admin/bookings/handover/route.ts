@@ -13,6 +13,8 @@ const schema = z.object({
   original_dl_taken: z.boolean().optional(),
   notes: z.string().nullable().optional(),
   pending_amount: z.number().min(0).optional(),
+  security_deposit: z.number().min(0).optional(),
+  payment_method_detail: z.enum(['cash', 'upi', 'online', 'partial_online']).nullable().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -36,6 +38,8 @@ export async function POST(req: NextRequest) {
     updates.pending_amount = fields.pending_amount;
     if (fields.pending_amount === 0) updates.payment_status = 'paid';
   }
+  if (fields.security_deposit !== undefined) updates.security_deposit = fields.security_deposit;
+  if (fields.payment_method_detail !== undefined) updates.payment_method_detail = fields.payment_method_detail;
 
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ ok: true });
