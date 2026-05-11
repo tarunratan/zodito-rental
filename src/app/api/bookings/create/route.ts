@@ -264,6 +264,21 @@ export async function POST(req: NextRequest) {
 
   if (insertErr) {
     if (insertErr.code === '23P01') {
+      // Look up the actual conflicting booking so we can log it for debugging.
+      // Doesn't affect the customer response — kept generic for them.
+      const { data: conflicts } = await admin
+        .from('bookings')
+        .select('id, booking_number, status, start_ts, end_ts, payment_deadline')
+        .eq('bike_id', bike.id)
+        .in('status', ['confirmed', 'ongoing', 'pending_payment'])
+        .lt('start_ts', resolvedEndTs.toISOString())
+        .gt('end_ts', startTs.toISOString());
+      console.warn('[booking-create] DB exclusion constraint rejected insert', {
+        user_id: user.id,
+        bike_id: bike.id,
+        requested: { start: startTs.toISOString(), end: resolvedEndTs.toISOString() },
+        conflicting_bookings: conflicts ?? [],
+      });
       return NextResponse.json(
         { error: 'This bike is already booked for that time slot. Try a different time.' },
         { status: 409 }

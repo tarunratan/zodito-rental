@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { findConflictingBooking, PENDING_PAYMENT_TTL_MIN } from '@/lib/booking-overlap';
 
 export const runtime = 'nodejs';
 
@@ -85,17 +86,19 @@ export async function POST(req: NextRequest) {
   const startIso   = startTs.toISOString();
   const endIso     = endTs.toISOString();
 
-  // Parallel: overlap check + bike freeze check — independent reads
+  // Parallel: candidate-overlap fetch + bike freeze check — independent reads.
+  // We pull ONLY statuses that can possibly block (confirmed/ongoing/pending_payment)
+  // — completed, cancelled, payment_failed and no_show never block a future slot.
+  // Final status-recency filter is applied in JS via findConflictingBooking()
+  // so the canonical rule lives in one place and is unit-tested.
   const [overlapRes, bikeRes] = await Promise.all([
     supabase
       .from('bookings')
-      .select('id, booking_number')
+      .select('id, booking_number, status, start_ts, end_ts, created_at')
       .eq('bike_id', bike_id)
-      .not('status', 'in', '(cancelled,payment_failed)')
+      .in('status', ['confirmed', 'ongoing', 'pending_payment'])
       .lt('start_ts', endIso)
-      .gt('end_ts', startIso)
-      .limit(1)
-      .maybeSingle(),
+      .gt('end_ts', startIso),
     supabase
       .from('bikes')
       .select('id, frozen_from, frozen_until, freeze_reason')
@@ -103,9 +106,20 @@ export async function POST(req: NextRequest) {
       .maybeSingle(),
   ]);
 
-  if (overlapRes.data) {
+  const conflict = findConflictingBooking(startTs, endTs, overlapRes.data ?? [], {
+    pendingTtlMin: PENDING_PAYMENT_TTL_MIN,
+  });
+  if (conflict) {
+    console.warn('[manual-booking] slot conflict', {
+      bike_id,
+      requested: { start: startIso, end: endIso },
+      conflicting_booking_id: conflict.id,
+      conflicting_booking_number: conflict.booking_number,
+      conflicting_status: conflict.status,
+      conflicting_range: { start: conflict.start_ts, end: conflict.end_ts },
+    });
     return NextResponse.json(
-      { error: `Bike already booked (#${overlapRes.data.booking_number}) for that period` },
+      { error: `Bike already booked (#${conflict.booking_number}) for that period` },
       { status: 409 }
     );
   }
