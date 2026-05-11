@@ -25,6 +25,8 @@ type DetailBooking = {
   damage_charge: number;
   notes: string | null;
   created_at: string;
+  handover_saved_at?: string | null;
+  handover_saved_by?: string | null;
   source?: string;
   customer_name?: string | null;
   customer_phone?: string | null;
@@ -39,6 +41,23 @@ type DetailBooking = {
   user_id?: string | null;
   user: { id: string; email: string | null; first_name: string | null; last_name: string | null; phone: string | null } | null;
   bike: { id: string; registration_number: string | null; color: string | null; emoji: string; image_url?: string | null; model: { display_name: string } | null } | null;
+};
+
+type HandoverLog = {
+  id: string;
+  kind: 'save' | 'confirm' | 'start' | 'complete' | 'cancel' | 'refund';
+  admin_name: string | null;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+};
+
+const LOG_LABELS: Record<HandoverLog['kind'], string> = {
+  save:     'Updated handover details',
+  confirm:  'Confirmed booking',
+  start:    'Started ride',
+  complete: 'Completed ride',
+  cancel:   'Cancelled booking',
+  refund:   'Marked refunded',
 };
 
 type DetailTab = 'customer' | 'kyc' | 'trip' | 'payment' | 'handover';
@@ -115,16 +134,31 @@ export function OnlineBookingDetailModal({
 }) {
   const [tab, setTab] = useState<DetailTab>('customer');
 
-  const [edit, setEdit] = useState({
+  type EditState = {
+    alternate_phone: string;
+    odometer_reading: string | number;
+    helmets_provided: number;
+    original_dl_taken: boolean;
+    notes: string;
+    pending_amount: number;
+    security_deposit: number;
+    payment_method_detail: '' | 'cash' | 'upi' | 'online' | 'partial_online';
+  };
+
+  const [edit, setEdit] = useState<EditState>({
     alternate_phone: '',
-    odometer_reading: '' as string | number,
-    helmets_provided: 0 as number,
+    odometer_reading: '',
+    helmets_provided: 0,
     original_dl_taken: false,
     notes: '',
-    pending_amount: 0 as number,
-    security_deposit: 0 as number,
-    payment_method_detail: '' as '' | 'cash' | 'upi' | 'online' | 'partial_online',
+    pending_amount: 0,
+    security_deposit: 0,
+    payment_method_detail: '',
   });
+  // Snapshot of the values that were last successfully saved — used to compute
+  // `isDirty` so the "Mark Pickup" button can require a fresh save before it
+  // becomes clickable. Critical to the save→verify→start workflow.
+  const [baseline, setBaseline] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedOk, setSavedOk] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -137,6 +171,8 @@ export function OnlineBookingDetailModal({
   const [confirmAction, setConfirmAction] = useState<{ action: string; reasonRequired: boolean; label: string } | null>(null);
   const [reasonText, setReasonText] = useState('');
 
+  const [logs, setLogs] = useState<HandoverLog[] | null>(null);
+
   // Reset state when booking changes
   useEffect(() => {
     if (!booking) return;
@@ -147,7 +183,8 @@ export function OnlineBookingDetailModal({
     setActionError(null);
     setConfirmAction(null);
     setReasonText('');
-    setEdit({
+    setLogs(null);
+    const initial: EditState = {
       alternate_phone: booking.alternate_phone ?? '',
       odometer_reading: booking.odometer_reading ?? '',
       helmets_provided: booking.helmets_provided ?? 0,
@@ -156,8 +193,22 @@ export function OnlineBookingDetailModal({
       pending_amount: booking.pending_amount ?? 0,
       security_deposit: booking.security_deposit ?? 0,
       payment_method_detail: (booking.payment_method_detail as any) ?? '',
-    });
+    };
+    setEdit(initial);
+    // Treat the freshly-loaded values as the baseline so isDirty starts false.
+    setBaseline(initial);
   }, [booking]);
+
+  // Pull audit log when the Handover tab opens — small fetch, only once.
+  useEffect(() => {
+    if (!booking || tab !== 'handover' || logs !== null) return;
+    let abort = false;
+    fetch(`/api/admin/bookings/handover-logs?booking_id=${booking.id}`)
+      .then(r => r.ok ? r.json() : { logs: [] })
+      .then(d => { if (!abort) setLogs(d.logs ?? []); })
+      .catch(() => { if (!abort) setLogs([]); });
+    return () => { abort = true; };
+  }, [booking, tab, logs]);
 
   // Load KYC signed URLs when KYC tab opens
   useEffect(() => {
@@ -183,7 +234,7 @@ export function OnlineBookingDetailModal({
   if (!booking) return null;
 
   async function save(fieldsToSend: Record<string, unknown>) {
-    if (!booking) return;
+    if (!booking) return false;
     setSaving(true);
     setSaveError(null);
     try {
@@ -192,13 +243,16 @@ export function OnlineBookingDetailModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ booking_id: booking.id, ...fieldsToSend }),
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
         setSaveError(data.error ?? 'Failed to save');
         return false;
       }
-      onSaved(fieldsToSend as Partial<DetailBooking>);
+      onSaved({ ...(fieldsToSend as Partial<DetailBooking>), handover_saved_at: data.saved_at ?? undefined, handover_saved_by: data.saved_by ?? undefined });
+      // Update the baseline so subsequent edits are detected as dirty.
+      setBaseline(edit);
       setSavedOk(true);
+      setLogs(null);  // force refresh on next open of handover tab
       setTimeout(() => setSavedOk(false), 2200);
       return true;
     } catch {
@@ -208,6 +262,23 @@ export function OnlineBookingDetailModal({
       setSaving(false);
     }
   }
+
+  // Required for ride-start. Mirrors the server-side gate in /update.
+  function pickupValidationErrors(): string[] {
+    const out: string[] = [];
+    if (edit.odometer_reading === '' || edit.odometer_reading == null) {
+      out.push('Odometer at pickup is required.');
+    }
+    if (Number(edit.odometer_reading) < 0) {
+      out.push('Odometer cannot be negative.');
+    }
+    return out;
+  }
+
+  const isDirty = baseline ? JSON.stringify(edit) !== JSON.stringify(baseline) : false;
+  const everSaved = !!booking?.handover_saved_at;
+  const pickupErrors = pickupValidationErrors();
+  const canMarkPickup = booking?.status === 'confirmed' && everSaved && !isDirty && pickupErrors.length === 0;
 
   async function runStatusAction(action: string, notes?: string) {
     if (!booking) return;
@@ -233,6 +304,7 @@ export function OnlineBookingDetailModal({
       onActioned(next);
       setConfirmAction(null);
       setReasonText('');
+      setLogs(null); // force log refresh on next open
     } catch {
       setActionError('Network error — please try again');
     } finally {
@@ -660,15 +732,44 @@ export function OnlineBookingDetailModal({
 
               <button
                 onClick={() => save({
+                  alternate_phone: edit.alternate_phone || null,
+                  odometer_reading: edit.odometer_reading !== '' ? Number(edit.odometer_reading) : null,
                   helmets_provided: Number(edit.helmets_provided) || 0,
                   original_dl_taken: !!edit.original_dl_taken,
                   notes: edit.notes || null,
+                  pending_amount: Number(edit.pending_amount) || 0,
+                  security_deposit: Number(edit.security_deposit) || 0,
+                  payment_method_detail: edit.payment_method_detail || null,
                 })}
                 disabled={saving}
                 className="w-full py-2 text-sm bg-accent text-white rounded-lg hover:bg-accent/90 disabled:opacity-60"
               >
-                {saving ? 'Saving…' : 'Save Handover Details'}
+                {saving ? 'Saving…' : (isDirty || !everSaved) ? 'Save All Handover Details' : 'Re-save (all saved ✓)'}
               </button>
+
+              {/* Save status strip — drives the workflow gate the admin asked for */}
+              <div className={`rounded-lg border px-3 py-2 text-xs flex items-center gap-2 ${
+                !everSaved ? 'border-yellow-200 bg-yellow-50 text-yellow-700'
+                : isDirty   ? 'border-orange-200 bg-orange-50 text-orange-700'
+                            : 'border-green-200 bg-green-50 text-green-700'
+              }`}>
+                {!everSaved ? (
+                  <>
+                    <span>⚠️</span>
+                    <span>Save handover details before starting the ride.</span>
+                  </>
+                ) : isDirty ? (
+                  <>
+                    <span>●</span>
+                    <span>Unsaved changes — save again before starting the ride.</span>
+                  </>
+                ) : (
+                  <>
+                    <span>✓</span>
+                    <span>Saved {fmtDateTime(booking.handover_saved_at ?? null)}</span>
+                  </>
+                )}
+              </div>
 
               {/* Action buttons */}
               <div className="rounded-lg border border-border p-3 space-y-2 bg-bg/30">
@@ -685,11 +786,16 @@ export function OnlineBookingDetailModal({
                   )}
                   {booking.status === 'confirmed' && (
                     <button
-                      onClick={() => setConfirmAction({ action: 'ongoing', reasonRequired: false, label: 'Mark as Picked Up' })}
-                      disabled={!!actionLoading}
-                      className="py-2 text-xs font-semibold rounded-lg bg-orange-50 text-orange-700 hover:bg-orange-100 disabled:opacity-60"
+                      onClick={() => setConfirmAction({ action: 'ongoing', reasonRequired: false, label: 'Start Ride' })}
+                      disabled={!!actionLoading || !canMarkPickup}
+                      title={
+                        !everSaved ? 'Save handover details first' :
+                        isDirty    ? 'You have unsaved changes — save again before starting' :
+                        pickupErrors.length > 0 ? pickupErrors.join(' ') : ''
+                      }
+                      className="py-2 text-xs font-semibold rounded-lg bg-orange-50 text-orange-700 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      ✓ Mark Pickup
+                      ✓ Start Ride
                     </button>
                   )}
                   {booking.status === 'ongoing' && (
@@ -724,6 +830,30 @@ export function OnlineBookingDetailModal({
                   <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-2 py-1.5">{actionError}</p>
                 )}
               </div>
+
+              {/* Audit timeline */}
+              <div className="rounded-lg border border-border bg-white p-3 space-y-2">
+                <p className="text-[10px] text-muted uppercase tracking-wide font-semibold">Activity</p>
+                {logs === null ? (
+                  <p className="text-xs text-muted">Loading activity…</p>
+                ) : logs.length === 0 ? (
+                  <p className="text-xs text-muted">No activity yet.</p>
+                ) : (
+                  <ol className="space-y-1.5">
+                    {logs.map(log => (
+                      <li key={log.id} className="flex items-start gap-2 text-xs">
+                        <span className="mt-1 w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium">{LOG_LABELS[log.kind]}</p>
+                          <p className="text-[10px] text-muted">
+                            {fmtDateTime(log.created_at)}{log.admin_name ? ` · ${log.admin_name}` : ''}
+                          </p>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
             </div>
           )}
 
@@ -742,6 +872,18 @@ export function OnlineBookingDetailModal({
         <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
           <div className="bg-white dark:bg-primary rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-4">
             <h3 className="font-semibold">{confirmAction.label}?</h3>
+            {confirmAction.action === 'ongoing' && (
+              <div className="rounded-lg bg-orange-50 border border-orange-200 p-2.5 text-[11px] text-orange-900 space-y-1">
+                <p className="font-semibold">Confirm all details are verified:</p>
+                <ul className="list-disc pl-5 space-y-0.5">
+                  <li>Customer & KYC checked</li>
+                  <li>Odometer recorded ({String(edit.odometer_reading || '—')} km)</li>
+                  <li>{Number(edit.helmets_provided) || 0} helmet{Number(edit.helmets_provided) === 1 ? '' : 's'} provided</li>
+                  <li>Original DL: {edit.original_dl_taken ? 'taken' : 'not taken'}</li>
+                </ul>
+                <p className="pt-1 text-orange-800">After starting, the ride status becomes <strong>Ongoing</strong>.</p>
+              </div>
+            )}
             {confirmAction.action === 'cancelled' && (
               <p className="text-xs text-muted">This will free the bike and notify any side-effects on the bookings table.</p>
             )}

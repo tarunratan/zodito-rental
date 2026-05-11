@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { writeHandoverLog } from '@/lib/handover-audit';
 
 export const runtime = 'nodejs';
 
@@ -18,7 +19,10 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  try { await requireAdmin(); } catch {
+  let admin;
+  try {
+    admin = await requireAdmin();
+  } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -42,11 +46,24 @@ export async function POST(req: NextRequest) {
   if (fields.payment_method_detail !== undefined) updates.payment_method_detail = fields.payment_method_detail;
 
   if (Object.keys(updates).length === 0) {
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, saved_at: null });
   }
+
+  const savedAt = new Date().toISOString();
+  updates.handover_saved_at = savedAt;
+  updates.handover_saved_by = admin.id;
 
   const { error } = await supabase.from('bookings').update(updates).eq('id', booking_id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ ok: true });
+  // Audit log — capture only the fields the admin actually changed, plus the
+  // admin's name snapshot, so the timeline reads as "Ravi updated odometer = 12,540".
+  await writeHandoverLog(supabase, {
+    booking_id,
+    admin,
+    kind: 'save',
+    payload: fields,
+  });
+
+  return NextResponse.json({ ok: true, saved_at: savedAt, saved_by: admin.id });
 }
