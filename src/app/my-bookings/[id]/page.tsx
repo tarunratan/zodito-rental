@@ -6,6 +6,7 @@ import { isMockMode, mockBookingsStore, MOCK_BIKES } from '@/lib/mock';
 import { formatINR, formatDateTime } from '@/lib/utils';
 import { TIER_LABELS } from '@/lib/pricing';
 import type { PackageTier } from '@/lib/pricing';
+import { ExtendBookingPanel } from '@/components/booking/ExtendBookingPanel';
 
 async function fetchBooking(id: string, userId: string) {
   if (isMockMode()) {
@@ -74,6 +75,15 @@ export default async function BookingDetailPage({ params }: { params: { id: stri
           <Detail label="KM limit" value={`${booking.km_limit} km`} />
         </div>
       </div>
+
+      <ExtendBookingPanel
+        bookingId={booking.id}
+        bookingNumber={booking.booking_number}
+        status={booking.status}
+        endTs={booking.end_ts}
+        kmLimit={booking.km_limit}
+      />
+
 
       {bike.owner_type === 'vendor' && bike.vendor && (
         <div className="card p-6 mb-4">

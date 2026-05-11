@@ -172,6 +172,11 @@ export function OnlineBookingDetailModal({
   const [reasonText, setReasonText] = useState('');
 
   const [logs, setLogs] = useState<HandoverLog[] | null>(null);
+  const [extensions, setExtensions] = useState<Array<{
+    id: string; status: string; original_end_ts: string; new_end_ts: string;
+    extra_hours: number; extra_km: number; new_km_limit: number; total_delta: number;
+    matched_tier: string | null; paid_at: string | null; created_at: string;
+  }> | null>(null);
 
   // Reset state when booking changes
   useEffect(() => {
@@ -209,6 +214,17 @@ export function OnlineBookingDetailModal({
       .catch(() => { if (!abort) setLogs([]); });
     return () => { abort = true; };
   }, [booking, tab, logs]);
+
+  // Pull extension history once when the Trip tab opens — also small.
+  useEffect(() => {
+    if (!booking || tab !== 'trip' || extensions !== null) return;
+    let abort = false;
+    fetch(`/api/bookings/${booking.id}/extensions`)
+      .then(r => r.ok ? r.json() : { extensions: [] })
+      .then(d => { if (!abort) setExtensions(d.extensions ?? []); })
+      .catch(() => { if (!abort) setExtensions([]); });
+    return () => { abort = true; };
+  }, [booking, tab, extensions]);
 
   // Load KYC signed URLs when KYC tab opens
   useEffect(() => {
@@ -548,6 +564,38 @@ export function OnlineBookingDetailModal({
                 </button>
                 <button onClick={() => setTab('payment')} className="flex-1 py-2 text-sm text-accent border border-accent/30 rounded-lg hover:bg-accent/5 transition-colors">Next: Payment →</button>
               </div>
+
+              {/* Extension history — admin-visible audit of customer-initiated extensions */}
+              {extensions !== null && extensions.length > 0 && (
+                <div className="rounded-lg border border-border bg-white p-3 space-y-2 mt-2">
+                  <p className="text-[10px] text-muted uppercase tracking-wide font-semibold">Booking Extensions</p>
+                  <ul className="space-y-1.5">
+                    {extensions.map(e => (
+                      <li key={e.id} className="text-[11px] rounded-md border border-border p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                            e.status === 'confirmed' ? 'bg-green-100 text-green-700'
+                            : e.status === 'failed' ? 'bg-red-100 text-red-700'
+                            : e.status === 'expired' ? 'bg-gray-100 text-gray-500'
+                            : 'bg-yellow-100 text-yellow-700'
+                          }`}>
+                            {e.status.replace('_', ' ')}
+                          </span>
+                          <span className="text-[10px] text-muted">{fmtDateTime(e.created_at)}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 mt-1">
+                          <span className="text-muted">From → To</span>
+                          <span>{fmtDateTime(e.original_end_ts)} → {fmtDateTime(e.new_end_ts)}</span>
+                          <span className="text-muted">Extra KM / total</span>
+                          <span>+{e.extra_km} km · total {e.new_km_limit}</span>
+                          <span className="text-muted">Paid</span>
+                          <span>{rupee(e.total_delta)}{e.matched_tier ? ` · ${e.matched_tier}` : ''}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 
