@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
@@ -82,6 +83,12 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       const { error } = await supabase.from('bike_packages').insert(rows);
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    // Evict any leftover ISR/route cache so customers see the new prices on the
+    // very next request. The pages now use `force-dynamic` but this is a belt
+    // for the suspenders in case CDN layers also cached the responses.
+    revalidatePath(`/bikes/${params.id}`);
+    revalidatePath('/');
 
     return NextResponse.json({ ok: true });
   } catch {

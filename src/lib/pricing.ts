@@ -138,6 +138,9 @@ export type TierResult =
  * Custom packages (exact durations) are merged into the bracket list and take
  * priority when they are an exact or near-exact fit over a longer standard tier.
  * Returns null if duration is 0 or exceeds all available options.
+ *
+ * Logs a diagnostic line (`[pricing.coveringTier]`) when DEBUG_PRICING is set,
+ * so you can trace `duration → matched bracket` end-to-end without redeploying.
  */
 export function coveringTier(
   durationHours: number,
@@ -145,6 +148,7 @@ export function coveringTier(
   customPackages: CustomPackage[] = []
 ): TierResult | null {
   if (durationHours <= 0) return null;
+  const debug = typeof process !== 'undefined' && process.env?.DEBUG_PRICING === '1';
 
   type Bracket = { maxHours: number; result: () => TierResult };
 
@@ -187,8 +191,16 @@ export function coveringTier(
     .sort((a, b) => a.maxHours - b.maxHours);
 
   for (const b of brackets) {
-    if (durationHours <= b.maxHours) return b.result();
+    if (durationHours <= b.maxHours) {
+      const r = b.result();
+      if (debug) {
+        const label = r.type === 'standard' ? `${r.tier}${r.actualDays ? `×${r.actualDays}d` : ''}` : `custom:${r.pkg.label}`;
+        console.log('[pricing.coveringTier]', { durationHours, matched: label, maxHours: b.maxHours });
+      }
+      return r;
+    }
   }
+  if (debug) console.log('[pricing.coveringTier]', { durationHours, matched: null });
   return null;
 }
 

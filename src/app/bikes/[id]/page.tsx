@@ -6,8 +6,11 @@ import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { getCurrentAppUser } from '@/lib/auth';
 import type { CustomPackage } from '@/lib/pricing';
 
-// Bike details change infrequently — serve from cache, regenerate in background every hour
-export const revalidate = 3600;
+// Customer detail page must always reflect the latest admin-set pricing.
+// Static ISR was masking price edits for up to an hour — render dynamically
+// so the booking flow always sees fresh per-bike packages, custom packages,
+// and policy fields.
+export const dynamic = 'force-dynamic';
 import { isMockMode, MOCK_BIKES } from '@/lib/mock';
 import { formatINR } from '@/lib/utils';
 

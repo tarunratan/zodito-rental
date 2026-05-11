@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
@@ -36,6 +37,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       .eq('id', params.id);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    // extra_km_rate / late_penalty_hour live on this row and feed pricing — bust caches.
+    revalidatePath(`/bikes/${params.id}`);
+    revalidatePath('/');
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: 'Admin only' }, { status: 403 });
