@@ -11,6 +11,7 @@ import {
 } from '@/lib/pricing';
 import type { PackageTier } from '@/lib/supabase/types';
 import type { CustomPackage } from '@/lib/pricing';
+import { isCouponInActiveWindow, isCouponUsable, type CouponRecord } from '@/lib/coupon-eligibility';
 
 // Edge runtime: no cold start, runs at the network edge closest to the user.
 // Supabase JS client uses native fetch — fully Edge-compatible.
@@ -99,7 +100,11 @@ export async function POST(req: NextRequest) {
   const couponPromise = body.coupon_code
     ? admin
         .from('coupons')
-        .select('id, code, discount_type, discount_value, max_uses, used_count, expires_at, is_active')
+        .select(
+          'id, code, discount_type, discount_value, max_uses, used_count, ' +
+          'expires_at, active_from, is_active, usage_scope, ' +
+          'time_window_start, time_window_end, valid_weekdays',
+        )
         .eq('code', body.coupon_code.toUpperCase().trim())
         .maybeSingle()
     : Promise.resolve({ data: null });
@@ -183,31 +188,39 @@ export async function POST(req: NextRequest) {
   const effectiveModelId = effectiveModelIdForDate(model, startTs);
   let packages = model.packages;
 
-  // Coupon validation
-  const c = couponResult.data as any;
-  const couponValid = c && c.is_active &&
-    !(c.expires_at && new Date(c.expires_at) < new Date()) &&
-    !(c.max_uses !== null && c.used_count >= c.max_uses);
+  // Coupon eligibility — single check against the canonical helper.
+  // Time-window/active-from/expiry are pure; per-user checks fire conditionally.
+  const c = couponResult.data as unknown as CouponRecord | null;
+  const windowOk = c ? isCouponInActiveWindow(c).eligible : false;
+  const scope = c?.usage_scope ?? 'one_per_user';
 
-  // Second parallel batch — only fires if weekend override OR coupon needs checking
-  if (effectiveModelId !== model.id || couponValid) {
-    const [weekendResult, couponUsedResult] = await Promise.all([
+  if (effectiveModelId !== model.id || (c && windowOk)) {
+    const userCheckPromise =
+      !c || !windowOk ? Promise.resolve({ data: null }) :
+      scope === 'one_per_user'
+        ? admin.from('coupon_uses').select('id').eq('coupon_id', c.id).eq('user_id', userId).maybeSingle()
+        : scope === 'first_booking_only'
+          ? admin.from('bookings').select('id', { count: 'exact', head: true }).eq('user_id', userId).not('status', 'in', '(cancelled,payment_failed)')
+          : Promise.resolve({ data: null });
+
+    const [weekendResult, userCheckResult] = await Promise.all([
       effectiveModelId !== model.id
         ? admin.from('bike_model_packages').select('tier, price, km_limit').eq('model_id', effectiveModelId)
         : Promise.resolve({ data: null }),
-      couponValid
-        ? admin.from('coupon_uses').select('id').eq('coupon_id', c.id).eq('user_id', userId).maybeSingle()
-        : Promise.resolve({ data: null }),
+      userCheckPromise,
     ]);
     if (weekendResult.data) packages = weekendResult.data;
-    if (couponValid && couponUsedResult.data) {
-      // Coupon already used — proceed without discount
-      (c as any).already_used = true;
+
+    if (c && windowOk) {
+      const hasUsedBefore   = scope === 'one_per_user'       ? !!(userCheckResult as any).data            : false;
+      const hasPriorBookings = scope === 'first_booking_only' ? ((userCheckResult as any).count ?? 0) > 0 : false;
+      const verdict = isCouponUsable(c, { hasUsedBefore, hasPriorBookings });
+      if (!verdict.eligible) (c as any).already_used = true;
     }
   }
 
   let couponRow: { id: string; code: string; discount_type: string; discount_value: number } | null = null;
-  if (couponValid && !(c as any).already_used) {
+  if (c && windowOk && !(c as any).already_used) {
     couponRow = { id: c.id, code: c.code, discount_type: c.discount_type, discount_value: Number(c.discount_value) };
   }
 

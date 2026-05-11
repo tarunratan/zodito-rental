@@ -12,6 +12,7 @@ import {
   computeCouponDiscount,
 } from '@/lib/pricing';
 import type { CustomPackage } from '@/lib/pricing';
+import { isCouponInActiveWindow, isCouponUsable, type CouponRecord } from '@/lib/coupon-eligibility';
 import { isMockMode, mockBookingsStore } from '@/lib/mock';
 import type { PackageTier } from '@/lib/supabase/types';
 
@@ -76,11 +77,16 @@ export async function POST(req: NextRequest) {
 
   const admin = createSupabaseAdmin();
 
-  // Coupon promise — fire immediately so it overlaps with auth
+  // Coupon promise — fire immediately so it overlaps with auth.
+  // Pulls the full eligibility shape so isCouponUsable() can be evaluated below.
   const couponPromise = body.coupon_code
     ? admin
         .from('coupons')
-        .select('id, code, discount_type, discount_value, max_uses, used_count, expires_at, is_active')
+        .select(
+          'id, code, discount_type, discount_value, max_uses, used_count, ' +
+          'expires_at, active_from, is_active, usage_scope, ' +
+          'time_window_start, time_window_end, valid_weekdays',
+        )
         .eq('code', body.coupon_code.toUpperCase().trim())
         .maybeSingle()
     : Promise.resolve({ data: null });
@@ -152,26 +158,41 @@ export async function POST(req: NextRequest) {
   const model = (bike as any).model as any;
   const effectiveModelId = effectiveModelIdForDate(model, startTs);
 
-  const c = couponData as any;
-  const couponValid = c && c.is_active &&
-    !(c.expires_at && new Date(c.expires_at) < new Date()) &&
-    !(c.max_uses !== null && c.used_count >= c.max_uses);
+  const c = couponData as unknown as CouponRecord | null;
+  // First gate on time/active-window — cheap, no extra I/O.
+  const windowOk = c ? isCouponInActiveWindow(c).eligible : false;
+  const scope = c?.usage_scope ?? 'one_per_user';
 
-  const [weekendResult, couponUsedResult] = await Promise.all([
+  // Per-user checks fire conditionally:
+  //   one_per_user        → coupon_uses lookup
+  //   first_booking_only  → bookings count for this user
+  //   unlimited_per_user  → no per-user check
+  const userCheckPromise =
+    !windowOk || !c ? Promise.resolve({ data: null }) :
+    scope === 'one_per_user'
+      ? admin.from('coupon_uses').select('id').eq('coupon_id', c.id).eq('user_id', user.id).maybeSingle()
+      : scope === 'first_booking_only'
+        ? admin.from('bookings').select('id', { count: 'exact', head: true }).eq('user_id', user.id).not('status', 'in', '(cancelled,payment_failed)')
+        : Promise.resolve({ data: null });
+
+  const [weekendResult, userCheckResult] = await Promise.all([
     effectiveModelId !== model.id
       ? admin.from('bike_model_packages').select('tier, price, km_limit').eq('model_id', effectiveModelId)
       : Promise.resolve({ data: null }),
-    couponValid
-      ? admin.from('coupon_uses').select('id').eq('coupon_id', c.id).eq('user_id', user.id).maybeSingle()
-      : Promise.resolve({ data: null }),
+    userCheckPromise,
   ]);
 
   let packages = model.packages;
   if (weekendResult.data) packages = weekendResult.data;
 
   let couponRow: { id: string; code: string; discount_type: string; discount_value: number } | null = null;
-  if (couponValid && !couponUsedResult.data) {
-    couponRow = { id: c.id, code: c.code, discount_type: c.discount_type, discount_value: Number(c.discount_value) };
+  if (c && windowOk) {
+    const hasUsedBefore = scope === 'one_per_user' ? !!(userCheckResult as any).data : false;
+    const hasPriorBookings = scope === 'first_booking_only' ? ((userCheckResult as any).count ?? 0) > 0 : false;
+    const verdict = isCouponUsable(c, { hasUsedBefore, hasPriorBookings });
+    if (verdict.eligible) {
+      couponRow = { id: c.id, code: c.code, discount_type: c.discount_type, discount_value: Number(c.discount_value) };
+    }
   }
 
   // --- 7. Price calculation (server-side; authoritative)
