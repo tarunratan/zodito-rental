@@ -81,7 +81,21 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
         updated_at: now,
       }));
       const { error } = await supabase.from('bike_packages').insert(rows);
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      if (error) {
+        // Translate the CHECK-constraint violation that historically silently
+        // dropped overrides for tier 3+ into an actionable error message.
+        // (Constraint name: `bike_packages_tier_check`; Postgres code: 23514.)
+        if ((error as any).code === '23514' || /tier_check/i.test(error.message)) {
+          return NextResponse.json({
+            error: 'Database is rejecting prices for one or more tiers. '
+                 + 'Run migration 037_bike_packages_all_tiers.sql in Supabase '
+                 + 'to widen the bike_packages.tier CHECK constraint, then save again.',
+            tiers_attempted: rows.map(r => r.tier),
+            db_error: error.message,
+          }, { status: 500 });
+        }
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
     }
 
     // Evict any leftover ISR/route cache so customers see the new prices on the
