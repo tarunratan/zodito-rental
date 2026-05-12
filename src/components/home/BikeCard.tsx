@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { formatINR } from '@/lib/utils';
+import { coveringTier, calculatePrice, TIER_LABELS, type CustomPackage, type PackageTier } from '@/lib/pricing';
 
 type Bike = any;
 
@@ -13,12 +14,16 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
     ? `/bikes/${bike.id}?from=${encodeURIComponent(searchFrom)}&to=${encodeURIComponent(searchTo)}`
     : `/bikes/${bike.id}`;
 
+  // `bike.model.packages` is already UNION-merged on the server (see
+  // src/app/page.tsx → fetchBikes). It now contains every tier the admin has
+  // an override for, even ones the model itself never seeded (36hr / 2day /
+  // 60hr / 3day / …). Likewise `bike.custom_packages` is server-attached.
   const packages: any[] = bike.model?.packages ?? [];
-  const customPackages: any[] = (bike.custom_packages ?? []).filter((p: any) => p.is_active);
-  const pkg12 = packages.find((p: any) => p.tier === '12hr');
+  const customPackages: CustomPackage[] = (bike.custom_packages ?? []) as CustomPackage[];
+  // Used by the "24 hrs · ₹X" sidecar at the bottom-right of the card.
   const pkg24 = packages.find((p: any) => p.tier === '24hr');
 
-  // Minimum price across all packages (standard + active custom)
+  // Minimum price across all packages (standard + active custom).
   const allPrices = [
     ...packages.map((p: any) => Number(p.price)),
     ...customPackages.map((p: any) => Number(p.price)),
@@ -28,48 +33,41 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
     ? (customPackages.find((p: any) => Number(p.price) === minPrice) ?? packages.find((p: any) => Number(p.price) === minPrice))
     : null;
 
-  // Determine price/label to show for the searched duration.
-  // Checks custom packages first (exact duration_hours match), then standard tiers, then fallback.
-  const searchDisplay: { price: number; label: string; km: number } | null = (() => {
+  // Search-aware "this exact trip costs ₹X" price.
+  //
+  // Single source of truth: `coveringTier(...)` → `calculatePrice(...)`. The
+  // same pair runs on /bikes/[id] and /api/pricing/quote, so the home card,
+  // detail page, and checkout always agree. There is NO local fallback like
+  // "days × 24hr_price" — if no admin-configured tier covers the duration,
+  // we surface a "Configure on detail page" hint instead of a wrong number.
+  const searchDisplay: { price: number; label: string; km: number; isCustom?: boolean } | null = (() => {
     if (!searchFrom || !searchTo) return null;
-    const searchHrs = Math.round((new Date(searchTo).getTime() - new Date(searchFrom).getTime()) / 3_600_000);
+    const searchHrs = (new Date(searchTo).getTime() - new Date(searchFrom).getTime()) / 3_600_000;
     if (searchHrs <= 0) return null;
 
-    // Check custom packages first — range match (smallest bracket covering the duration)
-    const customMatch = customPackages
-      .filter((p: any) => searchHrs >= (p.min_duration_hours ?? 0) && searchHrs <= p.duration_hours)
-      .sort((a: any, b: any) => a.duration_hours - b.duration_hours)[0] ?? null;
-    if (customMatch) {
-      return { price: Number(customMatch.price), label: customMatch.label, km: customMatch.km_limit };
-    }
+    const availableTiers: PackageTier[] = packages.map((p: any) => p.tier as PackageTier);
+    const match = coveringTier(searchHrs, availableTiers, customPackages);
+    if (!match) return null;
 
-    // Try exact tier match by hour count — ordered ascending so smallest covering tier wins
-    const tierMap: Array<[string, number]> = [
-      ['12hr',12],['24hr',24],['36hr',36],['2day',48],['60hr',60],
-      ['3day',72],['96hr',96],['120hr',120],['144hr',144],['7day',168],['15day',360],['30day',720],
-    ];
-    const TIER_DISP: Record<string, string> = {
-      '12hr':'12 hrs','24hr':'24 hrs','36hr':'36 hrs','2day':'2 days','60hr':'60 hrs',
-      '3day':'3 days','96hr':'4 days','120hr':'5 days','144hr':'6 days',
-      '7day':'7 days','15day':'15 days','30day':'30 days',
-    };
-    // Find smallest tier bracket that covers searchHrs
-    for (const [tier, h] of tierMap) {
-      if (searchHrs <= h) {
-        const pkg = packages.find((p: any) => p.tier === tier);
-        if (pkg) return { price: Number(pkg.price), label: TIER_DISP[tier] ?? tier, km: pkg.km_limit };
-      }
+    try {
+      const breakdown = match.type === 'custom'
+        ? calculatePrice({ customPackage: match.pkg, extraHelmetCount: 0, hasOriginalDL: true })
+        : calculatePrice({
+            packages: packages as any,
+            tier: match.tier,
+            actualDays: match.actualDays,
+            extraHelmetCount: 0,
+            hasOriginalDL: true,
+          });
+      const label = match.type === 'custom'
+        ? match.pkg.label
+        : (match.actualDays && match.actualDays > 1
+            ? `${match.actualDays} Days`
+            : (TIER_LABELS[match.tier] ?? match.tier));
+      return { price: breakdown.basePrice, label, km: breakdown.kmLimit, isCustom: match.type === 'custom' };
+    } catch {
+      return null;
     }
-
-    // Fallback to 24hr daily rate × days (for durations without a matching tier)
-    if (pkg24 && searchHrs >= 12) {
-      if (searchHrs <= 24) return { price: Number(pkg24.price), label: '24 hrs', km: pkg24.km_limit };
-      const days = Math.ceil(searchHrs / 24);
-      return { price: days * Number(pkg24.price), label: `${days} days`, km: days * pkg24.km_limit };
-    }
-    if (pkg12 && searchHrs <= 12) return { price: Number(pkg12.price), label: '12 hrs', km: pkg12.km_limit };
-
-    return null;
   })();
 
   return (
