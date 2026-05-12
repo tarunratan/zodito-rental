@@ -86,33 +86,50 @@ export function isFlexTier(tier: PackageTier): tier is 'weekly_flex' | 'monthly_
   return tier === 'weekly_flex' || tier === 'monthly_flex';
 }
 
-// Ordered brackets used to find the smallest tier that covers an arbitrary duration.
-// Fixed tiers are exact; flex tiers fill gaps between fixed anchors.
-const COVERING_BRACKETS: Array<{
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPLICIT RANGE TABLE — single source of truth for duration → tier matching.
+//
+// Each row defines a half-open interval `(min, max]` in hours. The matching
+// algorithm uses STRICT lower bound + INCLUSIVE upper bound. This pins the
+// boundary semantics the admin/customer expect:
+//
+//   • exactly 24.0 hrs   → (12, 24] → 24hr tier
+//   • 24.1 hrs (or 24.5) → (24, 36] → 36hr tier
+//   • exactly 48.0 hrs   → (36, 48] → 2day tier
+//
+// Adding/removing a row here is the ONLY thing required to introduce a new
+// standard range bucket — no other file needs to change.
+// ─────────────────────────────────────────────────────────────────────────────
+export interface StandardRange {
   tier: PackageTier;
-  maxHours: number;
+  /** Exclusive lower bound — strictly greater than `min`. */
+  min: number;
+  /** Inclusive upper bound — less than or equal to `max`. */
+  max: number;
   getActualDays?: (hrs: number) => number;
-}> = [
-  { tier: '12hr',         maxHours: 12  },
-  { tier: '24hr',         maxHours: 24  },
-  { tier: '36hr',         maxHours: 36  },
-  // '2day' preferred over '48hr' at 48hrs (same maxHours; stable sort keeps 2day first)
-  { tier: '2day',         maxHours: 48  },
-  { tier: '48hr',         maxHours: 48  },
-  { tier: '60hr',         maxHours: 60  },
-  // '3day' preferred over '72hr' at 72hrs
-  { tier: '3day',         maxHours: 72  },
-  { tier: '72hr',         maxHours: 72  },
-  { tier: '96hr',         maxHours: 96  },
-  { tier: '120hr',        maxHours: 120 },
-  { tier: '144hr',        maxHours: 144 },
-  { tier: '7day',         maxHours: 168 },
+}
+
+export const STANDARD_RANGES: StandardRange[] = [
+  { tier: '12hr',         min: 0,   max: 12  },
+  { tier: '24hr',         min: 12,  max: 24  },
+  { tier: '36hr',         min: 24,  max: 36  },
+  // '2day' preferred over '48hr' at the (36, 48] interval (stable sort keeps 2day first)
+  { tier: '2day',         min: 36,  max: 48  },
+  { tier: '48hr',         min: 36,  max: 48  },
+  { tier: '60hr',         min: 48,  max: 60  },
+  // '3day' preferred over '72hr' at (60, 72]
+  { tier: '3day',         min: 60,  max: 72  },
+  { tier: '72hr',         min: 60,  max: 72  },
+  { tier: '96hr',         min: 72,  max: 96  },
+  { tier: '120hr',        min: 96,  max: 120 },
+  { tier: '144hr',        min: 120, max: 144 },
+  { tier: '7day',         min: 144, max: 168 },
   // weekly_flex: per-day pricing for 7–14 days (>168 hrs up to 336 hrs)
-  { tier: 'weekly_flex',  maxHours: 336, getActualDays: hrs => Math.ceil(hrs / 24) },
-  { tier: '15day',        maxHours: 360 },
+  { tier: 'weekly_flex',  min: 168, max: 336, getActualDays: hrs => Math.ceil(hrs / 24) },
+  { tier: '15day',        min: 336, max: 360 },
   // monthly_flex: per-day pricing for 15–29 days (>360 hrs up to 696 hrs)
-  { tier: 'monthly_flex', maxHours: 696, getActualDays: hrs => Math.ceil(hrs / 24) },
-  { tier: '30day',        maxHours: 720 },
+  { tier: 'monthly_flex', min: 360, max: 696, getActualDays: hrs => Math.ceil(hrs / 24) },
+  { tier: '30day',        min: 696, max: 720 },
 ];
 
 /** Admin-defined custom duration package stored in `custom_packages` table. */
@@ -134,13 +151,30 @@ export type TierResult =
   | { type: 'custom';   pkg: CustomPackage };
 
 /**
- * Given an actual rental duration, finds the smallest bracket that covers it.
- * Custom packages (exact durations) are merged into the bracket list and take
- * priority when they are an exact or near-exact fit over a longer standard tier.
- * Returns null if duration is 0 or exceeds all available options.
+ * Find the explicit `(min, max]` range that covers an arbitrary rental duration.
  *
- * Logs a diagnostic line (`[pricing.coveringTier]`) when DEBUG_PRICING is set,
- * so you can trace `duration → matched bracket` end-to-end without redeploying.
+ * Matching rule (the contract the admin & customer see in the UI):
+ *
+ *     min < durationHours <= max
+ *
+ * That is: the lower bound is STRICT, the upper bound is INCLUSIVE. This pins
+ * the boundary cases:
+ *   • exactly 24.0 hrs    → 24hr tier (in (12, 24])
+ *   • 24.1 / 24.5 / 25 hrs → 36hr tier (in (24, 36])
+ *
+ * When multiple ranges cover the same duration (e.g. `2day` and a custom
+ * `36–44` package both contain 38h), the one with the **smaller max** wins.
+ * At an exact tie, stable sort preserves the order in which we appended
+ * candidates: standard ranges first, then customs, then per-day synthetics.
+ *
+ * Custom packages are matched purely from the admin-set
+ * `(min_duration_hours, duration_hours]` columns on the `custom_packages`
+ * table — no implicit re-bounding.
+ *
+ * Synthetic 24hr×N day fallback is used only when no explicit standard range
+ * covers (e.g. bike has 12hr + 24hr + 7day but no intermediate tiers).
+ *
+ * Logs a `[pricing.coveringTier]` diagnostic line when `DEBUG_PRICING=1`.
  */
 export function coveringTier(
   durationHours: number,
@@ -150,57 +184,79 @@ export function coveringTier(
   if (durationHours <= 0) return null;
   const debug = typeof process !== 'undefined' && process.env?.DEBUG_PRICING === '1';
 
-  type Bracket = { maxHours: number; result: () => TierResult };
+  type Bracket = {
+    min: number;
+    max: number;
+    source: 'standard' | 'custom' | 'synthetic';
+    label: string;
+    build: () => TierResult;
+  };
 
-  // Explicit tier brackets this bike has priced (always take priority)
-  const explicitBrackets: Bracket[] = COVERING_BRACKETS
-    .filter(b => availableTiers.includes(b.tier))
-    .map(b => ({
-      maxHours: b.maxHours,
-      result: (): TierResult => ({
-        type: 'standard' as const,
-        tier: b.tier,
-        actualDays: b.getActualDays?.(durationHours),
-      }),
-    }));
+  const brackets: Bracket[] = [];
 
-  // Synthetic per-day brackets for 2–6 days using the 24hr base price × days.
-  // Fills the gap when a bike has 12hr/24hr/7day but no intermediate tiers.
-  // Explicit brackets with the same maxHours override these (stable sort puts explicit first).
-  const syntheticBrackets: Bracket[] = availableTiers.includes('24hr')
-    ? [2, 3, 4, 5, 6].map(d => ({
-        maxHours: d * 24,
-        result: (): TierResult => ({
-          type: 'standard' as const,
-          tier: '24hr' as PackageTier,
-          actualDays: d,
-        }),
-      }))
-    : [];
+  // 1) Explicit standard ranges — only those this bike actually has packages for.
+  for (const r of STANDARD_RANGES) {
+    if (!availableTiers.includes(r.tier)) continue;
+    brackets.push({
+      min: r.min,
+      max: r.max,
+      source: 'standard',
+      label: r.tier,
+      build: () => ({ type: 'standard', tier: r.tier, actualDays: r.getActualDays?.(durationHours) }),
+    });
+  }
 
-  // Admin-created custom packages — range bracket [min_duration_hours, duration_hours]
-  const customBrackets: Bracket[] = customPackages
-    .filter(p => p.is_active && durationHours >= (p.min_duration_hours ?? 0))
-    .map(p => ({
-      maxHours: p.duration_hours,
-      result: (): TierResult => ({ type: 'custom' as const, pkg: p }),
-    }));
+  // 2) Admin-created custom range packages — fully driven by their own (min, max].
+  for (const p of customPackages) {
+    if (!p.is_active) continue;
+    brackets.push({
+      min: p.min_duration_hours ?? 0,
+      max: p.duration_hours,
+      source: 'custom',
+      label: `custom:${p.label}`,
+      build: () => ({ type: 'custom', pkg: p }),
+    });
+  }
 
-  // Sort ascending; explicit brackets come before synthetic at same maxHours (stable sort)
-  const brackets = [...explicitBrackets, ...customBrackets, ...syntheticBrackets]
-    .sort((a, b) => a.maxHours - b.maxHours);
-
-  for (const b of brackets) {
-    if (durationHours <= b.maxHours) {
-      const r = b.result();
-      if (debug) {
-        const label = r.type === 'standard' ? `${r.tier}${r.actualDays ? `×${r.actualDays}d` : ''}` : `custom:${r.pkg.label}`;
-        console.log('[pricing.coveringTier]', { durationHours, matched: label, maxHours: b.maxHours });
-      }
-      return r;
+  // 3) Synthetic 24hr × N-day fallback (only when 24hr is configured). Covers
+  //    gaps when admin defined 12hr / 24hr / 7day but skipped 36hr / 2day / 60hr / 3day.
+  if (availableTiers.includes('24hr')) {
+    for (const d of [2, 3, 4, 5, 6]) {
+      brackets.push({
+        min: (d - 1) * 24,
+        max: d * 24,
+        source: 'synthetic',
+        label: `24hr×${d}d`,
+        build: () => ({ type: 'standard', tier: '24hr' as PackageTier, actualDays: d }),
+      });
     }
   }
-  if (debug) console.log('[pricing.coveringTier]', { durationHours, matched: null });
+
+  // Sort by `max` ascending — first match wins. Stable sort keeps the source
+  // ordering above at ties: standard > custom > synthetic.
+  brackets.sort((a, b) => a.max - b.max);
+
+  if (debug) {
+    console.log('[pricing.coveringTier] candidates', {
+      durationHours,
+      ranges: brackets.map(b => ({ label: b.label, min: b.min, max: b.max })),
+    });
+  }
+
+  for (const b of brackets) {
+    // STRICT lower bound + INCLUSIVE upper bound — the contract above.
+    if (durationHours > b.min && durationHours <= b.max) {
+      if (debug) {
+        console.log('[pricing.coveringTier] matched', {
+          durationHours,
+          matched: b.label,
+          range: `(${b.min}, ${b.max}]`,
+        });
+      }
+      return b.build();
+    }
+  }
+  if (debug) console.log('[pricing.coveringTier] no match', { durationHours });
   return null;
 }
 

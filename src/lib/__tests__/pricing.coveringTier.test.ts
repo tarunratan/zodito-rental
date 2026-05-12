@@ -2,17 +2,21 @@
  * Tests for `coveringTier` — the bracket-matching logic that decides which
  * admin-priced tier applies to an arbitrary rental duration.
  *
- * Locks in the user-facing rules:
- *   • 14 hrs  → 12–24 hr bracket (i.e. the `24hr` standard tier)
- *   • 28 hrs  → 24–36 hr bracket (`36hr` tier)
- *   • 50 hrs  → 48–60 hr bracket (`60hr` tier)
- *   • Custom range packages take priority over standard tiers at the same upper bound
- *   • Exact boundary durations pick the SMALLEST bracket whose maxHours covers them
- *   • Partial hours are rounded UP by callers, not by coveringTier itself
+ * Contract pinned here (strict lower, inclusive upper — `min < d <= max`):
+ *   • 14 hrs   → (12, 24]  → `24hr`
+ *   • 28 hrs   → (24, 36]  → `36hr`
+ *   • 50 hrs   → (48, 60]  → `60hr`
+ *   • 24.0 hrs → (12, 24]  → `24hr` (exact boundary picks the SMALLER tier)
+ *   • 24.1 hrs → (24, 36]  → `36hr` (one second past 24 moves up)
+ *   • 12.01 hrs → (12, 24] → `24hr`
+ *   • Custom range packages win when their `(min, max]` is tighter than the
+ *     overlapping standard tier.
+ *   • Synthetic 24hr×N day fallback kicks in only when no explicit standard
+ *     range covers the requested duration.
  */
 
 import { describe, it, expect } from 'vitest';
-import { coveringTier, type CustomPackage } from '../pricing';
+import { coveringTier, STANDARD_RANGES, type CustomPackage } from '../pricing';
 import type { PackageTier } from '../supabase/types';
 
 const ALL_TIERS: PackageTier[] = [
@@ -122,12 +126,16 @@ describe('coveringTier — partial hours fall into the next bracket up', () => {
 });
 
 describe('coveringTier — missing brackets', () => {
-  it('skips a missing tier and uses the next one up', () => {
-    // No 36hr tier configured → 28 hrs lands in the next available bracket (2day at 48h)
+  it('falls back to synthetic 24hr × 2 when 36hr / 2day are missing', () => {
+    // Strict semantics: `2day` is (36, 48] so 28 hrs does NOT fall into it.
+    // The 24hr × N-day synthetic fills (24, 48] and wins.
     const tiers: PackageTier[] = ['12hr', '24hr', '2day', '7day'];
     const r = coveringTier(28, tiers);
     expect(r?.type).toBe('standard');
-    if (r?.type === 'standard') expect(r.tier).toBe('2day');
+    if (r?.type === 'standard') {
+      expect(r.tier).toBe('24hr');
+      expect(r.actualDays).toBe(2);
+    }
   });
 
   it('returns null when duration exceeds all configured brackets', () => {
@@ -139,6 +147,34 @@ describe('coveringTier — missing brackets', () => {
   it('returns null for zero or negative durations', () => {
     expect(coveringTier(0, ALL_TIERS)).toBeNull();
     expect(coveringTier(-5, ALL_TIERS)).toBeNull();
+  });
+});
+
+describe('STANDARD_RANGES — explicit (min, max] table', () => {
+  it('every standard range has min < max', () => {
+    for (const r of STANDARD_RANGES) {
+      expect(r.min).toBeLessThan(r.max);
+    }
+  });
+
+  it('the 12-24 / 24-36 boundary cases match the spec verbatim', () => {
+    // 24.0 in (12, 24]  → 24hr
+    const a = coveringTier(24.0, ALL_TIERS);
+    expect(a?.type).toBe('standard');
+    if (a?.type === 'standard') expect(a.tier).toBe('24hr');
+
+    // 24.1 in (24, 36]  → 36hr
+    const b = coveringTier(24.1, ALL_TIERS);
+    expect(b?.type).toBe('standard');
+    if (b?.type === 'standard') expect(b.tier).toBe('36hr');
+  });
+
+  it('rejects values that are at the strict lower bound of a range', () => {
+    // 12.0 is the EXCLUSIVE lower bound of the 24hr range (12, 24] —
+    // it must fall into the 12hr range (0, 12], not the 24hr one.
+    const r = coveringTier(12.0, ALL_TIERS);
+    expect(r?.type).toBe('standard');
+    if (r?.type === 'standard') expect(r.tier).toBe('12hr');
   });
 });
 

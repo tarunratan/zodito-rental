@@ -158,7 +158,8 @@ export function BookingFlow({
     return () => { cancelled = true; };
   }, [pickupTs?.getTime(), endTs?.getTime(), bike.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const breakdown = useMemo(() => {
+  // Local computation — used as immediate, optimistic display + offline fallback.
+  const localBreakdown = useMemo(() => {
     if (!tierResult) return null;
     try {
       if (tierResult.type === 'custom') {
@@ -183,6 +184,49 @@ export function BookingFlow({
       return null;
     }
   }, [bike.model.packages, tierResult, isFlex, extraHelmets, mobileHolder, appliedCoupon]);
+
+  // Server-authoritative quote — always fetched fresh (no-store + ?t=now cache-buster).
+  // This is the layer that guarantees the customer sees the LATEST admin prices
+  // the moment they pick / change pickup or drop-off, with no CDN / browser cache
+  // in between. The local computation above is kept only as an optimistic stand-in
+  // before the network resolves and as an offline fallback.
+  const [serverBreakdown, setServerBreakdown] = useState<ReturnType<typeof calculatePrice> | null>(null);
+  useEffect(() => {
+    if (!pickupTs || !endTs) { setServerBreakdown(null); return; }
+    let cancelled = false;
+    const url = `/api/pricing/quote?bike_id=${encodeURIComponent(bike.id)}`
+      + `&pickup_ts=${encodeURIComponent(pickupTs.toISOString())}`
+      + `&dropoff_ts=${encodeURIComponent(endTs.toISOString())}`
+      + `&extra_helmets=${extraHelmets}`
+      + `&mobile_holder=${mobileHolder ? 1 : 0}`
+      + `&t=${Date.now()}`;
+    fetch(url, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (cancelled || !data?.breakdown) return;
+        // Apply the customer's currently-applied coupon discount on top of the
+        // server-fresh subtotal/GST — coupon is client-state, not part of the
+        // pricing-range fetch.
+        const coupon = appliedCoupon?.discountAmount ?? 0;
+        if (coupon > 0) {
+          const sub  = data.breakdown.subtotal;
+          const gst  = data.breakdown.gstAmount;
+          const disc = Math.min(coupon, sub + gst);
+          setServerBreakdown({
+            ...data.breakdown,
+            couponDiscount: disc,
+            totalAmount: Math.round((sub + gst - disc) * 100) / 100,
+          });
+        } else {
+          setServerBreakdown(data.breakdown);
+        }
+      })
+      .catch(() => { /* fall back to localBreakdown */ });
+    return () => { cancelled = true; };
+  }, [pickupTs?.getTime(), endTs?.getTime(), bike.id, extraHelmets, mobileHolder, appliedCoupon?.discountAmount]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Prefer the server-fresh breakdown when available; fall back to local while in-flight or offline.
+  const breakdown = serverBreakdown ?? localBreakdown;
 
   const pickupValid      = pickupTs ? isWithinStoreHours(pickupTs) && pickupTs > new Date() : false;
   const noPackage        = !!tierResult && !breakdown;
