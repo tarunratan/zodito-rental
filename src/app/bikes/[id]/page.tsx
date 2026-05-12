@@ -5,6 +5,7 @@ import { BookingFlow } from '@/components/booking/BookingFlow';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { getCurrentAppUser } from '@/lib/auth';
 import type { CustomPackage } from '@/lib/pricing';
+import { mergeBikePackages } from '@/lib/pricing';
 
 // Customer detail page must always reflect the latest admin-set pricing.
 // Static ISR was masking price edits for up to an hour — render dynamically
@@ -63,14 +64,13 @@ async function fetchBike(id: string) {
   const bike = bikeRes.data;
   if (!bike) return { bike: null, customPackages: [] as CustomPackage[] };
 
-  // Merge: per-bike overrides take priority over model-level packages
-  const overrides = bikePackagesRes as any[];
-  if (overrides.length > 0) {
-    bike.model.packages = bike.model.packages.map((mp: any) => {
-      const ov = overrides.find((bp: any) => bp.tier === mp.tier);
-      return ov ? { ...mp, price: ov.price, km_limit: ov.km_limit } : mp;
-    });
-  }
+  // Per-bike override + model-default UNION (NOT a left-join over model rows).
+  // The previous implementation iterated `bike.model.packages.map(...)`, which
+  // silently dropped overrides for any tier the model itself had never seeded
+  // (e.g. 36hr / 2day on bikes whose model only ships 12hr+24hr+7day+15day+30day).
+  // That hid admin edits for those tiers from the customer. `mergeBikePackages`
+  // returns every tier that exists in EITHER source.
+  bike.model.packages = mergeBikePackages(bike.model.packages, bikePackagesRes as any[]);
 
   return { bike, customPackages: customPkgsRes };
 }

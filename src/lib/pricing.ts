@@ -132,6 +132,46 @@ export const STANDARD_RANGES: StandardRange[] = [
   { tier: '30day',        min: 696, max: 720 },
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PACKAGE-SOURCE MERGE — admin override priority + UNION semantics
+//
+// The customer-facing price list for a bike is built from TWO database tables:
+//
+//   • bike_model_packages — model-level defaults (seeded; may not include every
+//     standard tier — historically only 12hr / 24hr / 7day / 15day / 30day).
+//   • bike_packages       — per-bike admin overrides (any subset of tiers).
+//
+// `mergeBikePackages` returns the UNION of both — every tier that exists in
+// EITHER source ends up in the result, with override values winning when both
+// sources have a row for the same tier.
+//
+// The historical merge logic (`modelPackages.map(mp => override-or-default)`)
+// was a left-join: tiers present ONLY in `bike_packages` were silently dropped.
+// That hid admin price edits for tiers (36hr, 2day, 60hr, 3day, etc.) that
+// were never seeded at the model level — the symptom users hit as
+// "tier 1–2 updates propagate, tier 3+ don't".
+// ─────────────────────────────────────────────────────────────────────────────
+export interface BikePackagePrice {
+  tier: PackageTier;
+  price: number;
+  km_limit: number;
+}
+
+export function mergeBikePackages(
+  modelPackages: Array<{ tier: PackageTier; price: number | string; km_limit: number }>,
+  overrides:    Array<{ tier: PackageTier; price: number | string; km_limit: number }>,
+): BikePackagePrice[] {
+  const byTier = new Map<PackageTier, BikePackagePrice>();
+  for (const mp of modelPackages ?? []) {
+    byTier.set(mp.tier, { tier: mp.tier, price: Number(mp.price), km_limit: Number(mp.km_limit) });
+  }
+  // Overrides win — `.set` replaces any model-level row at the same tier.
+  for (const ov of overrides ?? []) {
+    byTier.set(ov.tier, { tier: ov.tier, price: Number(ov.price), km_limit: Number(ov.km_limit) });
+  }
+  return Array.from(byTier.values());
+}
+
 /** Admin-defined custom duration package stored in `custom_packages` table. */
 export interface CustomPackage {
   id: string;
@@ -260,6 +300,26 @@ export function coveringTier(
   return null;
 }
 
+/**
+ * Pure tier-selection helper — picks the explicit `(min, max]` range that
+ * covers a rental duration. Identical to `coveringTier`; exported under
+ * this name for callers that want the spec's signature.
+ *
+ *     totalHours = differenceInHours(dropoffDate, pickupDate)
+ *     const tier = getApplicableTier(totalHours, availableTiers, customPackages)
+ *
+ * Returns `null` when no admin-configured tier covers the duration (callers
+ * must surface "no package available for this duration" — never fall back
+ * to a hardcoded longer-duration price).
+ */
+export function getApplicableTier(
+  totalHours: number,
+  availableTiers: PackageTier[],
+  customPackages: CustomPackage[] = []
+): TierResult | null {
+  return coveringTier(totalHours, availableTiers, customPackages);
+}
+
 export function formatDuration(hours: number): string {
   const d = Math.floor(hours / 24);
   const h = Math.round(hours % 24);
@@ -303,7 +363,10 @@ export interface PriceBreakdown {
 }
 
 export function calculatePrice(params: {
-  packages?: BikeModelPackage[];
+  // Accept any row with the minimum shape the function reads. Lets callers
+  // pass the merged `mergeBikePackages` output (which has no `id`/`model_id`)
+  // alongside raw `BikeModelPackage[]` rows.
+  packages?: Array<Pick<BikeModelPackage, 'tier' | 'price' | 'km_limit'>>;
   tier?: PackageTier;
   customPackage?: CustomPackage;   // use instead of tier for admin-created packages
   actualDays?: number;             // required for weekly_flex / monthly_flex

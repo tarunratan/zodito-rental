@@ -5,7 +5,7 @@ import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { createRazorpayOrder } from '@/lib/razorpay';
 import { quoteExtension } from '@/lib/extension-pricing';
 import { findConflictingBooking } from '@/lib/booking-overlap';
-import type { CustomPackage } from '@/lib/pricing';
+import { mergeBikePackages, type CustomPackage } from '@/lib/pricing';
 
 export const runtime = 'nodejs';
 
@@ -47,11 +47,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     admin.from('custom_packages').select('*').eq('bike_id', booking.bike_id).eq('is_active', true),
   ]);
 
-  const modelPkgs = ((booking.bike as any)?.model?.packages ?? []) as { tier: string; price: number; km_limit: number }[];
-  const mergedPackages = modelPkgs.map(mp => {
-    const ov = (overrides ?? []).find((o: any) => o.tier === mp.tier);
-    return ov ? { ...mp, price: ov.price, km_limit: ov.km_limit } as any : mp as any;
-  });
+  const modelPkgs = ((booking.bike as any)?.model?.packages ?? []) as { tier: any; price: number; km_limit: number }[];
+  // UNION merge — see /api/bookings/[id]/extend/quote for the same rationale.
+  const mergedPackages = mergeBikePackages(modelPkgs as any, (overrides ?? []) as any);
 
   const quote = quoteExtension({
     startTs: new Date(booking.start_ts),
@@ -60,7 +58,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     originalBasePrice: Number(booking.base_price ?? 0),
     originalGstAmount: Number(booking.gst_amount ?? 0),
     originalKmLimit: Number(booking.km_limit ?? 0),
-    availableTiers: mergedPackages.map((p: any) => p.tier),
+    availableTiers: mergedPackages.map(p => p.tier),
     packages: mergedPackages,
     customPackages: (customPkgs ?? []) as CustomPackage[],
   });

@@ -8,6 +8,7 @@ import {
   effectiveModelIdForDate,
   splitCommission,
   computeCouponDiscount,
+  mergeBikePackages,
 } from '@/lib/pricing';
 import type { PackageTier } from '@/lib/supabase/types';
 import type { CustomPackage } from '@/lib/pricing';
@@ -186,7 +187,14 @@ export async function POST(req: NextRequest) {
   // Weekend override — local day-of-week check first; only fetches if actually needed
   const model = bike.model as any;
   const effectiveModelId = effectiveModelIdForDate(model, startTs);
-  let packages = model.packages;
+
+  // Per-bike admin price overrides — UNION-merge so admin edits for tiers the
+  // model never seeded (36hr, 2day, …) actually drive the cash-rental charge.
+  // Always layered, even when no weekend swap is needed.
+  const bikeOverrideResult = await admin
+    .from('bike_packages').select('tier, price, km_limit').eq('bike_id', body.bike_id);
+
+  let packages = mergeBikePackages(model.packages as any, bikeOverrideResult.data ?? [] as any);
 
   // Coupon eligibility — single check against the canonical helper.
   // Time-window/active-from/expiry are pure; per-user checks fire conditionally.
@@ -209,7 +217,11 @@ export async function POST(req: NextRequest) {
         : Promise.resolve({ data: null }),
       userCheckPromise,
     ]);
-    if (weekendResult.data) packages = weekendResult.data;
+    if (weekendResult.data) {
+      // Weekend kicks in: re-layer per-bike overrides on top of the weekend
+      // model's defaults so the override remains the authoritative source.
+      packages = mergeBikePackages(weekendResult.data as any, bikeOverrideResult.data ?? [] as any);
+    }
 
     if (c && windowOk) {
       const hasUsedBefore   = scope === 'one_per_user'       ? !!(userCheckResult as any).data            : false;

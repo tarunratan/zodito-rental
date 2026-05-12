@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode, MOCK_BIKES } from '@/lib/mock';
 import {
-  STANDARD_RANGES, coveringTier, calculatePrice,
+  STANDARD_RANGES, coveringTier, calculatePrice, mergeBikePackages,
   type CustomPackage, type PackageTier,
 } from '@/lib/pricing';
 
@@ -110,11 +110,9 @@ export async function GET(req: NextRequest) {
     const overrides: any[] = overrideRes.data ?? [];
     const customPackages: CustomPackage[] = (customRes.data ?? []) as CustomPackage[];
 
-    // Merge: per-bike overrides take priority over model-level packages.
-    const packages = modelPackages.map((mp: any) => {
-      const ov = overrides.find((o: any) => o.tier === mp.tier);
-      return ov ? { ...mp, price: Number(ov.price), km_limit: ov.km_limit } : mp;
-    });
+    // UNION merge — overrides for tiers the model never seeded (e.g. 36hr,
+    // 2day) must still appear in the final list so admin edits propagate.
+    const packages = mergeBikePackages(modelPackages, overrides);
     const availableTiers: PackageTier[] = packages.map(p => p.tier);
 
     // ── MANDATORY DEBUG LOG (3) ─────────────────────────────────────────────

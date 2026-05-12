@@ -10,6 +10,7 @@ import {
   effectiveModelIdForDate,
   splitCommission,
   computeCouponDiscount,
+  mergeBikePackages,
 } from '@/lib/pricing';
 import type { CustomPackage } from '@/lib/pricing';
 import { isCouponInActiveWindow, isCouponUsable, type CouponRecord } from '@/lib/coupon-eligibility';
@@ -175,15 +176,20 @@ export async function POST(req: NextRequest) {
         ? admin.from('bookings').select('id', { count: 'exact', head: true }).eq('user_id', user.id).not('status', 'in', '(cancelled,payment_failed)')
         : Promise.resolve({ data: null });
 
-  const [weekendResult, userCheckResult] = await Promise.all([
+  const [weekendResult, userCheckResult, bikeOverrideResult] = await Promise.all([
     effectiveModelId !== model.id
       ? admin.from('bike_model_packages').select('tier, price, km_limit').eq('model_id', effectiveModelId)
       : Promise.resolve({ data: null }),
     userCheckPromise,
+    // Per-bike admin price overrides — must be applied on top of the model
+    // packages so prices the admin sets for tiers the model never seeded
+    // (e.g. 36hr, 2day, 60hr, 3day) actually drive the charge.
+    admin.from('bike_packages').select('tier, price, km_limit').eq('bike_id', body.bike_id),
   ]);
 
-  let packages = model.packages;
-  if (weekendResult.data) packages = weekendResult.data;
+  const basePackages = weekendResult.data ?? model.packages;
+  const overrides    = bikeOverrideResult.data ?? [];
+  let packages = mergeBikePackages(basePackages as any, overrides as any);
 
   let couponRow: { id: string; code: string; discount_type: string; discount_value: number } | null = null;
   if (c && windowOk) {

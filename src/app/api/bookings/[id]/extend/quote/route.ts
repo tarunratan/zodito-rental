@@ -4,7 +4,7 @@ import { getCurrentAppUser } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { quoteExtension } from '@/lib/extension-pricing';
 import { findConflictingBooking } from '@/lib/booking-overlap';
-import type { CustomPackage } from '@/lib/pricing';
+import { mergeBikePackages, type CustomPackage } from '@/lib/pricing';
 
 export const runtime = 'nodejs';
 
@@ -45,12 +45,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     admin.from('custom_packages').select('*').eq('bike_id', booking.bike_id).eq('is_active', true),
   ]);
 
-  const modelPkgs = ((booking.bike as any)?.model?.packages ?? []) as { tier: string; price: number; km_limit: number }[];
-  const mergedPackages = modelPkgs.map(mp => {
-    const ov = (overrides ?? []).find((o: any) => o.tier === mp.tier);
-    return ov ? { ...mp, price: ov.price, km_limit: ov.km_limit } as any : mp as any;
-  });
-  const availableTiers = mergedPackages.map((p: any) => p.tier);
+  const modelPkgs = ((booking.bike as any)?.model?.packages ?? []) as { tier: any; price: number; km_limit: number }[];
+  // UNION merge — admin overrides for tiers the model never seeded (36hr, 2day,
+  // 60hr, 3day, …) must appear in the extension price list too.
+  const mergedPackages = mergeBikePackages(modelPkgs as any, (overrides ?? []) as any);
+  const availableTiers = mergedPackages.map(p => p.tier);
 
   const quote = quoteExtension({
     startTs: new Date(booking.start_ts),
