@@ -130,6 +130,30 @@ export function Nav() {
         </ul>
 
         <div className="flex gap-2.5 items-center">
+          {/* Portal pills — quick access for staff. Admin pill ONLY when role === 'admin';
+              Vendor pill when role is admin (preview mode) OR vendor (their own dashboard).
+              Non-staff users (customer / null) never see these. */}
+          {loaded && isSignedIn && !isMockMode() && (effectiveRole === 'admin' || effectiveRole === 'vendor') && (
+            <div className="hidden md:flex items-center gap-1.5 mr-1">
+              {effectiveRole === 'admin' && (
+                <Link
+                  href="/admin"
+                  className="flex items-center gap-1.5 text-[12px] font-bold px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white border border-white/20 hover:border-white/40 transition-colors"
+                  title="Admin console"
+                >
+                  <span>🛡</span><span>Admin</span>
+                </Link>
+              )}
+              <Link
+                href="/vendor"
+                className="flex items-center gap-1.5 text-[12px] font-bold px-2.5 py-1.5 rounded-lg bg-accent/15 hover:bg-accent/25 text-accent border border-accent/30 hover:border-accent/50 transition-colors"
+                title={effectiveRole === 'admin' ? 'Preview any vendor portal' : 'Vendor dashboard'}
+              >
+                <span>🏪</span><span>Vendor</span>
+              </Link>
+            </div>
+          )}
+
           {!loaded ? null : isSignedIn && !isMockMode() ? (
             /* ── User name dropdown (desktop) ── */
             <div ref={userMenuRef} className="hidden md:block relative">
@@ -178,22 +202,27 @@ export function Nav() {
                       ⚠ Re-submit KYC
                     </Link>
                   )}
-                  {effectiveRole === 'vendor' && (
+                  {/* Vendor entry — visible to vendors (their own portal) AND admins (preview mode). */}
+                  {(effectiveRole === 'vendor' || effectiveRole === 'admin') && (
                     <Link
                       href="/vendor"
                       onClick={() => setUserMenuOpen(false)}
                       className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-primary hover:bg-bg transition-colors"
                     >
-                      🏪 Vendor Dashboard
+                      🏪 Vendor Portal
+                      {effectiveRole === 'admin' && (
+                        <span className="ml-auto text-[10px] uppercase tracking-wide bg-accent/15 text-accent px-1.5 py-0.5 rounded">Preview</span>
+                      )}
                     </Link>
                   )}
+                  {/* Admin entry — ONLY visible when role === 'admin'. Never leaks to vendors. */}
                   {effectiveRole === 'admin' && (
                     <Link
                       href="/admin"
                       onClick={() => setUserMenuOpen(false)}
                       className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-primary hover:bg-bg transition-colors"
                     >
-                      ⚙ Admin
+                      🛡 Admin Console
                     </Link>
                   )}
                   <div className="border-t border-border my-1" />
@@ -252,11 +281,15 @@ export function Nav() {
                 {kyc === 'rejected' && (
                   <MobileNavLink href="/profile?tab=kyc" onClick={() => setMenuOpen(false)} warning>⚠ Re-submit KYC</MobileNavLink>
                 )}
-                {effectiveRole === 'vendor' && (
-                  <MobileNavLink href="/vendor" onClick={() => setMenuOpen(false)}>Vendor Dashboard</MobileNavLink>
+                {/* Vendor entry — vendors get their own portal; admins get preview mode. */}
+                {(effectiveRole === 'vendor' || effectiveRole === 'admin') && (
+                  <MobileNavLink href="/vendor" onClick={() => setMenuOpen(false)}>
+                    🏪 Vendor Portal{effectiveRole === 'admin' ? ' (Preview)' : ''}
+                  </MobileNavLink>
                 )}
+                {/* Admin entry — strictly gated to admins. */}
                 {effectiveRole === 'admin' && (
-                  <MobileNavLink href="/admin" onClick={() => setMenuOpen(false)}>Admin</MobileNavLink>
+                  <MobileNavLink href="/admin" onClick={() => setMenuOpen(false)}>🛡 Admin Console</MobileNavLink>
                 )}
                 <MobileNavLink href="/earn" onClick={() => setMenuOpen(false)}>💰 Earn with Us</MobileNavLink>
                 {showListBike && (

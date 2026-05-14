@@ -9,37 +9,13 @@ import { TIER_LABELS } from '@/lib/pricing';
 
 export const dynamic = 'force-dynamic';
 
-async function fetchVendorData(userId: string) {
-  if (isMockMode()) {
-    // Mock: pretend the user owns bikes 7 and 8
-    const myBikes = MOCK_BIKES.filter(b => b.owner_type === 'vendor');
-    const myBookings = mockBookingsStore.filter(b =>
-      myBikes.some(bike => bike.id === b.bike_id)
-    );
-    return {
-      vendor: {
-        id: 'v-mock',
-        business_name: 'Mock Vendor Store',
-        status: 'approved',
-        commission_pct: 20,
-        pickup_area: 'Kukatpally',
-      },
-      bikes: myBikes,
-      bookings: myBookings.map(b => ({
-        ...b,
-        bike: myBikes.find(k => k.id === b.bike_id),
-        total_amount: 1500,
-        vendor_payout: 1040,
-        platform_commission: 460,
-      })),
-    };
-  }
-
+/** Load a vendor + bikes + bookings by vendor.id (used by both modes). */
+async function fetchVendorById(vendorId: string) {
   const supabase = createSupabaseAdmin();
   const { data: vendor } = await supabase
     .from('vendors')
     .select('*')
-    .eq('user_id', userId)
+    .eq('id', vendorId)
     .maybeSingle();
   if (!vendor) return null;
 
@@ -66,7 +42,45 @@ async function fetchVendorData(userId: string) {
   return { vendor, bikes: bikes ?? [], bookings: bookings ?? [] };
 }
 
-export default async function VendorDashboard() {
+async function fetchVendorData(userId: string) {
+  if (isMockMode()) {
+    const myBikes = MOCK_BIKES.filter(b => b.owner_type === 'vendor');
+    const myBookings = mockBookingsStore.filter(b => myBikes.some(bike => bike.id === b.bike_id));
+    return {
+      vendor: { id: 'v-mock', business_name: 'Mock Vendor Store', status: 'approved', commission_pct: 20, pickup_area: 'Kukatpally' },
+      bikes: myBikes,
+      bookings: myBookings.map(b => ({
+        ...b, bike: myBikes.find(k => k.id === b.bike_id),
+        total_amount: 1500, vendor_payout: 1040, platform_commission: 460,
+      })),
+    };
+  }
+
+  const supabase = createSupabaseAdmin();
+  const { data: vendor } = await supabase
+    .from('vendors')
+    .select('id')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (!vendor) return null;
+  return fetchVendorById((vendor as any).id);
+}
+
+/** Admin-only: list all vendors for the picker page. */
+async function fetchAllVendors() {
+  const supabase = createSupabaseAdmin();
+  const { data } = await supabase
+    .from('vendors')
+    .select('id, business_name, pickup_area, status, commission_pct, created_at')
+    .order('created_at', { ascending: false });
+  return data ?? [];
+}
+
+export default async function VendorDashboard({
+  searchParams,
+}: {
+  searchParams: { as?: string };
+}) {
   const user = await getCurrentAppUser();
   if (!user) {
     return (
@@ -76,12 +90,94 @@ export default async function VendorDashboard() {
     );
   }
 
-  const data = await fetchVendorData(user.id);
+  // ── Admin preview mode ──────────────────────────────────────────────────
+  // When the platform admin opens /vendor:
+  //   • /vendor?as=<vendor_id> → load that specific vendor's dashboard
+  //     (read-only preview of what THAT vendor sees in their portal).
+  //   • /vendor                → show a picker listing every vendor with
+  //     "Preview as this vendor" buttons.
+  //
+  // The `?as=` query param is HONORED ONLY when user.role === 'admin'. A
+  // vendor passing `?as=<some_other_id>` is silently ignored — they always
+  // fall through to the "load my own vendor row" path below.
+  const isAdmin = user.role === 'admin';
 
-  // If no vendor record, redirect to signup
+  if (isAdmin && !isMockMode()) {
+    const targetVendorId = searchParams?.as;
+    if (!targetVendorId) {
+      // Picker — list all vendors with click-to-preview.
+      const allVendors = await fetchAllVendors();
+      return <AdminVendorPicker vendors={allVendors} />;
+    }
+    const data = await fetchVendorById(targetVendorId);
+    if (!data) {
+      return (
+        <div className="max-w-3xl mx-auto px-6 py-20 text-center">
+          <p className="text-muted mb-4">No vendor found with that ID.</p>
+          <Link href="/vendor" className="btn-accent inline-block">← Back to vendor picker</Link>
+        </div>
+      );
+    }
+    return renderDashboard(data, { isAdminPreview: true });
+  }
+
+  // ── Vendor's own dashboard (existing behavior) ──────────────────────────
+  const data = await fetchVendorData(user.id);
   if (!data) redirect('/vendor/signup');
   if (data.vendor.status !== 'approved') redirect('/vendor/signup');
+  return renderDashboard(data, { isAdminPreview: false });
+}
 
+function AdminVendorPicker({ vendors }: { vendors: any[] }) {
+  return (
+    <div className="max-w-5xl mx-auto px-6 py-8">
+      <div className="rounded-xl border-2 border-accent/30 bg-accent/5 p-4 mb-6 flex items-start gap-3">
+        <span className="text-2xl">🛡</span>
+        <div>
+          <div className="font-display font-bold text-base">Admin · Vendor Portal Preview</div>
+          <p className="text-sm text-muted mt-0.5">
+            Pick a vendor below to see exactly what they see in their portal.
+            You are NOT acting as that vendor — this is a read-only preview.
+          </p>
+        </div>
+      </div>
+
+      <h2 className="font-display font-semibold text-lg mb-3">All vendors ({vendors.length})</h2>
+      {vendors.length === 0 ? (
+        <div className="card p-8 text-center text-muted">
+          <p className="text-sm">No vendors registered yet.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {vendors.map(v => (
+            <Link
+              key={v.id}
+              href={`/vendor?as=${v.id}`}
+              className="card p-4 hover:border-accent hover:shadow-card-hover transition-all"
+            >
+              <div className="flex items-start justify-between gap-2 mb-1">
+                <div className="font-display font-semibold text-base truncate">{v.business_name}</div>
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0 ${
+                  v.status === 'approved' ? 'bg-success/15 text-success' :
+                  v.status === 'pending'  ? 'bg-warning/15 text-warning' :
+                                            'bg-danger/15 text-danger'
+                }`}>{v.status}</span>
+              </div>
+              <div className="text-xs text-muted">📍 {v.pickup_area ?? '—'}</div>
+              <div className="text-xs text-muted mt-1">{v.commission_pct}% commission</div>
+              <div className="mt-3 text-xs font-semibold text-accent">Preview portal →</div>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function renderDashboard(
+  data: NonNullable<Awaited<ReturnType<typeof fetchVendorData>>>,
+  opts: { isAdminPreview: boolean },
+) {
   const { vendor, bikes, bookings } = data;
 
   // Earnings summary
@@ -98,12 +194,32 @@ export default async function VendorDashboard() {
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
+      {/* Admin-preview banner — only shown when an admin is viewing this vendor
+          via /vendor?as=<vendor_id>. Makes it unmissable that you are NOT
+          acting as the vendor; this is a read-only preview. */}
+      {opts.isAdminPreview && (
+        <div className="rounded-xl border-2 border-accent/40 bg-accent/5 p-3 mb-5 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2.5 text-sm">
+            <span className="text-lg">🛡</span>
+            <div>
+              <span className="font-bold">Admin preview</span>
+              <span className="text-muted"> · viewing as <strong className="text-primary">{vendor.business_name}</strong></span>
+            </div>
+          </div>
+          <Link href="/vendor" className="text-xs font-semibold text-accent hover:underline">
+            ← Pick another vendor
+          </Link>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="font-display font-bold text-3xl tracking-tight">{vendor.business_name}</h1>
           <p className="text-muted text-sm mt-1">📍 {vendor.pickup_area} · {bikes.length} bikes listed</p>
         </div>
-        <Link href="/vendor/bikes/new" className="btn-accent text-sm">+ List a bike</Link>
+        {!opts.isAdminPreview && (
+          <Link href="/vendor/bikes/new" className="btn-accent text-sm">+ List a bike</Link>
+        )}
       </div>
 
       {/* KPI cards */}
