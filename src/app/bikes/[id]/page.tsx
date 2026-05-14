@@ -15,19 +15,25 @@ export const dynamic = 'force-dynamic';
 import { isMockMode, MOCK_BIKES } from '@/lib/mock';
 import { formatINR } from '@/lib/utils';
 
-async function fetchBike(id: string) {
+/** Reason the bike isn't viewable (for the friendly error page + server logs). */
+type FetchReason = 'not_found' | 'inactive' | 'unapproved' | 'query_error';
+
+async function fetchBike(id: string, allowPreview: boolean) {
   if (isMockMode()) {
-    return { bike: MOCK_BIKES.find(b => b.id === id) ?? null, customPackages: [] as CustomPackage[] };
+    return { bike: MOCK_BIKES.find(b => b.id === id) ?? null, customPackages: [] as CustomPackage[], reason: null as FetchReason | null };
   }
 
   const supabase = createSupabaseAdmin();
+  // First read without the visibility filters — lets us tell apart "id doesn't
+  // exist", "deactivated", and "pending approval" so the page (and server logs)
+  // can surface the actual reason instead of a generic 404.
   const [bikeRes, bikePackagesRes, customPkgsRes] = await Promise.all([
     supabase
       .from('bikes')
       .select(`
         id, emoji, image_url, image_url_2, image_url_3, color, color_hex, year,
         total_rides, rating_avg, rating_count, owner_type, registration_number,
-        extra_km_rate, late_penalty_hour,
+        extra_km_rate, late_penalty_hour, is_active, listing_status,
         model:bike_models!inner(
           id, name, display_name, category, cc,
           excess_km_rate, late_hourly_penalty, has_weekend_override, weekend_override_model_id,
@@ -36,17 +42,13 @@ async function fetchBike(id: string) {
         vendor:vendors(id, business_name, pickup_area, pickup_address)
       `)
       .eq('id', id)
-      .eq('is_active', true)
-      .eq('listing_status', 'approved')
       .maybeSingle(),
-    // Per-bike price overrides — gracefully handle if table doesn't exist yet
     supabase
       .from('bike_packages')
       .select('tier, price, km_limit')
       .eq('bike_id', id)
       .then((r: any) => r.data ?? [])
       .catch(() => [] as any[]),
-    // Admin-created custom duration packages for this bike
     supabase
       .from('custom_packages')
       .select('id, bike_id, label, min_duration_hours, duration_hours, price, km_limit, per_day_price, per_day_km_limit, is_active')
@@ -58,32 +60,74 @@ async function fetchBike(id: string) {
   ]);
 
   if (bikeRes.error) {
-    console.error('fetchBike error:', bikeRes.error);
-    return { bike: null, customPackages: [] as CustomPackage[] };
+    console.error('[bikes/[id]] fetch error:', bikeRes.error, 'id:', id);
+    return { bike: null, customPackages: [] as CustomPackage[], reason: 'query_error' as FetchReason };
   }
-  const bike = bikeRes.data;
-  if (!bike) return { bike: null, customPackages: [] as CustomPackage[] };
 
-  // Per-bike override + model-default UNION (NOT a left-join over model rows).
-  // The previous implementation iterated `bike.model.packages.map(...)`, which
-  // silently dropped overrides for any tier the model itself had never seeded
-  // (e.g. 36hr / 2day on bikes whose model only ships 12hr+24hr+7day+15day+30day).
-  // That hid admin edits for those tiers from the customer. `mergeBikePackages`
-  // returns every tier that exists in EITHER source.
+  const bike = bikeRes.data as any;
+  if (!bike) {
+    console.warn('[bikes/[id]] bike not found in DB:', id);
+    return { bike: null, customPackages: [] as CustomPackage[], reason: 'not_found' as FetchReason };
+  }
+
+  // Enforce the public-visibility filters unless an admin is previewing.
+  if (!allowPreview) {
+    if (!bike.is_active) {
+      console.warn('[bikes/[id]] bike is deactivated:', id);
+      return { bike: null, customPackages: [] as CustomPackage[], reason: 'inactive' as FetchReason };
+    }
+    if (bike.listing_status !== 'approved') {
+      console.warn('[bikes/[id]] bike listing not approved:', id, 'status:', bike.listing_status);
+      return { bike: null, customPackages: [] as CustomPackage[], reason: 'unapproved' as FetchReason };
+    }
+  }
+
+  // UNION merge — see commit 4f5202d for the rationale.
   bike.model.packages = mergeBikePackages(bike.model.packages, bikePackagesRes as any[]);
 
-  return { bike, customPackages: customPkgsRes };
+  return { bike, customPackages: customPkgsRes, reason: null as FetchReason | null };
 }
 
-export default async function BikeDetailPage({ params }: { params: { id: string } }) {
-  const [{ bike, customPackages }, user] = await Promise.all([fetchBike(params.id), getCurrentAppUser()]);
-  if (!bike) notFound();
+export default async function BikeDetailPage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams: { preview?: string };
+}) {
+  const user = await getCurrentAppUser();
+  // Admins can append `?preview=1` to view a bike that isn't approved or is
+  // deactivated — useful for previewing a listing before publishing without
+  // toggling the bike live. Customers get the standard visibility filters.
+  const allowPreview = !!(user?.role === 'admin' && searchParams?.preview === '1');
+  const { bike, customPackages, reason } = await fetchBike(params.id, allowPreview);
+
+  // Friendly explanation instead of a bare 404 so the admin / vendor can
+  // see WHY the link isn't loading.
+  if (!bike) {
+    if (reason === 'not_found') notFound();
+    return <BikeUnavailable reason={reason} bikeId={params.id} isAdmin={user?.role === 'admin'} />;
+  }
+
   const kycStatus = user?.kyc_status ?? null;
 
   const isVendor = bike.owner_type === 'vendor';
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
+      {allowPreview && (
+        <div className="rounded-lg border-2 border-accent/30 bg-accent/5 px-3 py-2 mb-4 flex items-center justify-between gap-2 text-sm">
+          <span>
+            🛡 <strong>Admin preview</strong> — bypassing visibility filters.
+            Listing status: <code className="font-mono text-xs bg-white border border-border px-1 py-0.5 rounded">{bike.listing_status}</code>
+            {' · is_active: '}
+            <code className="font-mono text-xs bg-white border border-border px-1 py-0.5 rounded">{String(bike.is_active)}</code>
+          </span>
+          <Link href={`/bikes/${bike.id}`} className="text-xs font-semibold text-accent hover:underline shrink-0">
+            View as customer →
+          </Link>
+        </div>
+      )}
       <Link href="/" className="text-sm text-muted hover:text-primary inline-flex items-center gap-1 mb-6">
         ← Back to browse
       </Link>
@@ -186,6 +230,43 @@ function Spec({ label, value }: { label: string; value: string }) {
     <div className="p-3 bg-white border border-border rounded-lg">
       <div className="text-[10px] text-muted uppercase tracking-wide">{label}</div>
       <div className="font-semibold text-sm mt-0.5">{value}</div>
+    </div>
+  );
+}
+
+function BikeUnavailable({ reason, bikeId, isAdmin }: { reason: FetchReason | null; bikeId: string; isAdmin: boolean }) {
+  const copy = (() => {
+    switch (reason) {
+      case 'inactive':    return { title: 'This bike is currently offline', body: 'The owner has temporarily deactivated this listing. Browse other available bikes instead.' };
+      case 'unapproved':  return { title: 'This listing is awaiting approval', body: 'A new bike was added but our team hasn’t reviewed it yet. Please check back shortly.' };
+      case 'query_error': return { title: 'Something went wrong loading this bike', body: 'A server error occurred while looking up the listing. Please try again in a moment.' };
+      default:            return { title: 'This bike isn’t available right now', body: 'It may have been removed by the owner or admin. Try one of the active bikes below.' };
+    }
+  })();
+
+  return (
+    <div className="max-w-2xl mx-auto px-6 py-20 text-center">
+      <div className="text-6xl mb-4">🔒</div>
+      <h1 className="font-display font-bold text-2xl mb-2">{copy.title}</h1>
+      <p className="text-muted mb-6">{copy.body}</p>
+
+      {isAdmin && (
+        <div className="rounded-xl border-2 border-accent/30 bg-accent/5 p-4 text-left mb-6">
+          <p className="text-xs font-bold uppercase tracking-wider text-accent mb-1">Admin diagnostic</p>
+          <p className="text-xs text-muted mb-2">
+            Bike id <span className="font-mono">{bikeId}</span> &middot;
+            reason: <span className="font-mono">{reason ?? 'unknown'}</span>
+          </p>
+          <Link
+            href={`/bikes/${bikeId}?preview=1`}
+            className="inline-block text-xs font-semibold text-accent hover:underline"
+          >
+            Open as admin preview →
+          </Link>
+        </div>
+      )}
+
+      <Link href="/" className="inline-block btn-accent text-sm">← Back to browse</Link>
     </div>
   );
 }
