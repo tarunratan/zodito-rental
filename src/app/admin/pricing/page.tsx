@@ -19,16 +19,20 @@ export default async function AdminPricingPage() {
   }
 
   const supabase = createSupabaseAdmin();
+  // Pricing is an ADMIN surface — load every bike in the fleet, including
+  // deactivated and pending-approval ones. The previous query mirrored the
+  // customer-facing filters (`is_active = true`, `listing_status = approved`)
+  // which silently hid bikes from the admin's own pricing screen. Admins need
+  // to set / edit prices regardless of public-visibility state.
+  // Visual badges in BikePricingManager flag inactive / unapproved listings.
   const { data: bikes } = await supabase
     .from('bikes')
     .select(`
       id, emoji, image_url, color, color_hex, registration_number,
-      extra_km_rate, late_penalty_hour,
+      extra_km_rate, late_penalty_hour, is_active, listing_status,
       model:bike_models!inner(id, display_name, cc, packages:bike_model_packages(tier, price, km_limit)),
       bike_packages(tier, price, km_limit)
     `)
-    .eq('is_active', true)
-    .eq('listing_status', 'approved')
     .order('created_at', { ascending: false });
 
   return (

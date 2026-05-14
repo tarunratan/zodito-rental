@@ -725,17 +725,25 @@ export function BikePricingManager({ initialBikes }: { initialBikes: Bike[] }) {
         {/* ── Bike list ── */}
         <div className="space-y-3">
           {bikes.length === 0 && (
-            <p className="text-muted text-sm py-8 text-center">No active bikes found.</p>
+            <p className="text-muted text-sm py-8 text-center">No bikes in the fleet yet.</p>
           )}
           {bikes.map(bike => {
             const overrideCount = (bike.bike_packages ?? []).length;
-            const isActive = editingBike?.id === bike.id;
+            const isActiveRow = editingBike?.id === bike.id;
             const isScooter = bike.model?.category === 'scooter';
+            // Visibility flags — admins still get to edit pricing for inactive
+            // / unapproved bikes, so we surface the state inline rather than
+            // hiding the bike from the list.
+            const isInactive   = bike.is_active === false;
+            const isUnapproved = bike.listing_status && bike.listing_status !== 'approved';
+            const hidden       = isInactive || !!isUnapproved;
             return (
               <button
                 key={bike.id}
                 onClick={() => openEditor(bike)}
-                className={`w-full text-left card p-4 transition-all hover:shadow-md active:scale-[0.99] ${isActive ? 'ring-2 ring-accent' : ''}`}
+                className={`w-full text-left card p-4 transition-all hover:shadow-md active:scale-[0.99] ${
+                  isActiveRow ? 'ring-2 ring-accent' : ''
+                } ${hidden ? 'opacity-70' : ''}`}
               >
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-lg overflow-hidden bg-primary/5 flex items-center justify-center shrink-0">
@@ -749,6 +757,16 @@ export function BikePricingManager({ initialBikes }: { initialBikes: Bike[] }) {
                       <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${isScooter ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
                         {isScooter ? '🛵 Scooter' : '🏍️ Bike'}
                       </span>
+                      {isInactive && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-gray-200 text-gray-700 uppercase tracking-wide">
+                          Inactive
+                        </span>
+                      )}
+                      {!!isUnapproved && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-yellow-100 text-yellow-700 uppercase tracking-wide">
+                          {bike.listing_status}
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-muted mt-0.5">
                       {bike.color} · {bike.model.cc}cc
