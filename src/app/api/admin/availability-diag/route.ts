@@ -53,6 +53,11 @@ export async function GET(req: NextRequest) {
 
   const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
   const twoHoursAgo   = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  // Mirror the same ongoing-grace logic as /api/bikes/available so the diag
+  // accurately reflects what the home endpoint would do — including the fix
+  // that un-blocks far-future searches from old/overdue ongoing rides.
+  const ONGOING_GRACE_DAYS = 2;
+  const fromMinusGraceIso  = new Date(fromTs.getTime() - ONGOING_GRACE_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   const supabase = createSupabaseAdmin();
 
@@ -70,7 +75,8 @@ export async function GET(req: NextRequest) {
     supabase
       .from('bookings')
       .select('bike_id, id, status, start_ts, end_ts')
-      .eq('status', 'ongoing'),
+      .eq('status', 'ongoing')
+      .gt('end_ts', fromMinusGraceIso),
   ]);
 
   if (bikesRes.error) {

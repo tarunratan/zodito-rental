@@ -34,11 +34,21 @@ export async function GET(req: NextRequest) {
   // confirmed bookings free the bike 2 hours after pickup if admin hasn't marked ongoing
   // (no-show / scammer protection — prevents a single bad booking from locking a bike all day)
   const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  // Grace window for overdue `ongoing` bookings — once the scheduled end_ts
+  // is more than this far in the past, we assume the bike will be (or has
+  // been) returned and stop using a single ancient ongoing row to block
+  // every future search forever. Critical for far-out searches: a 5-month-
+  // ahead query MUST NOT inherit blocks from this morning's ongoing rides.
+  const ONGOING_GRACE_DAYS = 2;
+  const fromMinusGraceIso  = new Date(fromTs.getTime() - ONGOING_GRACE_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   // Three independent reads in parallel:
   // 1. confirmed — time-overlap + start_ts recency (auto-expires 2hrs after unpicked pickup)
   //    pending_payment — time-overlap + created_at recency (expires 15min)
-  // 2. ongoing — unconditional: bike is physically out until Mark Return, regardless of end_ts
+  // 2. ongoing — block ONLY when the ongoing rental's scheduled end (plus a
+  //    small grace period for overdue returns) overlaps the requested
+  //    search window. The old "unconditional ongoing block" was the cause
+  //    of the "17 bikes unavailable 5 months from now" bug.
   // 3. frozen slots — time-overlap check
   const [timeBlockedRes, ongoingRes, frozenRes] = await Promise.all([
     supabase
@@ -50,7 +60,8 @@ export async function GET(req: NextRequest) {
     supabase
       .from('bookings')
       .select('bike_id')
-      .eq('status', 'ongoing'),
+      .eq('status', 'ongoing')
+      .gt('end_ts', fromMinusGraceIso),
     // Frozen-window overlap. `frozen_from` may be NULL (treated as -infinity),
     // so we only REQUIRE `frozen_until` to be set. The `frozen_from < to`
     // half of the overlap is enforced as a logical OR that also accepts NULL.

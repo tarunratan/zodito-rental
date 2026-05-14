@@ -32,6 +32,11 @@ export async function GET(
   // pending_payment expires after 15 minutes; confirmed expires 2hrs after unpicked pickup
   const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
   const twoHoursAgo   = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  // Grace window for overdue `ongoing` rides — see the long-form comment in
+  // /api/bikes/available/route.ts. Beyond this we no longer treat an
+  // un-returned bike as physically out for future searches.
+  const ONGOING_GRACE_DAYS = 2;
+  const fromMinusGraceIso  = new Date(fromTs.getTime() - ONGOING_GRACE_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   const [timeBlockedRes, ongoingRes, bikeRes] = await Promise.all([
     // confirmed + pending_payment — only block during time window (with recency guard)
@@ -44,12 +49,14 @@ export async function GET(
       .gt('end_ts', fromIso)
       .limit(1)
       .maybeSingle(),
-    // ongoing — unconditional: bike is physically out until admin marks Return
+    // ongoing — block ONLY when the booking's scheduled end_ts (plus grace
+    // period for overdue) overlaps the search window. Was unconditional.
     supabase
       .from('bookings')
       .select('id')
       .eq('bike_id', bikeId)
       .eq('status', 'ongoing')
+      .gt('end_ts', fromMinusGraceIso)
       .limit(1)
       .maybeSingle(),
     // Visibility flags fetched in the SAME query as freeze metadata — this is
