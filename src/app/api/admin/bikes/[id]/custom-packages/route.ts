@@ -89,6 +89,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       if (error.code === '23505') {
         return NextResponse.json({ error: 'A custom package with this duration already exists for this bike' }, { status: 409 });
       }
+      // CHECK constraint violation — most commonly the historical 30-day cap
+      // on `duration_hours`. Surface an actionable message so the admin knows
+      // exactly what to do instead of seeing a Postgres error code.
+      if (error.code === '23514' || /duration_hours_check/i.test(error.message)) {
+        return NextResponse.json({
+          error: 'Database is rejecting this package duration. Run migration '
+               + '039_custom_package_long_durations.sql in Supabase to allow '
+               + 'custom packages longer than 30 days, then save again.',
+          duration_hours: insertRow.duration_hours,
+          min_duration_hours: insertRow.min_duration_hours,
+          db_error: error.message,
+        }, { status: 500 });
+      }
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
     revalidatePath(`/bikes/${params.id}`);
