@@ -107,7 +107,19 @@ export async function GET(req: NextRequest) {
   const unavailableCount = states.length - availableStates.length;
 
   return NextResponse.json(
-    { bikes: merged, unavailable_count: unavailableCount },
+    {
+      bikes: merged,
+      unavailable_count: unavailableCount,
+      // Build marker — bumps with each meaningful change to this route.
+      // Hit this endpoint directly in a browser; if you see an older
+      // `_route_version` than expected, your production deploy is lagging.
+      _route_version: 'bike_states-v2-realtime',
+      _state_summary: {
+        total_bikes:     states.length,
+        available:       availableStates.length,
+        safety_dropped:  dropped.length,
+      },
+    },
     { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0' } },
   );
 }
