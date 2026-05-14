@@ -74,11 +74,13 @@ async function fetchBike(id: string, allowPreview: boolean) {
 
   // Enforce the public-visibility filters unless an admin is previewing.
   if (!allowPreview) {
-    if (!bike.is_active) {
-      console.warn('[bikes/[id]] bike is deactivated:', id);
+    // Strict `=== false` so an undefined column read (e.g. column missing
+    // from the select) doesn't accidentally mark the bike inactive.
+    if (bike.is_active === false) {
+      console.warn('[bikes/[id]] bike is deactivated:', id, 'is_active:', bike.is_active);
       return { bike: null, customPackages: [] as CustomPackage[], reason: 'inactive' as FetchReason };
     }
-    if (bike.listing_status !== 'approved') {
+    if (bike.listing_status && bike.listing_status !== 'approved') {
       console.warn('[bikes/[id]] bike listing not approved:', id, 'status:', bike.listing_status);
       return { bike: null, customPackages: [] as CustomPackage[], reason: 'unapproved' as FetchReason };
     }

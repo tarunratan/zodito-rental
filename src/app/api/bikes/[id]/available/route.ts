@@ -52,25 +52,37 @@ export async function GET(
       .eq('status', 'ongoing')
       .limit(1)
       .maybeSingle(),
+    // Visibility flags fetched in the SAME query as freeze metadata — this is
+    // the bike's row of record. Without these, the home list endpoint and
+    // the detail endpoint could disagree on whether the bike was available
+    // (the user reported clicking through a "4 available" card and getting
+    // "currently offline").
     supabase
       .from('bikes')
-      .select('frozen_from, frozen_until')
+      .select('id, is_active, listing_status, frozen_from, frozen_until')
       .eq('id', bikeId)
       .maybeSingle(),
   ]);
 
-  if (timeBlockedRes.data || ongoingRes.data) {
-    return NextResponse.json({ available: false }, { headers: { 'Cache-Control': 'no-store' } });
-  }
+  const NO_STORE = { 'Cache-Control': 'no-store, no-cache, must-revalidate' };
 
-  // Use the canonical helper — accepts NULL `frozen_from` (treated as -inf)
-  // so a bike frozen with only `frozen_until` set still blocks the booking.
-  if (isFrozenInWindow(bikeRes.data ?? null, fromTs, toTs)) {
+  if (!bikeRes.data) {
+    return NextResponse.json({ available: false, reason: 'not_found' }, { headers: NO_STORE });
+  }
+  if (bikeRes.data.is_active === false) {
+    return NextResponse.json({ available: false, reason: 'inactive' }, { headers: NO_STORE });
+  }
+  if (bikeRes.data.listing_status && bikeRes.data.listing_status !== 'approved') {
+    return NextResponse.json({ available: false, reason: 'unapproved' }, { headers: NO_STORE });
+  }
+  if (ongoingRes.data)     return NextResponse.json({ available: false, reason: 'ongoing' },          { headers: NO_STORE });
+  if (timeBlockedRes.data) return NextResponse.json({ available: false, reason: 'booked' },           { headers: NO_STORE });
+  if (isFrozenInWindow(bikeRes.data, fromTs, toTs)) {
     return NextResponse.json(
-      { available: false, reason: 'frozen', frozen_until: bikeRes.data?.frozen_until ?? null },
-      { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } },
+      { available: false, reason: 'frozen', frozen_until: bikeRes.data.frozen_until },
+      { headers: NO_STORE },
     );
   }
 
-  return NextResponse.json({ available: true }, { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } });
+  return NextResponse.json({ available: true }, { headers: NO_STORE });
 }

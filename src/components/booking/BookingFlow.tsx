@@ -113,6 +113,11 @@ export function BookingFlow({
 
   // Per-bike availability — re-checked whenever pickup or computed end time changes
   const [bikeAvailable, setBikeAvailable] = useState<boolean | null>(null);
+  // Reason the bike isn't available — driven by /api/bikes/[id]/available.
+  // Used to render the right banner instead of always showing "Already booked".
+  const [bikeUnavailableReason, setBikeUnavailableReason] = useState<
+    'booked' | 'ongoing' | 'frozen' | 'inactive' | 'unapproved' | 'not_found' | null
+  >(null);
   const [availabilityChecking, setAvailabilityChecking] = useState(false);
 
   const availableTiers = useMemo<PackageTier[]>(
@@ -161,8 +166,13 @@ export function BookingFlow({
         { cache: 'no-store' },
       )
         .then(r => r.json())
-        .then(d => { if (!cancelled) { setBikeAvailable(d.available !== false); setAvailabilityChecking(false); } })
-        .catch(() => { if (!cancelled) { setBikeAvailable(null); setAvailabilityChecking(false); } });
+        .then(d => {
+          if (cancelled) return;
+          setBikeAvailable(d.available !== false);
+          setBikeUnavailableReason(d.available === false ? (d.reason ?? 'booked') : null);
+          setAvailabilityChecking(false);
+        })
+        .catch(() => { if (!cancelled) { setBikeAvailable(null); setBikeUnavailableReason(null); setAvailabilityChecking(false); } });
     };
     run();
     const interval = window.setInterval(run, 30_000);
@@ -289,11 +299,23 @@ export function BookingFlow({
     </div>
   );
 
+  const unavailableBannerText = (() => {
+    switch (bikeUnavailableReason) {
+      case 'ongoing':    return '🔒 This bike is currently out on rent. Pick another bike or a later date.';
+      case 'frozen':     return '🔧 This bike is temporarily under maintenance. Please pick another bike.';
+      case 'inactive':   return '🔒 This bike is offline. Pick another bike.';
+      case 'unapproved': return '⏳ This bike hasn’t been approved for bookings yet.';
+      case 'not_found':  return '⚠️ Bike not found.';
+      case 'booked':
+      default:           return '🔒 This bike is already booked for these dates. Please select a different time slot.';
+    }
+  })();
+
   const durationBanner = (() => {
     if (!pickupTs || !returnTs) return null;
     if (bikeAvailable === false) return (
       <div className="p-3.5 bg-danger/8 border border-danger/30 rounded-lg text-sm text-danger font-medium">
-        🔒 This bike is already booked for these dates. Please select a different time slot.
+        {unavailableBannerText}
       </div>
     );
     if (availabilityChecking) return (
@@ -405,8 +427,10 @@ export function BookingFlow({
             )}
             {bikeAvailable === false && (
               <div className="mt-3 p-3 bg-danger/8 border border-danger/30 rounded-lg text-sm text-danger font-medium">
-                🔒 Already booked for these dates.{' '}
-                <button onClick={() => setExpandedForm(true)} className="underline font-semibold">Change time →</button>
+                {unavailableBannerText}{' '}
+                {(bikeUnavailableReason === 'booked' || bikeUnavailableReason === 'ongoing') && (
+                  <button onClick={() => setExpandedForm(true)} className="underline font-semibold">Change time →</button>
+                )}
               </div>
             )}
             {availabilityChecking && (

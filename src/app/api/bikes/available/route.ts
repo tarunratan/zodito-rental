@@ -99,6 +99,14 @@ export async function GET(req: NextRequest) {
   }
   const bikes = bikesRes.data ?? [];
 
+  // One log line per request — tells us exactly which bike IDs the home
+  // endpoint is exposing, so we can correlate with /bikes/[id] complaints
+  // about a bike showing on home but appearing "offline" / "booked" on the
+  // detail page. Trimmed to ids only; keep noise low.
+  console.log('[api/bikes/available] window:', fromIso, '→', toIso,
+    '· unavailable:', unavailableIds.size,
+    '· returned ids:', bikes.map((b: any) => b.id));
+
   // Fetch overrides + custom packages for these bikes in parallel.
   const bikeIds = bikes.map((b: any) => b.id);
   let overridesRows: any[] = [];
