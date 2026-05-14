@@ -144,18 +144,37 @@ export function BookingFlow({
     return new Date(pickupTs.getTime() + durationHours * 3_600_000);
   }, [pickupTs, tierResult, durationHours]);
 
-  // Real-time per-bike availability check — must be after endTs declaration to avoid TDZ
+  // Real-time per-bike availability check.
+  //
+  // Runs once when pickup/end change, and re-runs:
+  //   • every 30 seconds (background poll) so the customer's open tab
+  //     reflects admin-side freeze / new booking actions automatically.
+  //   • on visibilitychange / focus so the refresh is sub-second whenever
+  //     the customer comes back to the tab.
   useEffect(() => {
     if (!pickupTs || !endTs) { setBikeAvailable(null); return; }
     let cancelled = false;
-    setAvailabilityChecking(true);
-    fetch(
-      `/api/bikes/${bike.id}/available?from=${encodeURIComponent(pickupTs.toISOString())}&to=${encodeURIComponent(endTs.toISOString())}`,
-    )
-      .then(r => r.json())
-      .then(d => { if (!cancelled) { setBikeAvailable(d.available !== false); setAvailabilityChecking(false); } })
-      .catch(() => { if (!cancelled) { setBikeAvailable(null); setAvailabilityChecking(false); } });
-    return () => { cancelled = true; };
+    const run = () => {
+      setAvailabilityChecking(true);
+      fetch(
+        `/api/bikes/${bike.id}/available?from=${encodeURIComponent(pickupTs.toISOString())}&to=${encodeURIComponent(endTs.toISOString())}&t=${Date.now()}`,
+        { cache: 'no-store' },
+      )
+        .then(r => r.json())
+        .then(d => { if (!cancelled) { setBikeAvailable(d.available !== false); setAvailabilityChecking(false); } })
+        .catch(() => { if (!cancelled) { setBikeAvailable(null); setAvailabilityChecking(false); } });
+    };
+    run();
+    const interval = window.setInterval(run, 30_000);
+    const onVis = () => { if (document.visibilityState === 'visible') run(); };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', run);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', run);
+    };
   }, [pickupTs?.getTime(), endTs?.getTime(), bike.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Local computation — used as immediate, optimistic display + offline fallback.

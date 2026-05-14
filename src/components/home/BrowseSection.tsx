@@ -189,10 +189,32 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
     fetchAvailable(fromVal, toVal);
   }
 
-  // Auto-search on mount so homepage never shows already-booked bikes
+  // Auto-search on mount so homepage never shows already-booked bikes.
   useEffect(() => {
     fetchAvailable(fromVal, toVal);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep the homepage list fresh against admin-side actions (freeze / unfreeze,
+  // listing toggles, new bookings) without requiring a manual refresh:
+  //   • Background poll every 30 seconds.
+  //   • Re-fetch immediately whenever the tab regains focus / visibility,
+  //     so an admin who freezes a bike in another tab sees it disappear on
+  //     the next focus tick — usually sub-second.
+  useEffect(() => {
+    const POLL_MS = 30_000;
+    const id = window.setInterval(() => { fetchAvailable(fromVal, toVal); }, POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') fetchAvailable(fromVal, toVal);
+    };
+    const onFocus = () => fetchAvailable(fromVal, toVal);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [fromVal, toVal, fetchAvailable]);
 
   function handleClear() {
     setAvailableBikes(null);

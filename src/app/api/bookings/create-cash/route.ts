@@ -10,6 +10,7 @@ import {
   computeCouponDiscount,
   mergeBikePackages,
 } from '@/lib/pricing';
+import { isFrozenInWindow } from '@/lib/freeze';
 import type { PackageTier } from '@/lib/supabase/types';
 import type { CustomPackage } from '@/lib/pricing';
 import { isCouponInActiveWindow, isCouponUsable, type CouponRecord } from '@/lib/coupon-eligibility';
@@ -172,16 +173,13 @@ export async function POST(req: NextRequest) {
     resolvedEndTs = prelimEndTs;
   }
 
-  // Freeze window check
-  if (bike.frozen_from && bike.frozen_until) {
-    const frozenFrom = new Date(bike.frozen_from);
-    const frozenUntil = new Date(bike.frozen_until);
-    if (frozenFrom < resolvedEndTs && frozenUntil > startTs) {
-      return NextResponse.json(
-        { error: `This bike is under maintenance until ${frozenUntil.toLocaleString('en-IN')}${bike.freeze_reason ? '. Reason: ' + bike.freeze_reason : ''}` },
-        { status: 409 }
-      );
-    }
+  // Freeze window check — canonical helper (accepts NULL `frozen_from`).
+  if (isFrozenInWindow({ frozen_from: bike.frozen_from, frozen_until: bike.frozen_until }, startTs, resolvedEndTs)) {
+    const fu = new Date(bike.frozen_until!);
+    return NextResponse.json(
+      { error: `This bike is under maintenance until ${fu.toLocaleString('en-IN')}${bike.freeze_reason ? '. Reason: ' + bike.freeze_reason : ''}` },
+      { status: 409 }
+    );
   }
 
   // Weekend override — local day-of-week check first; only fetches if actually needed

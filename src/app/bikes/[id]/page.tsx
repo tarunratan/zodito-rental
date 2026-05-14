@@ -6,6 +6,7 @@ import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { getCurrentAppUser } from '@/lib/auth';
 import type { CustomPackage } from '@/lib/pricing';
 import { mergeBikePackages } from '@/lib/pricing';
+import { isFrozenNow } from '@/lib/freeze';
 
 // Customer detail page must always reflect the latest admin-set pricing.
 // Static ISR was masking price edits for up to an hour — render dynamically
@@ -16,7 +17,7 @@ import { isMockMode, MOCK_BIKES } from '@/lib/mock';
 import { formatINR } from '@/lib/utils';
 
 /** Reason the bike isn't viewable (for the friendly error page + server logs). */
-type FetchReason = 'not_found' | 'inactive' | 'unapproved' | 'query_error';
+type FetchReason = 'not_found' | 'inactive' | 'unapproved' | 'frozen' | 'query_error';
 
 async function fetchBike(id: string, allowPreview: boolean) {
   if (isMockMode()) {
@@ -34,6 +35,7 @@ async function fetchBike(id: string, allowPreview: boolean) {
         id, emoji, image_url, image_url_2, image_url_3, color, color_hex, year,
         total_rides, rating_avg, rating_count, owner_type, registration_number,
         extra_km_rate, late_penalty_hour, is_active, listing_status,
+        frozen_from, frozen_until, freeze_reason,
         model:bike_models!inner(
           id, name, display_name, category, cc,
           excess_km_rate, late_hourly_penalty, has_weekend_override, weekend_override_model_id,
@@ -79,6 +81,14 @@ async function fetchBike(id: string, allowPreview: boolean) {
     if (bike.listing_status !== 'approved') {
       console.warn('[bikes/[id]] bike listing not approved:', id, 'status:', bike.listing_status);
       return { bike: null, customPackages: [] as CustomPackage[], reason: 'unapproved' as FetchReason };
+    }
+    // Currently frozen → block detail-page render too. Customers shouldn't be
+    // able to reach the booking flow via a direct URL while a freeze is in
+    // effect. Future-dated freeze windows still let the bike browse normally;
+    // the booking flow blocks the dates inside the window.
+    if (isFrozenNow(bike)) {
+      console.warn('[bikes/[id]] bike is currently frozen:', id, 'until:', bike.frozen_until);
+      return { bike: null, customPackages: [] as CustomPackage[], reason: 'frozen' as FetchReason };
     }
   }
 
@@ -239,6 +249,7 @@ function BikeUnavailable({ reason, bikeId, isAdmin }: { reason: FetchReason | nu
     switch (reason) {
       case 'inactive':    return { title: 'This bike is currently offline', body: 'The owner has temporarily deactivated this listing. Browse other available bikes instead.' };
       case 'unapproved':  return { title: 'This listing is awaiting approval', body: 'A new bike was added but our team hasn’t reviewed it yet. Please check back shortly.' };
+      case 'frozen':      return { title: 'This bike is under maintenance', body: 'It has been temporarily frozen for service. Try another bike below — we’ll bring this one back online soon.' };
       case 'query_error': return { title: 'Something went wrong loading this bike', body: 'A server error occurred while looking up the listing. Please try again in a moment.' };
       default:            return { title: 'This bike isn’t available right now', body: 'It may have been removed by the owner or admin. Try one of the active bikes below.' };
     }

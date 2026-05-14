@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { findConflictingBooking, PENDING_PAYMENT_TTL_MIN } from '@/lib/booking-overlap';
+import { isFrozenInWindow } from '@/lib/freeze';
 
 export const runtime = 'nodejs';
 
@@ -125,15 +126,13 @@ export async function POST(req: NextRequest) {
   }
 
   const bike = bikeRes.data;
-  if (bike?.frozen_until && bike?.frozen_from) {
-    const ff = new Date(bike.frozen_from);
-    const fu = new Date(bike.frozen_until);
-    if (ff < endTs && fu > startTs) {
-      return NextResponse.json(
-        { error: `Bike is frozen until ${fu.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}${bike.freeze_reason ? ': ' + bike.freeze_reason : ''}` },
-        { status: 409 }
-      );
-    }
+  // Canonical freeze check — accepts NULL `frozen_from`.
+  if (isFrozenInWindow({ frozen_from: bike?.frozen_from ?? null, frozen_until: bike?.frozen_until ?? null }, startTs, endTs)) {
+    const fu = new Date(bike!.frozen_until!);
+    return NextResponse.json(
+      { error: `Bike is frozen until ${fu.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}${bike?.freeze_reason ? ': ' + bike.freeze_reason : ''}` },
+      { status: 409 }
+    );
   }
 
   // Determine payment status from advance_paid vs total

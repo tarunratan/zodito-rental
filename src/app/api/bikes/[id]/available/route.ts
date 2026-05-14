@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { isFrozenInWindow } from '@/lib/freeze';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function GET(
   req: NextRequest,
@@ -61,14 +63,14 @@ export async function GET(
     return NextResponse.json({ available: false }, { headers: { 'Cache-Control': 'no-store' } });
   }
 
-  const bike = bikeRes.data;
-  if (bike?.frozen_from && bike?.frozen_until) {
-    const ff = new Date(bike.frozen_from);
-    const fu = new Date(bike.frozen_until);
-    if (ff < toTs && fu > fromTs) {
-      return NextResponse.json({ available: false }, { headers: { 'Cache-Control': 'no-store' } });
-    }
+  // Use the canonical helper — accepts NULL `frozen_from` (treated as -inf)
+  // so a bike frozen with only `frozen_until` set still blocks the booking.
+  if (isFrozenInWindow(bikeRes.data ?? null, fromTs, toTs)) {
+    return NextResponse.json(
+      { available: false, reason: 'frozen', frozen_until: bikeRes.data?.frozen_until ?? null },
+      { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } },
+    );
   }
 
-  return NextResponse.json({ available: true }, { headers: { 'Cache-Control': 'no-store' } });
+  return NextResponse.json({ available: true }, { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } });
 }

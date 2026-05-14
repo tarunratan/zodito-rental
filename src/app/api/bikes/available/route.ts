@@ -50,13 +50,15 @@ export async function GET(req: NextRequest) {
       .from('bookings')
       .select('bike_id')
       .eq('status', 'ongoing'),
+    // Frozen-window overlap. `frozen_from` may be NULL (treated as -infinity),
+    // so we only REQUIRE `frozen_until` to be set. The `frozen_from < to`
+    // half of the overlap is enforced as a logical OR that also accepts NULL.
     supabase
       .from('bikes')
       .select('id')
       .not('frozen_until', 'is', null)
-      .not('frozen_from', 'is', null)
-      .lt('frozen_from', toIso)
-      .gt('frozen_until', fromIso),
+      .gt('frozen_until', fromIso)
+      .or(`frozen_from.is.null,frozen_from.lt.${toIso}`),
   ]);
 
   const unavailableIds = new Set<string>();

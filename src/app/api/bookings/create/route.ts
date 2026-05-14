@@ -14,6 +14,7 @@ import {
 } from '@/lib/pricing';
 import type { CustomPackage } from '@/lib/pricing';
 import { isCouponInActiveWindow, isCouponUsable, type CouponRecord } from '@/lib/coupon-eligibility';
+import { isFrozenInWindow } from '@/lib/freeze';
 import { isMockMode, mockBookingsStore } from '@/lib/mock';
 import type { PackageTier } from '@/lib/supabase/types';
 
@@ -143,16 +144,16 @@ export async function POST(req: NextRequest) {
   }
 
   // --- 5. Check freeze window overlap
+  // Uses the canonical helper — accepts NULL `frozen_from` (treated as -inf),
+  // so an admin who skipped the "from" field still blocks the booking. This
+  // was the historical hole that let frozen bikes stay bookable.
   const b = bike as any;
-  if (b.frozen_until && b.frozen_from) {
-    const frozenFrom = new Date(b.frozen_from);
-    const frozenUntil = new Date(b.frozen_until);
-    if (frozenFrom < resolvedEndTs && frozenUntil > startTs) {
-      return NextResponse.json(
-        { error: `This bike is under maintenance until ${frozenUntil.toLocaleString('en-IN')}${b.freeze_reason ? '. Reason: ' + b.freeze_reason : ''}` },
-        { status: 409 }
-      );
-    }
+  if (isFrozenInWindow({ frozen_from: b.frozen_from, frozen_until: b.frozen_until }, startTs, resolvedEndTs)) {
+    const fu = new Date(b.frozen_until!);
+    return NextResponse.json(
+      { error: `This bike is under maintenance until ${fu.toLocaleString('en-IN')}${b.freeze_reason ? '. Reason: ' + b.freeze_reason : ''}` },
+      { status: 409 }
+    );
   }
 
   // --- 6. Resolve weekend override + coupon usage in parallel (no-ops if not needed)

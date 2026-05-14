@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
@@ -29,6 +30,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         .update({ frozen_from: null, frozen_until: null, freeze_reason: null })
         .eq('id', params.id);
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      // Bust any SSR / route cache so customer pages re-render without the
+      // bike's now-cleared freeze state.
+      revalidatePath('/');
+      revalidatePath(`/bikes/${params.id}`);
       return NextResponse.json({ ok: true });
     }
 
@@ -46,6 +51,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       .update({ frozen_from: frozen_from || null, frozen_until, freeze_reason: freeze_reason || null })
       .eq('id', params.id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    // Same cache-bust for the freeze path — homepage listing + bike detail
+    // page must reflect the new freeze window on the very next request.
+    revalidatePath('/');
+    revalidatePath(`/bikes/${params.id}`);
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: 'Admin only' }, { status: 403 });
