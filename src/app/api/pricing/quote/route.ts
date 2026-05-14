@@ -12,12 +12,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode, MOCK_BIKES } from '@/lib/mock';
 import {
-  STANDARD_RANGES, coveringTier, calculatePrice, mergeBikePackages,
+  STANDARD_RANGES, coveringTier, calculatePrice,
   type CustomPackage, type PackageTier,
 } from '@/lib/pricing';
+import { getBikeState } from '@/lib/bike-state';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -90,42 +90,29 @@ export async function GET(req: NextRequest) {
       }, { headers: NO_STORE });
     }
 
-    const supabase = createSupabaseAdmin();
-    const [bikeRes, overrideRes, customRes] = await Promise.all([
-      supabase.from('bikes').select(`
-        id,
-        model:bike_models!inner(packages:bike_model_packages(tier, price, km_limit))
-      `).eq('id', bikeId).maybeSingle(),
-      supabase.from('bike_packages').select('tier, price, km_limit').eq('bike_id', bikeId),
-      supabase.from('custom_packages')
-        .select('id, bike_id, label, min_duration_hours, duration_hours, price, km_limit, per_day_price, per_day_km_limit, is_active')
-        .eq('bike_id', bikeId)
-        .eq('is_active', true)
-        .order('min_duration_hours', { ascending: true }),
-    ]);
+    // Canonical state lookup (migration 040) — single source of truth for
+    // every consumer of bike availability + merged packages. Replaces the
+    // previous three-query merge-in-JS pattern so this endpoint can never
+    // disagree with the home list or detail page on what packages exist.
+    const state = await getBikeState(bikeId, pickupTs, dropoffTs);
+    if (!state) return bad('Bike not found', 404);
 
-    if (bikeRes.error || !bikeRes.data) return bad('Bike not found', 404);
-
-    const modelPackages: any[] = (bikeRes.data as any).model?.packages ?? [];
-    const overrides: any[] = overrideRes.data ?? [];
-    const customPackages: CustomPackage[] = (customRes.data ?? []) as CustomPackage[];
-
-    // UNION merge — overrides for tiers the model never seeded (e.g. 36hr,
-    // 2day) must still appear in the final list so admin edits propagate.
-    const packages = mergeBikePackages(modelPackages, overrides);
+    const packages = state.packages;
+    const customPackages: CustomPackage[] = state.custom_packages as CustomPackage[];
     const availableTiers: PackageTier[] = packages.map(p => p.tier);
 
     // ── MANDATORY DEBUG LOG (3) ─────────────────────────────────────────────
     console.log(`LOG: [Fetched Admin Ranges] -> Active Ranges Found:`, {
       standard_tiers: availableTiers.map(t => {
         const r = STANDARD_RANGES.find(s => s.tier === t);
-        const pkg = packages.find((p: any) => p.tier === t);
-        return { tier: t, min: r?.min ?? null, max: r?.max ?? null, price: pkg?.price ?? null, km_limit: pkg?.km_limit ?? null, overridden: overrides.some((o: any) => o.tier === t) };
+        const pkg = packages.find(p => p.tier === t);
+        return { tier: t, min: r?.min ?? null, max: r?.max ?? null, price: pkg?.price ?? null, km_limit: pkg?.km_limit ?? null };
       }),
       custom_packages: customPackages.map(c => ({
         id: c.id, label: c.label,
         min: c.min_duration_hours, max: c.duration_hours,
         price: Number(c.price), km_limit: c.km_limit,
+        per_day_price: c.per_day_price ?? null,
       })),
     });
 
