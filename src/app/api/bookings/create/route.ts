@@ -202,8 +202,14 @@ export async function POST(req: NextRequest) {
   }
 
   // --- 7. Price calculation (server-side; authoritative)
+  // For custom packages: pass the actual booked hours so per-day priced
+  // packages multiply correctly (days × per_day_price). Legacy fixed-price
+  // customs ignore the field.
+  const customHours = customPkg
+    ? (body.duration_hours ?? (resolvedEndTs.getTime() - startTs.getTime()) / 3_600_000)
+    : undefined;
   const priceParams = customPkg
-    ? { customPackage: customPkg }
+    ? { customPackage: customPkg, customActualHours: customHours }
     : { packages, tier: body.tier as PackageTier, actualDays: body.actual_days };
 
   const rawBreakdown = calculatePrice({

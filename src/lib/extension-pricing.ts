@@ -62,7 +62,7 @@ export function quoteExtension(input: ExtensionInputs): ExtensionQuote | { error
   }
 
   const breakdown = match.type === 'custom'
-    ? calculatePrice({ customPackage: match.pkg, extraHelmetCount: 0, hasOriginalDL: true })
+    ? calculatePrice({ customPackage: match.pkg, customActualHours: totalNewHours, extraHelmetCount: 0, hasOriginalDL: true })
     : calculatePrice({
         packages: packages as any,
         tier: match.tier,

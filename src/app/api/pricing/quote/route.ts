@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: 'No package available for this duration', durationHours }, { status: 200, headers: NO_STORE });
       }
       const breakdown = tierResult.type === 'custom'
-        ? calculatePrice({ customPackage: tierResult.pkg, extraHelmetCount: extraHelmets, hasOriginalDL: true, includeMobileHolder: mobileHolder })
+        ? calculatePrice({ customPackage: tierResult.pkg, customActualHours: durationHours, extraHelmetCount: extraHelmets, hasOriginalDL: true, includeMobileHolder: mobileHolder })
         : calculatePrice({ packages, tier: tierResult.tier, actualDays: tierResult.actualDays, extraHelmetCount: extraHelmets, hasOriginalDL: true, includeMobileHolder: mobileHolder });
       logSelectedRange(tierResult, durationHours);
       console.log(`LOG: [Final Output Price] -> Base Rate: ${breakdown.basePrice}, Total calculated: ${breakdown.totalAmount}`);
@@ -98,7 +98,7 @@ export async function GET(req: NextRequest) {
       `).eq('id', bikeId).maybeSingle(),
       supabase.from('bike_packages').select('tier, price, km_limit').eq('bike_id', bikeId),
       supabase.from('custom_packages')
-        .select('id, bike_id, label, min_duration_hours, duration_hours, price, km_limit, is_active')
+        .select('id, bike_id, label, min_duration_hours, duration_hours, price, km_limit, per_day_price, per_day_km_limit, is_active')
         .eq('bike_id', bikeId)
         .eq('is_active', true)
         .order('min_duration_hours', { ascending: true }),
@@ -144,6 +144,7 @@ export async function GET(req: NextRequest) {
     const breakdown = tierResult.type === 'custom'
       ? calculatePrice({
           customPackage: tierResult.pkg,
+          customActualHours: durationHours,
           extraHelmetCount: extraHelmets,
           hasOriginalDL: true,
           includeMobileHolder: mobileHolder,

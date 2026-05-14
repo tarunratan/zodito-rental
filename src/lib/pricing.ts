@@ -172,7 +172,16 @@ export function mergeBikePackages(
   return Array.from(byTier.values());
 }
 
-/** Admin-defined custom duration package stored in `custom_packages` table. */
+/** Admin-defined custom duration package stored in `custom_packages` table.
+ *
+ *  Two pricing modes:
+ *    • Legacy fixed — `price` / `km_limit` are charged regardless of the
+ *      actual booked duration (as long as it falls in the bracket).
+ *    • Per-day — `per_day_price` and `per_day_km_limit` are non-null. The
+ *      `price` / `km_limit` columns are kept in sync by the admin endpoint
+ *      (set to `min_days × per_day_*`) so the "starting from" display and
+ *      bracket-selection logic still have a representative price.
+ */
 export interface CustomPackage {
   id: string;
   bike_id: string;
@@ -182,6 +191,8 @@ export interface CustomPackage {
   price: number;
   km_limit: number;
   is_active: boolean;
+  per_day_price?: number | null;
+  per_day_km_limit?: number | null;
 }
 
 /** Discriminated union returned by coveringTier — either a standard predefined tier
@@ -369,6 +380,10 @@ export function calculatePrice(params: {
   packages?: Array<Pick<BikeModelPackage, 'tier' | 'price' | 'km_limit'>>;
   tier?: PackageTier;
   customPackage?: CustomPackage;   // use instead of tier for admin-created packages
+  /** Actual booked hours — REQUIRED for per-day priced custom packages so
+   *  `days = ceil(customActualHours / 24)` can drive the multiplication.
+   *  Ignored for legacy fixed customs and standard tiers. */
+  customActualHours?: number;
   actualDays?: number;             // required for weekly_flex / monthly_flex
   extraHelmetCount?: number;
   hasOriginalDL?: boolean;
@@ -376,7 +391,7 @@ export function calculatePrice(params: {
   couponDiscount?: number;
 }): PriceBreakdown {
   const {
-    packages, tier, customPackage, actualDays,
+    packages, tier, customPackage, customActualHours, actualDays,
     extraHelmetCount = 0, hasOriginalDL = true,
     includeMobileHolder = false, couponDiscount: rawDiscount = 0,
   } = params;
@@ -385,8 +400,20 @@ export function calculatePrice(params: {
   let kmLimit: number;
 
   if (customPackage) {
-    basePrice = round2(Number(customPackage.price));
-    kmLimit   = customPackage.km_limit;
+    // Per-day mode kicks in when admin set `per_day_price` AND the caller
+    // told us how many hours were actually booked. Otherwise fall back to
+    // the legacy fixed price stored on the row.
+    const perDayPrice = Number(customPackage.per_day_price ?? 0);
+    const perDayKm    = Number(customPackage.per_day_km_limit ?? 0);
+    const isPerDay    = perDayPrice > 0 && typeof customActualHours === 'number' && customActualHours > 0;
+    if (isPerDay) {
+      const days = Math.max(1, Math.ceil(customActualHours! / 24));
+      basePrice  = round2(perDayPrice * days);
+      kmLimit    = Math.round(perDayKm * days);
+    } else {
+      basePrice = round2(Number(customPackage.price));
+      kmLimit   = customPackage.km_limit;
+    }
   } else if (tier && packages) {
     const pkg = packages.find(p => p.tier === tier);
     if (!pkg) throw new Error(`No package found for tier ${tier}`);

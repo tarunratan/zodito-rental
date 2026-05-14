@@ -51,7 +51,7 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
 
     try {
       const breakdown = match.type === 'custom'
-        ? calculatePrice({ customPackage: match.pkg, extraHelmetCount: 0, hasOriginalDL: true })
+        ? calculatePrice({ customPackage: match.pkg, customActualHours: searchHrs, extraHelmetCount: 0, hasOriginalDL: true })
         : calculatePrice({
             packages: packages as any,
             tier: match.tier,

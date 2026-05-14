@@ -165,6 +165,7 @@ export function BookingFlow({
       if (tierResult.type === 'custom') {
         return calculatePrice({
           customPackage: tierResult.pkg,
+          customActualHours: durationHours,
           extraHelmetCount: extraHelmets,
           hasOriginalDL: true,
           includeMobileHolder: mobileHolder,
@@ -183,7 +184,7 @@ export function BookingFlow({
     } catch {
       return null;
     }
-  }, [bike.model.packages, tierResult, isFlex, extraHelmets, mobileHolder, appliedCoupon]);
+  }, [bike.model.packages, tierResult, isFlex, extraHelmets, mobileHolder, appliedCoupon, durationHours]);
 
   // Server-authoritative quote — always fetched fresh (no-store + ?t=now cache-buster).
   // This is the layer that guarantees the customer sees the LATEST admin prices

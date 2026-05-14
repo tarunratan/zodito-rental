@@ -109,7 +109,7 @@ export async function GET(req: NextRequest) {
         .in('bike_id', bikeIds),
       supabase
         .from('custom_packages')
-        .select('bike_id, id, label, min_duration_hours, duration_hours, price, km_limit, is_active')
+        .select('bike_id, id, label, min_duration_hours, duration_hours, price, km_limit, per_day_price, per_day_km_limit, is_active')
         .in('bike_id', bikeIds)
         .eq('is_active', true),
     ]);

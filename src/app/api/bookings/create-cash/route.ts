@@ -236,9 +236,14 @@ export async function POST(req: NextRequest) {
     couponRow = { id: c.id, code: c.code, discount_type: c.discount_type, discount_value: Number(c.discount_value) };
   }
 
-  // Price calculation — pure, no I/O
+  // Price calculation — pure, no I/O.
+  // For custom packages: pass actual booked hours so per-day priced customs
+  // multiply correctly. Legacy fixed customs ignore the field.
+  const customHours = customPkg
+    ? (body.duration_hours ?? (resolvedEndTs.getTime() - startTs.getTime()) / 3_600_000)
+    : undefined;
   const priceParams = customPkg
-    ? { customPackage: customPkg }
+    ? { customPackage: customPkg, customActualHours: customHours }
     : { packages, tier: body.tier as PackageTier, actualDays: body.actual_days };
 
   const rawBreakdown = calculatePrice({

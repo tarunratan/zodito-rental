@@ -23,6 +23,8 @@ type CustomPkg = {
   duration_hours: number;
   price: number;
   km_limit: number;
+  per_day_price?: number | null;
+  per_day_km_limit?: number | null;
   is_active: boolean;
 };
 
@@ -44,7 +46,15 @@ type PanelProps = {
   onResetAll: () => void;
   onSave: () => void;
   onDeleteCustom: (id: string) => void;
-  onAddCustom: (pkg: { label: string; min_duration_hours: number; duration_hours: number; price: number; km_limit: number }) => void;
+  onAddCustom: (pkg: {
+    label: string;
+    min_duration_hours: number;
+    duration_hours: number;
+    price: number;
+    km_limit: number;
+    per_day_price?: number | null;
+    per_day_km_limit?: number | null;
+  }) => void;
   addingCustom: boolean;
   onSavePolicies: (extraKmRate: number, latePenaltyHour: number) => void;
   savingPolicies: boolean;
@@ -62,6 +72,11 @@ function PricingEditPanel({
   const [customToVal, setCustomToVal]     = useState('');
   const [customPrice, setCustomPrice]   = useState('');
   const [customKm, setCustomKm]         = useState('');
+  // Per-day pricing mode — when enabled, admin enters ONE per-day rate and
+  // we auto-compute the package price/KM as days × rate (saved + previewed).
+  const [pricingMode, setPricingMode]   = useState<'fixed' | 'per_day'>('fixed');
+  const [perDayPrice, setPerDayPrice]   = useState('');
+  const [perDayKm, setPerDayKm]         = useState('');
   const [formErr, setFormErr]           = useState('');
 
   const [rateKm, setRateKm]           = useState(String(bike.extra_km_rate ?? 3));
@@ -70,7 +85,9 @@ function PricingEditPanel({
   function resetForm() {
     setCustomLabel(''); setCustomUnit('days');
     setCustomFromVal(''); setCustomToVal('');
-    setCustomPrice(''); setCustomKm(''); setFormErr('');
+    setCustomPrice(''); setCustomKm('');
+    setPricingMode('fixed'); setPerDayPrice(''); setPerDayKm('');
+    setFormErr('');
   }
 
   const fromHours = customUnit === 'days'
@@ -84,6 +101,31 @@ function PricingEditPanel({
     if (!customLabel.trim()) { setFormErr('Label is required'); return; }
     if (toHours < 1) { setFormErr('Enter a valid upper bound'); return; }
     if (toHours <= fromHours) { setFormErr('Upper bound must be greater than lower bound'); return; }
+
+    if (pricingMode === 'per_day') {
+      const perDay   = parseFloat(perDayPrice);
+      const perDayKmN = parseInt(perDayKm, 10) || 0;
+      if (isNaN(perDay) || perDay <= 0) { setFormErr('Enter a valid per-day price'); return; }
+      // Auto-compute the representative fixed price/KM from the MINIMUM-day
+      // count so existing "starting from" displays stay consistent. The real
+      // charge at booking time is days × per_day_price.
+      const minDays = Math.max(1, Math.ceil((fromHours || toHours) / 24));
+      const price   = Math.round(perDay * minDays * 100) / 100;
+      const km      = Math.round(perDayKmN * minDays);
+      setFormErr('');
+      onAddCustom({
+        label: customLabel.trim(),
+        min_duration_hours: fromHours,
+        duration_hours: toHours,
+        price, km_limit: km,
+        per_day_price: perDay,
+        per_day_km_limit: perDayKmN,
+      } as any);
+      resetForm();
+      return;
+    }
+
+    // Fixed-price mode (legacy)
     const price = parseFloat(customPrice);
     if (isNaN(price) || price < 0) { setFormErr('Enter a valid price'); return; }
     const km = parseInt(customKm, 10) || 0;
@@ -91,6 +133,18 @@ function PricingEditPanel({
     onAddCustom({ label: customLabel.trim(), min_duration_hours: fromHours, duration_hours: toHours, price, km_limit: km });
     resetForm();
   }
+
+  // Live preview for per-day mode — shows what the customer will be charged
+  // at the minimum and maximum days in the range.
+  const perDayPreview = (() => {
+    if (pricingMode !== 'per_day') return null;
+    const rate = parseFloat(perDayPrice);
+    if (isNaN(rate) || rate <= 0) return null;
+    const km = parseInt(perDayKm, 10) || 0;
+    const minDays = Math.max(1, Math.ceil(fromHours / 24));
+    const maxDays = Math.max(minDays, Math.ceil(toHours / 24));
+    return { minDays, maxDays, rate, km };
+  })();
 
   const previewReady = customLabel.trim() && toHours > 0 && customPrice;
 
@@ -196,8 +250,10 @@ function PricingEditPanel({
                           {cp.duration_hours % 24 === 0
                             ? `${cp.duration_hours / 24} days`
                             : `${cp.duration_hours} hrs`}
-                          {' · '}{formatINR(cp.price)}
-                          {cp.km_limit > 0 && ` · ${cp.km_limit} km`}
+                          {' · '}
+                          {(cp as any).per_day_price
+                            ? <>{formatINR(Number((cp as any).per_day_price))}/day{(cp as any).per_day_km_limit ? ` · ${(cp as any).per_day_km_limit} km/day` : ''}</>
+                            : <>{formatINR(cp.price)}{cp.km_limit > 0 && ` · ${cp.km_limit} km`}</>}
                         </div>
                       </div>
                       <button
@@ -291,34 +347,84 @@ function PricingEditPanel({
                   )}
                 </div>
 
-                {/* Price + KM */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-[10px] text-muted uppercase tracking-wide block mb-1">
-                      Price (₹) <span className="text-danger">*</span>
-                    </label>
-                    <input
-                      type="number" inputMode="numeric" min={0} step={1}
-                      placeholder="e.g. 3500"
-                      value={customPrice}
-                      onChange={e => setCustomPrice(e.target.value)}
-                      className="input-field text-sm py-2 px-3 w-full"
-                    />
+                {/* Pricing mode toggle — Fixed vs Per-Day */}
+                <div>
+                  <label className="text-[10px] text-muted uppercase tracking-wide block mb-1.5">Pricing mode</label>
+                  <div className="flex rounded-lg overflow-hidden border border-border text-[11px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setPricingMode('fixed')}
+                      className={`flex-1 px-3 py-1.5 transition-colors ${pricingMode === 'fixed' ? 'bg-accent text-white' : 'bg-bg text-muted hover:bg-border/60'}`}
+                    >Fixed price</button>
+                    <button
+                      type="button"
+                      onClick={() => setPricingMode('per_day')}
+                      className={`flex-1 px-3 py-1.5 transition-colors ${pricingMode === 'per_day' ? 'bg-accent text-white' : 'bg-bg text-muted hover:bg-border/60'}`}
+                    >Per-day rate</button>
                   </div>
-                  <div>
-                    <label className="text-[10px] text-muted uppercase tracking-wide block mb-1">KM limit</label>
-                    <input
-                      type="number" inputMode="numeric" min={0} step={50}
-                      placeholder="e.g. 1200"
-                      value={customKm}
-                      onChange={e => setCustomKm(e.target.value)}
-                      className="input-field text-sm py-2 px-3 w-full"
-                    />
-                  </div>
+                  <p className="text-[10px] text-muted mt-1">
+                    {pricingMode === 'fixed'
+                      ? 'One price for any duration in the range.'
+                      : 'Customer charged days × per-day price for whatever they pick.'}
+                  </p>
                 </div>
 
-                {/* Live preview */}
-                {previewReady && (
+                {pricingMode === 'fixed' ? (
+                  /* ── Fixed-price fields (legacy) ── */
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-muted uppercase tracking-wide block mb-1">
+                        Price (₹) <span className="text-danger">*</span>
+                      </label>
+                      <input
+                        type="number" inputMode="numeric" min={0} step={1}
+                        placeholder="e.g. 3500"
+                        value={customPrice}
+                        onChange={e => setCustomPrice(e.target.value)}
+                        className="input-field text-sm py-2 px-3 w-full"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-muted uppercase tracking-wide block mb-1">KM limit</label>
+                      <input
+                        type="number" inputMode="numeric" min={0} step={50}
+                        placeholder="e.g. 1200"
+                        value={customKm}
+                        onChange={e => setCustomKm(e.target.value)}
+                        className="input-field text-sm py-2 px-3 w-full"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  /* ── Per-day fields ── */
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-muted uppercase tracking-wide block mb-1">
+                        Per-day price (₹) <span className="text-danger">*</span>
+                      </label>
+                      <input
+                        type="number" inputMode="numeric" min={0} step={1}
+                        placeholder="e.g. 329"
+                        value={perDayPrice}
+                        onChange={e => setPerDayPrice(e.target.value)}
+                        className="input-field text-sm py-2 px-3 w-full"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-muted uppercase tracking-wide block mb-1">Per-day KM</label>
+                      <input
+                        type="number" inputMode="numeric" min={0} step={10}
+                        placeholder="e.g. 100"
+                        value={perDayKm}
+                        onChange={e => setPerDayKm(e.target.value)}
+                        className="input-field text-sm py-2 px-3 w-full"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Live preview — fixed mode */}
+                {pricingMode === 'fixed' && previewReady && (
                   <div className="flex flex-wrap items-center gap-2 p-2.5 rounded-lg bg-white border border-accent/30 text-xs">
                     <span className="text-accent font-bold">Preview:</span>
                     <span className="font-semibold">{customLabel}</span>
@@ -332,6 +438,25 @@ function PricingEditPanel({
                     <span className="text-muted">·</span>
                     <span className="text-accent font-bold">{formatINR(parseFloat(customPrice) || 0)}</span>
                     {customKm && <><span className="text-muted">·</span><span>{customKm} km</span></>}
+                  </div>
+                )}
+
+                {/* Live preview — per-day mode: shows endpoints of the range */}
+                {pricingMode === 'per_day' && perDayPreview && (
+                  <div className="p-2.5 rounded-lg bg-white border border-accent/30 text-xs space-y-1">
+                    <div className="text-accent font-bold">Auto-preview · {formatINR(perDayPreview.rate)}/day · {perDayPreview.km} km/day</div>
+                    <div className="grid grid-cols-2 gap-2 mt-1">
+                      <div className="rounded-md bg-bg p-1.5">
+                        <div className="text-[10px] text-muted">{perDayPreview.minDays} day{perDayPreview.minDays !== 1 ? 's' : ''} (min)</div>
+                        <div className="font-bold text-primary">{formatINR(perDayPreview.rate * perDayPreview.minDays)}</div>
+                        <div className="text-[10px] text-muted">{perDayPreview.km * perDayPreview.minDays} km</div>
+                      </div>
+                      <div className="rounded-md bg-bg p-1.5">
+                        <div className="text-[10px] text-muted">{perDayPreview.maxDays} day{perDayPreview.maxDays !== 1 ? 's' : ''} (max)</div>
+                        <div className="font-bold text-primary">{formatINR(perDayPreview.rate * perDayPreview.maxDays)}</div>
+                        <div className="text-[10px] text-muted">{perDayPreview.km * perDayPreview.maxDays} km</div>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -493,7 +618,15 @@ export function BikePricingManager({ initialBikes }: { initialBikes: Bike[] }) {
     }
   }
 
-  async function addCustomPackage(pkg: { label: string; min_duration_hours: number; duration_hours: number; price: number; km_limit: number }) {
+  async function addCustomPackage(pkg: {
+    label: string;
+    min_duration_hours: number;
+    duration_hours: number;
+    price: number;
+    km_limit: number;
+    per_day_price?: number | null;
+    per_day_km_limit?: number | null;
+  }) {
     if (!editingBike) return;
     setAddingCustom(true); setError(null); setSuccess(null);
     try {
