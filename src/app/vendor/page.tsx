@@ -82,13 +82,9 @@ export default async function VendorDashboard({
   searchParams: { as?: string };
 }) {
   const user = await getCurrentAppUser();
-  if (!user) {
-    return (
-      <div className="max-w-3xl mx-auto px-6 py-20 text-center">
-        <p>Please sign in.</p>
-      </div>
-    );
-  }
+  // Vendor portal is a PUBLIC entry point — signed-out visitors land on the
+  // signup landing page so they can become a vendor without an account first.
+  if (!user) redirect('/vendor/signup');
 
   // ── Admin preview mode ──────────────────────────────────────────────────
   // When the platform admin opens /vendor:

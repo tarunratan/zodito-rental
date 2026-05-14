@@ -40,7 +40,22 @@ type DetailBooking = {
   payment_proof_url?: string | null;
   user_id?: string | null;
   user: { id: string; email: string | null; first_name: string | null; last_name: string | null; phone: string | null } | null;
-  bike: { id: string; registration_number: string | null; color: string | null; emoji: string; image_url?: string | null; model: { display_name: string } | null } | null;
+  bike: {
+    id: string;
+    registration_number: string | null;
+    color: string | null;
+    emoji: string;
+    image_url?: string | null;
+    extra_km_rate?: number | null;
+    late_penalty_hour?: number | null;
+    model: {
+      display_name: string;
+      category?: string | null;
+      cc?: number | null;
+      excess_km_rate?: number | null;
+      late_hourly_penalty?: number | null;
+    } | null;
+  } | null;
 };
 
 type HandoverLog = {
@@ -98,6 +113,17 @@ const DOC_LABELS: Record<string, string> = {
 function fmtDateTime(ts: string | null) {
   if (!ts) return '—';
   return new Date(ts).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
+}
+
+/** 12-hour IST formatter — e.g. "14 May 2026, 9:00 PM". Used in the order
+ *  confirmation card the admin sees after handover has been saved. */
+function fmtDateTime12(ts: string | null) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+    timeZone: 'Asia/Kolkata',
+  });
 }
 
 function rupee(n: number) {
@@ -171,6 +197,13 @@ export function OnlineBookingDetailModal({
   const [confirmAction, setConfirmAction] = useState<{ action: string; reasonRequired: boolean; label: string } | null>(null);
   const [reasonText, setReasonText] = useState('');
 
+  // Handover view/edit mode toggle. Defaults to 'view' (Order Confirmation
+  // card) whenever the booking has already been saved, so re-opening a
+  // saved booking does NOT dump the admin back into the editable form.
+  // The admin can click "Edit details" to switch back when something needs
+  // changing.
+  const [handoverEditMode, setHandoverEditMode] = useState(false);
+
   const [logs, setLogs] = useState<HandoverLog[] | null>(null);
   const [extensions, setExtensions] = useState<Array<{
     id: string; status: string; original_end_ts: string; new_end_ts: string;
@@ -189,6 +222,7 @@ export function OnlineBookingDetailModal({
     setConfirmAction(null);
     setReasonText('');
     setLogs(null);
+    setHandoverEditMode(false); // reopen → always default to the saved-confirmation view
     const initial: EditState = {
       alternate_phone: booking.alternate_phone ?? '',
       odometer_reading: booking.odometer_reading ?? '',
@@ -226,9 +260,12 @@ export function OnlineBookingDetailModal({
     return () => { abort = true; };
   }, [booking, tab, extensions]);
 
-  // Load KYC signed URLs when KYC tab opens
+  // Load KYC signed URLs when KYC tab opens OR when the Handover tab opens
+  // with a saved booking (the Order Confirmation card embeds them).
   useEffect(() => {
-    if (!booking || tab !== 'kyc' || kycUrls !== null) return;
+    if (!booking || kycUrls !== null) return;
+    const needsKycForHandover = tab === 'handover' && !!booking.handover_saved_at;
+    if (tab !== 'kyc' && !needsKycForHandover) return;
     let abort = false;
     setKycLoading(true);
     fetch(`/api/admin/bookings/kyc-urls?booking_id=${booking.id}`)
@@ -718,8 +755,28 @@ export function OnlineBookingDetailModal({
           )}
 
           {/* Handover */}
-          {tab === 'handover' && (
+          {tab === 'handover' && everSaved && !handoverEditMode && (
+            <OrderConfirmationCard
+              booking={booking}
+              edit={edit}
+              kycUrls={kycUrls}
+              onEdit={() => setHandoverEditMode(true)}
+            />
+          )}
+
+          {tab === 'handover' && (!everSaved || handoverEditMode) && (
             <div className="space-y-3">
+              {everSaved && handoverEditMode && (
+                <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  <span>Editing saved handover. Re-save to apply changes.</span>
+                  <button
+                    onClick={() => setHandoverEditMode(false)}
+                    className="font-semibold underline hover:no-underline"
+                  >
+                    ← Back to confirmation
+                  </button>
+                </div>
+              )}
               <p className="text-[10px] text-muted uppercase tracking-widest font-semibold">Handover Checklist</p>
 
               <div className="grid grid-cols-2 gap-2 items-end">
@@ -964,6 +1021,151 @@ export function OnlineBookingDetailModal({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Order Confirmation card — read-only summary shown after handover is saved.
+// Layout matches the format the admin asked for verbatim (customer name,
+// alternate phone, bike, pickup/drop datetimes in 12hr clock, paid/pending,
+// odometer, KM limit, deposit, helmets, DL, plus the standard policy notice
+// and KYC document thumbnails).
+// ─────────────────────────────────────────────────────────────────────────────
+function OrderConfirmationCard({
+  booking,
+  edit,
+  kycUrls,
+  onEdit,
+}: {
+  booking: DetailBooking;
+  edit: {
+    alternate_phone: string;
+    odometer_reading: string | number;
+    helmets_provided: number;
+    original_dl_taken: boolean;
+    pending_amount: number;
+    security_deposit: number;
+  };
+  kycUrls: Record<string, string> | null;
+  onEdit: () => void;
+}) {
+  const customer = customerName(booking);
+  const phone    = booking.user?.phone ?? booking.customer_phone ?? '—';
+  const bikeName = booking.bike?.model?.display_name ?? '—';
+  const bikeDetails = [
+    booking.bike?.registration_number,
+    booking.bike?.color,
+    booking.bike?.model?.cc ? `${booking.bike.model.cc}cc` : null,
+  ].filter(Boolean).join(' · ') || '—';
+  const paid    = Number(booking.advance_paid ?? booking.total_amount ?? 0);
+  const pending = Number(edit.pending_amount ?? booking.pending_amount ?? 0);
+  const odo     = edit.odometer_reading !== '' && edit.odometer_reading != null
+                    ? String(edit.odometer_reading)
+                    : (booking.odometer_reading != null ? String(booking.odometer_reading) : '—');
+  const helmets = String(edit.helmets_provided ?? booking.helmets_provided ?? 0).padStart(2, '0');
+  const dl      = (edit.original_dl_taken ?? booking.original_dl_taken) ? 'Yes' : 'No';
+
+  // Bike-level rate overrides win over model defaults; fall back to ₹3 / ₹49.
+  const extraKmRate     = Number(booking.bike?.extra_km_rate ?? booking.bike?.model?.excess_km_rate ?? 3);
+  const latePenaltyRate = Number(booking.bike?.late_penalty_hour ?? booking.bike?.model?.late_hourly_penalty ?? 49);
+  const isScooter       = booking.bike?.model?.category === 'scooter';
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-widest bg-green-100 text-green-700 px-2 py-1 rounded">✓ Saved</span>
+          <span className="text-sm text-muted">Order Confirmation</span>
+        </div>
+        <button
+          onClick={onEdit}
+          className="text-xs font-semibold text-accent hover:underline"
+        >
+          ✎ Edit details
+        </button>
+      </div>
+
+      <div className="rounded-xl border-2 border-accent/30 bg-accent/[0.03] p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2 pb-3 border-b border-border">
+          <div className="font-display font-bold text-base">Booking Details:</div>
+          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded ${STATUS_COLORS[booking.status] ?? 'bg-border'}`}>
+            {booking.status.replace(/_/g, ' ')}
+          </span>
+        </div>
+
+        <ConfRow label="Customer Name"      value={customer} />
+        <ConfRow label="Alternate Phn no."  value={edit.alternate_phone || booking.alternate_phone || phone || '—'} />
+        <ConfRow label="Bike Booked"        value={bikeName} />
+        <ConfRow label="Bike Details"       value={bikeDetails} />
+        <ConfRow label="Pickup  D&T"        value={fmtDateTime12(booking.start_ts)} />
+        <ConfRow label="Drop  D&T"          value={fmtDateTime12(booking.end_ts)} />
+        <ConfRow label="Amount Paid"        value={rupee(paid)} />
+        <ConfRow label="Amount Pending"     value={rupee(pending)} accent={pending > 0} />
+        <ConfRow label="Odometer Reading"   value={odo} />
+        <ConfRow label="Kms limit"          value={`${booking.km_limit} km`} />
+        <ConfRow label="Security deposit"   value={rupee(edit.security_deposit || booking.security_deposit || 0)} />
+        <ConfRow label="Helmets Provided"   value={helmets} />
+        <ConfRow label="Original DL taken"  value={dl} />
+      </div>
+
+      <div className="rounded-xl border border-border bg-bg/40 p-4 space-y-2 text-[12px] leading-relaxed">
+        <p>
+          <strong>{isScooter ? 'Scooty' : 'Bike'}:</strong>{' '}
+          ₹{extraKmRate} per extra km / ₹{latePenaltyRate} per hour for late penalty.
+        </p>
+        <p>🕛 Hub timings 6:00am – 10:30pm.</p>
+        <p className="italic text-muted">
+          &ldquo;Please note: Bike drop-offs are not accepted after 10:30 PM. An overnight rental fee
+          will apply, and bikes to be returned after 6:00am.&rdquo;
+        </p>
+        <p className="font-semibold text-orange-700">
+          # The booking amount for the bike is non-refundable once confirmed. #
+        </p>
+        <p className="pt-2">Have a great and safe Ride 🤝</p>
+        <p>Thank you for Choosing Zoditorentals ❤️😊</p>
+      </div>
+
+      {/* KYC document thumbnails — clickable to open full size. */}
+      <div className="rounded-xl border border-border bg-white p-4">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted mb-2">
+          KYC Documents
+        </p>
+        {!kycUrls ? (
+          <p className="text-xs text-muted">Open the KYC tab to load uploaded documents.</p>
+        ) : Object.keys(kycUrls).length === 0 ? (
+          <p className="text-xs text-orange-600">No documents uploaded yet.</p>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {Object.entries(kycUrls).map(([kind, url]) => (
+              <a
+                key={kind}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block rounded-lg border border-border overflow-hidden hover:border-accent transition-colors group"
+              >
+                <div className="bg-bg/40 aspect-[4/3] flex items-center justify-center overflow-hidden">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt={DOC_LABELS[kind] ?? kind} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                </div>
+                <div className="px-2 py-1 text-[11px] font-semibold text-center">
+                  {DOC_LABELS[kind] ?? kind}
+                </div>
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ConfRow({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="grid grid-cols-[140px_1fr] gap-2 text-[13px]">
+      <span className="text-muted">{label} :</span>
+      <span className={`font-semibold ${accent ? 'text-orange-600' : ''}`}>{value}</span>
     </div>
   );
 }

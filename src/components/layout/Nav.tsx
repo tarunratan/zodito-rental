@@ -130,10 +130,13 @@ export function Nav() {
         </ul>
 
         <div className="flex gap-2.5 items-center">
-          {/* Portal pills — quick access for staff. Admin pill ONLY when role === 'admin';
-              Vendor pill when role is admin (preview mode) OR vendor (their own dashboard).
-              Non-staff users (customer / null) never see these. */}
-          {loaded && isSignedIn && !isMockMode() && (effectiveRole === 'admin' || effectiveRole === 'vendor') && (
+          {/* Portal pills.
+              🏪 Vendor — visible to EVERYONE (signed-in or out, any role). Acts as
+                          the public entry point: routes through to vendor signup
+                          for guests/customers, or the vendor dashboard / admin
+                          preview picker for vendors / admins.
+              🛡 Admin  — strictly gated: only rendered when effectiveRole === 'admin'. */}
+          {loaded && !isMockMode() && (
             <div className="hidden md:flex items-center gap-1.5 mr-1">
               {effectiveRole === 'admin' && (
                 <Link
@@ -147,7 +150,11 @@ export function Nav() {
               <Link
                 href="/vendor"
                 className="flex items-center gap-1.5 text-[12px] font-bold px-2.5 py-1.5 rounded-lg bg-accent/15 hover:bg-accent/25 text-accent border border-accent/30 hover:border-accent/50 transition-colors"
-                title={effectiveRole === 'admin' ? 'Preview any vendor portal' : 'Vendor dashboard'}
+                title={
+                  effectiveRole === 'admin' ? 'Preview any vendor portal'
+                  : effectiveRole === 'vendor' ? 'Vendor dashboard'
+                  : 'Become a vendor — list your bike'
+                }
               >
                 <span>🏪</span><span>Vendor</span>
               </Link>
@@ -281,12 +288,12 @@ export function Nav() {
                 {kyc === 'rejected' && (
                   <MobileNavLink href="/profile?tab=kyc" onClick={() => setMenuOpen(false)} warning>⚠ Re-submit KYC</MobileNavLink>
                 )}
-                {/* Vendor entry — vendors get their own portal; admins get preview mode. */}
-                {(effectiveRole === 'vendor' || effectiveRole === 'admin') && (
-                  <MobileNavLink href="/vendor" onClick={() => setMenuOpen(false)}>
-                    🏪 Vendor Portal{effectiveRole === 'admin' ? ' (Preview)' : ''}
-                  </MobileNavLink>
-                )}
+                {/* Vendor entry — visible to ALL signed-in users. Customers
+                    land on /vendor → /vendor/signup; vendors see their dashboard;
+                    admins get the preview picker. */}
+                <MobileNavLink href="/vendor" onClick={() => setMenuOpen(false)}>
+                  🏪 Vendor Portal{effectiveRole === 'admin' ? ' (Preview)' : ''}
+                </MobileNavLink>
                 {/* Admin entry — strictly gated to admins. */}
                 {effectiveRole === 'admin' && (
                   <MobileNavLink href="/admin" onClick={() => setMenuOpen(false)}>🛡 Admin Console</MobileNavLink>
@@ -306,6 +313,9 @@ export function Nav() {
               </>
             ) : (
               <>
+                {/* Vendor portal — public entry point even when signed-out;
+                    /vendor routes guests through to /vendor/signup. */}
+                <MobileNavLink href="/vendor" onClick={() => setMenuOpen(false)}>🏪 Vendor Portal</MobileNavLink>
                 <MobileNavLink href="/earn" onClick={() => setMenuOpen(false)} accent>💰 Earn with Us</MobileNavLink>
                 <MobileNavLink href="/vendor/signup" onClick={() => setMenuOpen(false)}>List Your Bike</MobileNavLink>
                 <div className="border-t border-white/10 my-1" />

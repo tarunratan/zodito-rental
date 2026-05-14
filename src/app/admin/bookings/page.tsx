@@ -20,7 +20,7 @@ export default async function AdminBookingsPage() {
         .limit(200),
       supabase
         .from('bikes')
-        .select('id, emoji, image_url, registration_number, color, model_id, is_active, listing_status')
+        .select('id, emoji, image_url, registration_number, color, model_id, extra_km_rate, late_penalty_hour, is_active, listing_status')
         .order('created_at', { ascending: false }),
     ]);
 
@@ -36,7 +36,7 @@ export default async function AdminBookingsPage() {
         ? supabase.from('users').select('id, email, first_name, last_name, phone').in('id', userIds)
         : Promise.resolve({ data: [] }),
       modelIds.length
-        ? supabase.from('bike_models').select('id, display_name').in('id', modelIds)
+        ? supabase.from('bike_models').select('id, display_name, category, cc, excess_km_rate, late_hourly_penalty').in('id', modelIds)
         : Promise.resolve({ data: [] }),
     ]);
 

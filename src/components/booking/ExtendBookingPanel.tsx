@@ -20,6 +20,15 @@ import { useEffect, useState } from 'react';
 import Script from 'next/script';
 import { formatINR, formatDateTime } from '@/lib/utils';
 
+// Store hours window — drop-offs are accepted between 6 AM and 10 PM only.
+// Matches `STORE_OPEN_HOUR` / `STORE_CLOSE_HOUR` in src/lib/pricing.ts.
+const EXTEND_HOURS = Array.from({ length: 17 }, (_, i) => 6 + i); // 6..22 inclusive
+function fmtHour12(h: number): string {
+  if (h === 0)  return '12 AM';
+  if (h === 12) return '12 PM';
+  return h < 12 ? `${h} AM` : `${h - 12} PM`;
+}
+
 declare global { interface Window { Razorpay: any } }
 
 interface Quote {
@@ -84,7 +93,13 @@ export function ExtendBookingPanel({
   kmLimit: number;
 }) {
   const [open, setOpen]           = useState(false);
-  const [newEnd, setNewEnd]       = useState('');
+  // Drop-off as date + 12-hour-clock hour (no minutes). Combined to an ISO
+  // timestamp lazily when we need to fire the quote / payment call.
+  const [newDate, setNewDate]     = useState('');
+  const [newHour, setNewHour]     = useState<number>(10); // default 10 AM
+  const newEnd                    = newDate
+    ? new Date(`${newDate}T${String(newHour).padStart(2, '0')}:00:00`).toISOString()
+    : '';
   const [quote, setQuote]         = useState<Quote | null>(null);
   const [conflict, setConflict]   = useState<QuoteResponse['conflict'] | null>(null);
   const [phase, setPhase]         = useState<'idle' | 'quoting' | 'quoted' | 'paying' | 'success' | 'failed'>('idle');
@@ -122,7 +137,7 @@ export function ExtendBookingPanel({
       const res = await fetch(`/api/bookings/${bookingId}/extend/quote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ new_end_ts: new Date(newEnd).toISOString() }),
+        body: JSON.stringify({ new_end_ts: newEnd }),
       });
       const data: QuoteResponse = await res.json();
       if (!res.ok) {
@@ -150,7 +165,7 @@ export function ExtendBookingPanel({
       const res = await fetch(`/api/bookings/${bookingId}/extend/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ new_end_ts: new Date(newEnd).toISOString() }),
+        body: JSON.stringify({ new_end_ts: newEnd }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -243,13 +258,27 @@ export function ExtendBookingPanel({
           <div className="mt-4 space-y-3">
             <div>
               <label className="text-[11px] text-muted block mb-1">New drop-off date & time</label>
-              <input
-                type="datetime-local"
-                value={newEnd}
-                min={endTs.slice(0, 16)}
-                onChange={e => { setNewEnd(e.target.value); resetQuote(); }}
-                className="input-field w-full text-sm"
-              />
+              <div className="flex gap-2">
+                <input
+                  type="date"
+                  value={newDate}
+                  min={endTs.slice(0, 10)}
+                  onChange={e => { setNewDate(e.target.value); resetQuote(); }}
+                  className="input-field flex-1 text-sm"
+                />
+                <select
+                  value={newHour}
+                  onChange={e => { setNewHour(parseInt(e.target.value, 10)); resetQuote(); }}
+                  className="input-field text-sm w-28"
+                >
+                  {EXTEND_HOURS.map(h => (
+                    <option key={h} value={h}>{fmtHour12(h)}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-[10px] text-muted mt-1">
+                Drop-offs accepted 6 AM – 10 PM. Pick the date and hour only — minutes aren&apos;t needed.
+              </p>
             </div>
 
             <button
@@ -269,10 +298,12 @@ export function ExtendBookingPanel({
                 <div className="flex justify-between"><span className="text-muted">Extra rent</span><span>{formatINR(quote.baseDelta)}</span></div>
                 <div className="flex justify-between"><span className="text-muted">Extra GST (18%)</span><span>{formatINR(quote.gstDelta)}</span></div>
                 <div className="flex justify-between text-sm pt-1">
-                  <span className="font-display font-semibold">Total payable</span>
+                  <span className="font-display font-semibold">Total payable (incl. GST)</span>
                   <span className="font-display font-bold text-accent">{formatINR(quote.totalDelta)}</span>
                 </div>
-                <p className="text-[10px] text-muted mt-2">Booking will only be extended after successful payment.</p>
+                <p className="text-[10px] text-muted mt-2">
+                  Includes 18% GST. Booking is only extended after successful payment.
+                </p>
               </div>
             )}
 
