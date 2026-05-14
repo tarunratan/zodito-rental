@@ -96,8 +96,12 @@ describe('quoteExtension', () => {
     expect('error' in r).toBe(true);
   });
 
-  it('clamps negative deltas to zero (admin lowered prices below original)', () => {
-    // Original paid 1500 base; new full-trip price comes out to 800 → delta would be -700; must clamp to 0.
+  it('falls back to extra-only pricing when full-trip recomputation is cheaper than original', () => {
+    // Customer overpaid for the original 10h trip (₹1500). Extending into 24h
+    // would compute a cheaper full-trip price (₹600) — the OLD code clamped
+    // the delta to ₹0 and let the customer extend for free. New behavior:
+    // re-price the extra 14 hours as a fresh booking (24hr tier = ₹600/140km)
+    // and use that as the delta so extension always costs the marginal time.
     const r = quoteExtension({
       startTs: ist(2026, 5, 11, 10),
       originalEndTs: ist(2026, 5, 11, 20),
@@ -110,10 +114,43 @@ describe('quoteExtension', () => {
       customPackages: [],
     });
     if ('error' in r) throw new Error(r.error);
-    expect(r.baseDelta).toBe(0);
-    expect(r.gstDelta).toBe(0);
-    expect(r.totalDelta).toBe(0);
-    expect(r.extraKm).toBe(0);
+    // Extra 14 hours → 24hr tier (covers 12-24) → ₹600 + ₹108 GST + 140km
+    expect(r.baseDelta).toBe(600);
+    expect(r.gstDelta).toBe(108);
+    expect(r.totalDelta).toBe(708);
+    expect(r.extraKm).toBe(140);
+    expect(r.newKmLimit).toBe(250 + 140); // original + extra
+  });
+
+  it('regression: 24h booking extended to 7+ days with a cheap long-stay custom package', () => {
+    // Reproduces the production bug the user hit. Customer paid for 24h
+    // at the 24hr tier (₹600/140km). Admin has a discounted "15days"
+    // custom package covering 168-336h at ₹329 — much cheaper than the
+    // 24hr standard rate. Extending from 24h to 176h matched that custom
+    // and the OLD code returned ₹0 (negative-clamp).
+    const customSevenToFourteen = {
+      id: 'cp-15days', bike_id: 'b1', label: '15days',
+      min_duration_hours: 168, duration_hours: 336,
+      price: 329, km_limit: 100, is_active: true,
+    };
+    const r = quoteExtension({
+      startTs: ist(2026, 5, 14, 14),         // 14 May 2 PM
+      originalEndTs: ist(2026, 5, 15, 14),   // 15 May 2 PM (24h)
+      newEndTs: ist(2026, 5, 21, 22),        // 21 May 10 PM → 176h total, +152h
+      originalBasePrice: 600,
+      originalGstAmount: 108,
+      originalKmLimit: 140,
+      availableTiers: TIERS,
+      packages: PACKAGES,
+      customPackages: [customSevenToFourteen],
+    });
+    if ('error' in r) throw new Error(r.error);
+    // Extension MUST cost something — extra-only fallback prices 152h.
+    // 152h matches the same 15days custom (168-336? no, 152 falls in 144-168 = 7day).
+    // 7day tier in PACKAGES = ₹2600 / 700km. So delta = full 7day price.
+    expect(r.baseDelta).toBeGreaterThan(0);
+    expect(r.totalDelta).toBeGreaterThan(0);
+    expect(r.newKmLimit).toBeGreaterThan(140); // strictly more than original
   });
 
   it('returns error when no bracket can cover the duration', () => {

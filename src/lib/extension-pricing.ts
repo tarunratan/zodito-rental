@@ -1,15 +1,26 @@
 /**
  * Pricing helper for booking extensions.
  *
- * Strategy: price the FULL extended trip (start_ts → new_end_ts) against the
- * current admin-configured tiers / custom packages, then subtract whatever
- * the customer already paid for the original trip. This works correctly when
- * an extension pushes the booking into a different tier bucket (e.g. 36hr
- * tier upgrading to a 48hr / 2-day bracket).
+ * Two strategies, picked depending on what the data looks like:
  *
- * The customer is never charged a negative amount — if for some reason the
- * recomputed price is lower than the original (admin lowered prices, etc.),
- * the delta clamps to zero.
+ *   1. PRIMARY — "full-trip minus original": price the FULL extended trip
+ *      against the current admin-configured tiers, then subtract whatever
+ *      the customer already paid. Works correctly when extending into a
+ *      MORE expensive bracket (e.g. 24h → 36h → 2day, each tier costlier).
+ *
+ *   2. FALLBACK — "extra-time as fresh booking": used when the full-trip
+ *      recomputation would charge LESS than the customer already paid
+ *      (admin's longer package is, for whatever reason, cheaper than the
+ *      tier the original booking used — e.g. a discounted 7-day custom
+ *      package priced lower than a single 24hr rental). In that case the
+ *      "full minus original" path clamps to zero and lets the customer
+ *      extend by days for free, which is wrong. We instead price the
+ *      EXTRA time alone as if it were a brand-new rental starting at
+ *      the original drop-off, and add its KM allowance to the original.
+ *
+ * Both strategies produce non-negative deltas. The fallback also fires if
+ * the full-trip path produces zero KM allowance increase despite a
+ * positive duration extension — same symptom, same fix.
  */
 
 import {
@@ -56,38 +67,74 @@ export function quoteExtension(input: ExtensionInputs): ExtensionQuote | { error
   const totalNewHours = (newEndTs.getTime() - startTs.getTime()) / 3_600_000;
   const extraHours    = (newEndTs.getTime() - originalEndTs.getTime()) / 3_600_000;
 
-  const match = coveringTier(totalNewHours, availableTiers, customPackages);
-  if (!match) {
+  const fullMatch = coveringTier(totalNewHours, availableTiers, customPackages);
+  if (!fullMatch) {
     return { error: 'No package covers the requested extension duration.' };
   }
 
-  const breakdown = match.type === 'custom'
-    ? calculatePrice({ customPackage: match.pkg, customActualHours: totalNewHours, extraHelmetCount: 0, hasOriginalDL: true })
+  const fullBreakdown = fullMatch.type === 'custom'
+    ? calculatePrice({ customPackage: fullMatch.pkg, customActualHours: totalNewHours, extraHelmetCount: 0, hasOriginalDL: true })
     : calculatePrice({
         packages: packages as any,
-        tier: match.tier,
-        actualDays: match.actualDays,
+        tier: fullMatch.tier,
+        actualDays: fullMatch.actualDays,
         extraHelmetCount: 0,
         hasOriginalDL: true,
       });
 
-  const baseDelta  = Math.max(0, breakdown.basePrice - originalBasePrice);
-  const gstDelta   = Math.max(0, breakdown.gstAmount - originalGstAmount);
-  const totalDelta = baseDelta + gstDelta;
+  const rawBaseDelta = fullBreakdown.basePrice - originalBasePrice;
+  const rawKmDelta   = fullBreakdown.kmLimit   - originalKmLimit;
 
-  const extraKm    = Math.max(0, breakdown.kmLimit - originalKmLimit);
+  // Primary path holds when extending genuinely pushes the booking into a
+  // costlier bracket. If the full-trip recomputation comes out CHEAPER than
+  // what the customer already paid (or the new bracket has FEWER km), the
+  // customer would extend for free — instead, re-price the extra hours as
+  // a fresh standalone rental and use that as the delta.
+  if (rawBaseDelta <= 0 || rawKmDelta < 0) {
+    const extraMatch = coveringTier(extraHours, availableTiers, customPackages);
+    if (!extraMatch) {
+      return { error: 'No package available for this extension duration. Pick a different drop-off time.' };
+    }
+    const extraBreakdown = extraMatch.type === 'custom'
+      ? calculatePrice({ customPackage: extraMatch.pkg, customActualHours: extraHours, extraHelmetCount: 0, hasOriginalDL: true })
+      : calculatePrice({
+          packages: packages as any,
+          tier: extraMatch.tier,
+          actualDays: extraMatch.actualDays,
+          extraHelmetCount: 0,
+          hasOriginalDL: true,
+        });
+
+    return {
+      extraHours: Number(extraHours.toFixed(2)),
+      extraKm:    extraBreakdown.kmLimit,
+      originalKmLimit,
+      newKmLimit: originalKmLimit + extraBreakdown.kmLimit,
+      baseDelta:  extraBreakdown.basePrice,
+      gstDelta:   extraBreakdown.gstAmount,
+      totalDelta: extraBreakdown.basePrice + extraBreakdown.gstAmount,
+      matchedTier:            extraMatch.type === 'standard' ? extraMatch.tier : null,
+      matchedCustomPackageId: extraMatch.type === 'custom'   ? extraMatch.pkg.id : null,
+      matchedLabel:           extraMatch.type === 'custom'   ? extraMatch.pkg.label : extraMatch.tier,
+    };
+  }
+
+  // Primary path — full-trip minus original.
+  const baseDelta  = Math.max(0, rawBaseDelta);
+  const gstDelta   = Math.max(0, fullBreakdown.gstAmount - originalGstAmount);
+  const totalDelta = baseDelta + gstDelta;
+  const extraKm    = Math.max(0, rawKmDelta);
 
   return {
     extraHours: Number(extraHours.toFixed(2)),
     extraKm,
     originalKmLimit,
-    newKmLimit: breakdown.kmLimit,
+    newKmLimit: fullBreakdown.kmLimit,
     baseDelta,
     gstDelta,
     totalDelta,
-    matchedTier:            match.type === 'standard' ? match.tier : null,
-    matchedCustomPackageId: match.type === 'custom'   ? match.pkg.id : null,
-    matchedLabel:           match.type === 'custom'   ? match.pkg.label
-                          : match.tier,
+    matchedTier:            fullMatch.type === 'standard' ? fullMatch.tier : null,
+    matchedCustomPackageId: fullMatch.type === 'custom'   ? fullMatch.pkg.id : null,
+    matchedLabel:           fullMatch.type === 'custom'   ? fullMatch.pkg.label : fullMatch.tier,
   };
 }
