@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { mergeBikePackages } from '@/lib/pricing';
+import { isFrozenInWindow } from '@/lib/freeze';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -75,10 +76,17 @@ export async function GET(req: NextRequest) {
   // custom_packages). A single PostgREST relationship-select would couple
   // bike rendering to FK-name detection — if it fails for any reason, the
   // homepage shows zero cards (the symptom users hit).
+  // Visibility / freeze columns pulled into the SELECT itself so we can
+  // run a post-query SAFETY PASS over the rows the DB returned. If
+  // PostgREST / Supabase ever fails to apply the SQL filters (RLS surprise,
+  // schema-cache miss, transactional anomaly), the defensive filter below
+  // still guarantees inactive / unapproved / frozen bikes do not reach the
+  // customer payload.
   let bikesQ = supabase
     .from('bikes')
     .select(`
       id, emoji, image_url, color, color_hex, year, total_rides, rating_avg, rating_count, owner_type,
+      is_active, listing_status, frozen_from, frozen_until,
       model:bike_models!inner(id, name, display_name, category, cc,
         packages:bike_model_packages(tier, price, km_limit)
       ),
@@ -97,14 +105,38 @@ export async function GET(req: NextRequest) {
     console.error('[api/bikes/available] bikes query failed:', bikesRes.error);
     return NextResponse.json({ error: 'Failed to fetch bikes' }, { status: 500 });
   }
-  const bikes = bikesRes.data ?? [];
+  let bikes = bikesRes.data ?? [];
+
+  // Defense-in-depth: drop ANY row whose visibility flags say it shouldn't
+  // be public, even if it made it past the SQL filter. Also drops freeze
+  // overlaps as a second layer behind the frozen-ids exclusion above.
+  const droppedBySafety: Array<{ id: string; reason: string }> = [];
+  bikes = bikes.filter((b: any) => {
+    if (b.is_active === false) {
+      droppedBySafety.push({ id: b.id, reason: 'is_active=false' });
+      return false;
+    }
+    if (b.listing_status && b.listing_status !== 'approved') {
+      droppedBySafety.push({ id: b.id, reason: `listing_status=${b.listing_status}` });
+      return false;
+    }
+    if (isFrozenInWindow(b, fromTs, toTs)) {
+      droppedBySafety.push({ id: b.id, reason: 'frozen_overlap' });
+      return false;
+    }
+    return true;
+  });
+  if (droppedBySafety.length > 0) {
+    // Loud warning — this means the SQL filter let something through that
+    // shouldn't have escaped. Worth investigating the row + RLS / cache state.
+    console.warn('[api/bikes/available] post-query safety pass dropped', droppedBySafety.length, 'bike(s):', droppedBySafety);
+  }
 
   // One log line per request — tells us exactly which bike IDs the home
-  // endpoint is exposing, so we can correlate with /bikes/[id] complaints
-  // about a bike showing on home but appearing "offline" / "booked" on the
-  // detail page. Trimmed to ids only; keep noise low.
+  // endpoint is exposing, so we can correlate with /bikes/[id] complaints.
   console.log('[api/bikes/available] window:', fromIso, '→', toIso,
-    '· unavailable:', unavailableIds.size,
+    '· unavailable_via_filter:', unavailableIds.size,
+    '· post_safety_dropped:', droppedBySafety.length,
     '· returned ids:', bikes.map((b: any) => b.id));
 
   // Fetch overrides + custom packages for these bikes in parallel.

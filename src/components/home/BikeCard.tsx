@@ -5,6 +5,12 @@ import { coveringTier, calculatePrice, TIER_LABELS, type CustomPackage, type Pac
 type Bike = any;
 
 export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFrom?: string; searchTo?: string }) {
+  // Final safety net: even if every server-side filter let this bike slip
+  // through, the card itself refuses to render an inactive / unapproved
+  // listing. There is NO scenario where a customer should see such a card.
+  if (bike?.is_active === false) return null;
+  if (bike?.listing_status && bike.listing_status !== 'approved') return null;
+
   const isVendor = bike.owner_type === 'vendor';
   const pickupLocation = isVendor
     ? (bike.vendor?.pickup_area ?? bike.vendor?.business_name ?? null)

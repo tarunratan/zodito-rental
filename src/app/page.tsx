@@ -27,6 +27,7 @@ async function fetchBikes() {
     .from('bikes')
     .select(`
       id, emoji, image_url, color, color_hex, year, total_rides, rating_avg, rating_count, owner_type,
+      is_active, listing_status,
       model:bike_models!inner(id, name, display_name, category, cc,
         packages:bike_model_packages(tier, price, km_limit)
       ),
@@ -40,7 +41,23 @@ async function fetchBikes() {
     console.error('[home.fetchBikes] bikes query failed:', bikesRes.error);
     return [];
   }
-  const bikes = bikesRes.data ?? [];
+  // Defense-in-depth: post-query safety pass identical to /api/bikes/available.
+  // If the SQL filter ever lets through a row that shouldn't be customer-visible,
+  // this catches it and logs loudly.
+  const rawBikes = bikesRes.data ?? [];
+  const bikes: any[] = [];
+  const dropped: Array<{ id: string; reason: string }> = [];
+  for (const b of rawBikes) {
+    if ((b as any).is_active === false) { dropped.push({ id: b.id, reason: 'is_active=false' }); continue; }
+    if ((b as any).listing_status && (b as any).listing_status !== 'approved') {
+      dropped.push({ id: b.id, reason: `listing_status=${(b as any).listing_status}` });
+      continue;
+    }
+    bikes.push(b);
+  }
+  if (dropped.length > 0) {
+    console.warn('[home.fetchBikes] post-query safety pass dropped', dropped.length, 'bike(s):', dropped);
+  }
   if (bikes.length === 0) return [];
 
   // 2) Fetch overrides + custom packages for ALL bikes in two parallel
