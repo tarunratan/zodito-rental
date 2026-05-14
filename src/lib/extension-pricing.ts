@@ -69,7 +69,16 @@ export function quoteExtension(input: ExtensionInputs): ExtensionQuote | { error
 
   const fullMatch = coveringTier(totalNewHours, availableTiers, customPackages);
   if (!fullMatch) {
-    return { error: 'No package covers the requested extension duration.' };
+    // `coveringTier` falls back to a synthetic 24hr × N-day bracket all the
+    // way out to 30 days when the 24hr tier is configured. Hitting this
+    // branch means either the bike doesn't have a 24hr tier at all OR the
+    // requested total exceeds 30 days.
+    const totalDays = Math.ceil(totalNewHours / 24);
+    return {
+      error: totalDays > 30
+        ? 'Maximum rental length is 30 days. Pick an earlier drop-off, or contact support for a longer-term arrangement.'
+        : 'No package is configured for this duration. Please pick a different drop-off time or contact support.',
+    };
   }
 
   const fullBreakdown = fullMatch.type === 'custom'

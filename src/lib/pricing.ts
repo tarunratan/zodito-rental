@@ -270,9 +270,15 @@ export function coveringTier(
   }
 
   // 3) Synthetic 24hr × N-day fallback (only when 24hr is configured). Covers
-  //    gaps when admin defined 12hr / 24hr / 7day but skipped 36hr / 2day / 60hr / 3day.
+  //    every gap between admin-configured tiers / customs, from 2 days all the
+  //    way to 30 days — so a customer extending into a duration the admin
+  //    hasn't explicitly priced still gets a reasonable quote (days × 24hr
+  //    price) instead of a hard "no package covers this" error.
+  //    Stable sort guarantees an explicit standard / custom bracket at the
+  //    same max wins over the synthetic, so this never silently overrides a
+  //    real admin-set price.
   if (availableTiers.includes('24hr')) {
-    for (const d of [2, 3, 4, 5, 6]) {
+    for (let d = 2; d <= 30; d++) {
       brackets.push({
         min: (d - 1) * 24,
         max: d * 24,

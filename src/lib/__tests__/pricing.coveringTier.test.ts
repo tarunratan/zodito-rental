@@ -138,10 +138,11 @@ describe('coveringTier — missing brackets', () => {
     }
   });
 
-  it('returns null when duration exceeds all configured brackets', () => {
-    // Only the short tiers configured; 200 hrs overshoots everything.
+  it('returns null when duration exceeds 30 days even with synthetic fallback', () => {
+    // Synthetic 24hr × N covers 2-30 days when 24hr is configured. Anything
+    // longer requires admin to configure a real long-stay tier.
     const tiers: PackageTier[] = ['12hr', '24hr'];
-    expect(coveringTier(200, tiers)).toBeNull();
+    expect(coveringTier(31 * 24, tiers)).toBeNull();
   });
 
   it('returns null for zero or negative durations', () => {
@@ -203,7 +204,7 @@ describe('coveringTier — custom packages override standard tiers', () => {
   });
 });
 
-describe('coveringTier — synthetic per-day fallback for 2-6 days', () => {
+describe('coveringTier — synthetic per-day fallback for 2-30 days', () => {
   it('48 hrs with no 2day/48hr/60hr tier falls back to 24hr × 2', () => {
     // Bike only has 12hr, 24hr, 7day — synthetic 24hr × N fills the gap
     const tiers: PackageTier[] = ['12hr', '24hr', '7day'];
@@ -213,5 +214,34 @@ describe('coveringTier — synthetic per-day fallback for 2-6 days', () => {
       expect(r.tier).toBe('24hr');
       expect(r.actualDays).toBe(2);
     }
+  });
+
+  it('173 hrs (over 7-day standard, under 15-day) falls back to 24hr × 8', () => {
+    // Regression for "No package covers the requested extension duration":
+    // a customer extending a 24h booking to ~7.2 days fell into the gap
+    // between 7day (max 168) and 15day (min 336). Synthetic now spans
+    // 2-30 days so any duration ≤ 30 days has a covering bracket.
+    const r = coveringTier(173, ALL_TIERS);
+    expect(r?.type).toBe('standard');
+    if (r?.type === 'standard') {
+      expect(r.actualDays).toBe(8);
+      expect(r.tier).toBe('24hr');
+    }
+  });
+
+  it('synthetic covers all the way to 30 days when 24hr is configured', () => {
+    const tiers: PackageTier[] = ['12hr', '24hr']; // intentionally no 7day/15day/30day
+    const r = coveringTier(29 * 24, tiers); // 29 days
+    expect(r?.type).toBe('standard');
+    if (r?.type === 'standard') {
+      expect(r.tier).toBe('24hr');
+      expect(r.actualDays).toBe(29);
+    }
+  });
+
+  it('returns null beyond 30 days (admin must configure a longer tier)', () => {
+    const tiers: PackageTier[] = ['12hr', '24hr'];
+    const r = coveringTier(31 * 24, tiers);
+    expect(r).toBeNull();
   });
 });
