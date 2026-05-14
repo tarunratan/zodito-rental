@@ -5,6 +5,7 @@ import { BikeCard } from './BikeCard';
 import { cn } from '@/lib/utils';
 import type { BikeCategory } from '@/lib/supabase/types';
 import { STORE_OPEN_HOUR, STORE_CLOSE_HOUR, calculate12HourSlot } from '@/lib/pricing';
+import { createSupabaseBrowser } from '@/lib/supabase/client';
 
 type BikeRow = any;
 type VehicleType = 'all' | 'scooter' | 'motorcycle';
@@ -195,11 +196,18 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep the homepage list fresh against admin-side actions (freeze / unfreeze,
-  // listing toggles, new bookings) without requiring a manual refresh:
-  //   • Background poll every 30 seconds.
-  //   • Re-fetch immediately whenever the tab regains focus / visibility,
-  //     so an admin who freezes a bike in another tab sees it disappear on
-  //     the next focus tick — usually sub-second.
+  // listing toggles, new bookings) without requiring a manual refresh.
+  //
+  // Three independent triggers — any one of which catches the change:
+  //   1. Supabase Realtime push: subscribe to `bikes` table updates. When
+  //      admin flips is_active / listing_status / frozen_* the WebSocket
+  //      delivers an event and we re-fetch within ~100ms. This is the
+  //      primary fast path.
+  //   2. Background poll every 30 seconds — fallback when WebSocket is
+  //      down (corporate proxies, user offline-then-back-online, etc.).
+  //   3. Re-fetch on visibilitychange / focus — covers cases where the
+  //      tab was sleeping (browser throttles timers + closes sockets)
+  //      and is now active again.
   useEffect(() => {
     const POLL_MS = 30_000;
     const id = window.setInterval(() => { fetchAvailable(fromVal, toVal); }, POLL_MS);
@@ -209,10 +217,27 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
     const onFocus = () => fetchAvailable(fromVal, toVal);
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onFocus);
+
+    // Realtime — admin freeze / hide / approve broadcasts arrive here.
+    // Any change on the bikes table → re-fetch the available list. Cheap
+    // because the route uses force-dynamic + no-store and the SQL function
+    // is fast; the rare burst of multiple changes coalesces into one fetch
+    // due to React state update batching.
+    const supabase = createSupabaseBrowser();
+    const channel = supabase
+      .channel('bikes:state')
+      .on(
+        'postgres_changes' as any,
+        { event: '*', schema: 'public', table: 'bikes' },
+        () => { fetchAvailable(fromVal, toVal); },
+      )
+      .subscribe();
+
     return () => {
       window.clearInterval(id);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onFocus);
+      supabase.removeChannel(channel);
     };
   }, [fromVal, toVal, fetchAvailable]);
 

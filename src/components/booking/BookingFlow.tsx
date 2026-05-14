@@ -14,6 +14,7 @@ import {
   STORE_OPEN_HOUR, STORE_CLOSE_HOUR, twelveHrReturn,
 } from '@/lib/pricing';
 import type { CustomPackage, TierResult } from '@/lib/pricing';
+import { createSupabaseBrowser } from '@/lib/supabase/client';
 import { formatDateTime } from '@/lib/utils';
 import type { PackageTier } from '@/lib/supabase/types';
 import type { AppliedCoupon } from './CouponInput';
@@ -179,11 +180,26 @@ export function BookingFlow({
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
     window.addEventListener('focus', run);
+
+    // Realtime push — re-run the availability check the instant admin
+    // flips this bike's row (freeze, hide, etc.). Scoped to THIS bike via
+    // the `filter` clause so other bikes' updates don't trigger us.
+    const supabase = createSupabaseBrowser();
+    const channel = supabase
+      .channel(`bike:${bike.id}:state`)
+      .on(
+        'postgres_changes' as any,
+        { event: '*', schema: 'public', table: 'bikes', filter: `id=eq.${bike.id}` },
+        () => run(),
+      )
+      .subscribe();
+
     return () => {
       cancelled = true;
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('focus', run);
+      supabase.removeChannel(channel);
     };
   }, [pickupTs?.getTime(), endTs?.getTime(), bike.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
