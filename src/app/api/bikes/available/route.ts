@@ -87,7 +87,7 @@ export async function GET(req: NextRequest) {
       .from('bikes')
       .select(`
         id, emoji, image_url, color, color_hex, year, total_rides, rating_avg, rating_count, owner_type,
-        is_active, listing_status, frozen_from, frozen_until, freeze_reason,
+        is_active, listing_status, is_frozen, frozen_from, frozen_until, freeze_reason,
         model:bike_models!inner(id, name, display_name, category, cc),
         vendor:vendors(id, business_name, pickup_area)
       `)
@@ -102,9 +102,8 @@ export async function GET(req: NextRequest) {
 
   // 4) FINAL safety filter — direct-from-table values are the authority.
   // Anything the function let through that the table contradicts is
-  // dropped here. Tested on the bug above: even with a broken function,
-  // this layer correctly hides bikes whose row says is_active=false.
-  const trustedNow = new Date();
+  // dropped here. Post-v043 the freeze check is a single boolean — no
+  // more date math means no more edge cases.
   const tableSafe = displayRows.filter((row: any) => {
     if (row.is_active !== true) {
       console.warn('[api/bikes/available] FUNCTION/TABLE DISAGREEMENT — dropping', row.id, '(table says is_active =', row.is_active, ')');
@@ -114,14 +113,9 @@ export async function GET(req: NextRequest) {
       console.warn('[api/bikes/available] FUNCTION/TABLE DISAGREEMENT — dropping', row.id, '(table says listing_status =', row.listing_status, ')');
       return false;
     }
-    if (row.frozen_until) {
-      const until = new Date(row.frozen_until);
-      const from  = row.frozen_from ? new Date(row.frozen_from) : null;
-      const freezeActive = until > trustedNow && (!from || from <= trustedNow);
-      if (freezeActive) {
-        console.warn('[api/bikes/available] FUNCTION/TABLE DISAGREEMENT — dropping', row.id, '(table says frozen now)');
-        return false;
-      }
+    if (row.is_frozen === true) {
+      console.warn('[api/bikes/available] FUNCTION/TABLE DISAGREEMENT — dropping', row.id, '(table says is_frozen = true)');
+      return false;
     }
     return true;
   });
@@ -159,7 +153,7 @@ export async function GET(req: NextRequest) {
       // Build marker — bumps with each meaningful change to this route.
       // Hit this endpoint directly in a browser; if you see an older
       // `_route_version` than expected, your production deploy is lagging.
-      _route_version: 'bike_states-v3-table-authority',
+      _route_version: 'bike_states-v4-is_frozen-boolean',
       _state_summary: {
         total_bikes:           states.length,
         function_available:    availableStates.length,

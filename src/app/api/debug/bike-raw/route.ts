@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabase
     .from('bikes')
     .select(`
-      id, is_active, listing_status,
+      id, is_active, listing_status, is_frozen,
       frozen_from, frozen_until, freeze_reason,
       created_at, updated_at,
       model:bike_models(display_name)
@@ -62,33 +62,34 @@ export async function GET(req: NextRequest) {
   const version = typeof versionData === 'string' ? versionData : null;
 
   const now = new Date();
-  const frozenUntil = (data as any).frozen_until ? new Date((data as any).frozen_until) : null;
-  const frozenFrom  = (data as any).frozen_from  ? new Date((data as any).frozen_from)  : null;
-  const freezeActiveNow = !!frozenUntil && frozenUntil > now && (!frozenFrom || frozenFrom <= now);
+  const row = data as any;
+  // Post-v043: visibility is governed by `is_frozen` only. `frozen_until`
+  // is metadata. Report both so an admin can see they agree.
+  const freezeActiveNow = row.is_frozen === true;
 
   const functionAgrees = !!fnRow
-    && fnRow.is_active === (data as any).is_active
-    && fnRow.listing_status === (data as any).listing_status;
+    && fnRow.is_active === row.is_active
+    && fnRow.listing_status === row.listing_status
+    && fnRow.is_frozen === row.is_frozen;
 
   return NextResponse.json(
     {
       bike: data,
       derived: {
-        // Why a customer would or wouldn't see this bike right now,
-        // independent of the [from, to] window the home page is using.
-        visible_to_customers_now: (data as any).is_active === true
-          && (data as any).listing_status === 'approved'
-          && !freezeActiveNow,
-        is_active_in_db:      (data as any).is_active,
-        listing_status_in_db: (data as any).listing_status,
+        visible_to_customers_now: row.is_active === true
+          && row.listing_status === 'approved'
+          && row.is_frozen !== true,
+        is_active_in_db:      row.is_active,
+        listing_status_in_db: row.listing_status,
+        is_frozen_in_db:      row.is_frozen,
         freeze_active_now:    freezeActiveNow,
-        frozen_from_in_db:    (data as any).frozen_from,
-        frozen_until_in_db:   (data as any).frozen_until,
-        freeze_reason_in_db:  (data as any).freeze_reason,
+        frozen_from_in_db:    row.frozen_from,
+        frozen_until_in_db:   row.frozen_until,
+        freeze_reason_in_db:  row.freeze_reason,
         server_now:           now.toISOString(),
       },
       bike_states_function: {
-        version_marker: version,           // null if migration 042 hasn't run
+        version_marker: version,           // null if migration 043 hasn't run
         returned_row:   fnRow,             // null if function returned no row
         function_agrees_with_table: functionAgrees,
       },

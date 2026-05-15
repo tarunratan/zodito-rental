@@ -648,8 +648,7 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
                       {b.model?.display_name ?? '(no model)'} ·{' '}
                       is_active=<span style={{ color: b.is_active === true ? '#8f8' : '#f88' }}>{String(b.is_active)}</span> ·{' '}
                       listing=<span style={{ color: b.listing_status === 'approved' ? '#8f8' : '#f88' }}>{b.listing_status}</span> ·{' '}
-                      frozen_until=<span style={{ color: b.frozen_until ? '#8f8' : '#888' }}>{b.frozen_until ?? 'null'}</span>
-                      {b.frozen_from && <> · frozen_from={b.frozen_from}</>}
+                      is_frozen=<span style={{ color: b.is_frozen === true ? '#f88' : '#8f8' }}>{String(b.is_frozen ?? 'undefined')}</span>
                       {b.freeze_reason && <> · reason=&quot;{b.freeze_reason}&quot;</>}
                     </div>
                   ))}

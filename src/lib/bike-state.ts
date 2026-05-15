@@ -36,8 +36,9 @@ export interface BikeStateRow {
   reason: BikeUnavailableReason | null;
   is_active: boolean;
   listing_status: string;
-  frozen_from: string | null;
-  frozen_until: string | null;
+  is_frozen: boolean;            // v043 — authoritative freeze flag
+  frozen_from: string | null;    // metadata only post-v043
+  frozen_until: string | null;   // metadata only post-v043
   freeze_reason: string | null;
   packages: Array<{ tier: PackageTier; price: number; km_limit: number }>;
   custom_packages: CustomPackage[];

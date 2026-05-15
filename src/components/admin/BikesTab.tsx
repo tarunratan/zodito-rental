@@ -11,6 +11,7 @@ type Bike = {
   owner_type: string;
   listing_status: string;
   is_active: boolean;
+  is_frozen: boolean;
   frozen_from: string | null;
   frozen_until: string | null;
   freeze_reason: string | null;
@@ -212,6 +213,11 @@ export function BikesTab({
     if (!res.ok) {
       // Revert on failure
       setBikes(prev => prev.map(b => b.id === bike.id ? { ...b, is_active: bike.is_active } : b));
+    } else {
+      // Force-pull a fresh row from the server so admin and customer pages
+      // always reflect the same source of truth — eliminates "I clicked but
+      // home didn't update" sightings caused by SSR snapshot lag.
+      router.refresh();
     }
   }
 
@@ -233,20 +239,25 @@ export function BikesTab({
   }
 
   async function freezeBike() {
-    if (!freezeTarget || !freezeUntil) return;
-    if (freezeFrom && new Date(freezeUntil) <= new Date(freezeFrom)) return;
+    if (!freezeTarget) return;
+    if (freezeFrom && freezeUntil && new Date(freezeUntil) <= new Date(freezeFrom)) return;
     setFreezeLoading(true);
-    const nowISO = new Date().toISOString();
-    await fetch(`/api/admin/bikes/${freezeTarget.id}/freeze`, {
+    // v043: visibility is decided by the boolean. Dates are optional metadata.
+    const res = await fetch(`/api/admin/bikes/${freezeTarget.id}/freeze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        frozen_from: freezeFrom ? new Date(freezeFrom).toISOString() : nowISO,
-        frozen_until: new Date(freezeUntil).toISOString(),
+        is_frozen: true,
+        frozen_from:   freezeFrom  ? new Date(freezeFrom).toISOString()  : null,
+        frozen_until:  freezeUntil ? new Date(freezeUntil).toISOString() : null,
         freeze_reason: freezeReason || null,
       }),
     });
     setFreezeLoading(false);
+    if (res.ok) {
+      const { bike } = await res.json();
+      if (bike) setBikes(prev => prev.map(b => b.id === bike.id ? { ...b, ...bike } : b));
+    }
     setFreezeTarget(null);
     setFreezeFrom('');
     setFreezeUntil('');
@@ -255,16 +266,24 @@ export function BikesTab({
   }
 
   async function unfreezeBike(id: string) {
-    await fetch(`/api/admin/bikes/${id}/freeze`, {
+    // Optimistic — keep the UI feeling instant. Reconcile from server below.
+    setBikes(prev => prev.map(b => b.id === id ? { ...b, is_frozen: false, frozen_from: null, frozen_until: null, freeze_reason: null } : b));
+    const res = await fetch(`/api/admin/bikes/${id}/freeze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ unfreeze: true }),
+      body: JSON.stringify({ is_frozen: false }),
     });
+    if (res.ok) {
+      const { bike } = await res.json();
+      if (bike) setBikes(prev => prev.map(b => b.id === bike.id ? { ...b, ...bike } : b));
+    }
     router.refresh();
   }
 
+  // Post-v043: a single boolean decides freeze state. The legacy date check
+  // is gone; admin no longer has to wonder "is this freeze still in effect?".
   function isFrozen(bike: Bike) {
-    return !!bike.frozen_until && new Date(bike.frozen_until) > new Date();
+    return bike.is_frozen === true;
   }
 
   const displayBikes = subTab === 'pending' ? bikes.filter(b => b.listing_status === 'pending_approval') : bikes;
