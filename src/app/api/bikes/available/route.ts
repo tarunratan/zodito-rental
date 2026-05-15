@@ -83,6 +83,9 @@ export async function GET(req: NextRequest) {
   }
 
   // 4) Stitch state + display into the shape BikeCard expects.
+  // Includes the raw freeze columns so the home's ?debug=1 overlay (and
+  // anyone else inspecting the response) can see WHY a bike that "should"
+  // be hidden is showing up — i.e., what the DB actually has for it.
   const stateById = new Map(availableStates.map(s => [s.bike_id, s]));
   const merged = displayRows.map((row: any) => {
     const s = stateById.get(row.id);
@@ -91,6 +94,9 @@ export async function GET(req: NextRequest) {
       ...row,
       is_active:      s.is_active,
       listing_status: s.listing_status,
+      frozen_from:    s.frozen_from,
+      frozen_until:   s.frozen_until,
+      freeze_reason:  s.freeze_reason,
       // model.packages now carries the SQL-merged tier set.
       model: { ...row.model, packages: s.packages },
       custom_packages: s.custom_packages,
