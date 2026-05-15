@@ -624,7 +624,11 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
               </div>
               {debugInfo.stateSummary && (
                 <div style={{ marginTop: 4, color: '#aaa' }}>
-                  server summary: total={debugInfo.stateSummary.total_bikes} available={debugInfo.stateSummary.available} dropped={debugInfo.stateSummary.safety_dropped}
+                  server summary: total={debugInfo.stateSummary.total_bikes}
+                  {' '}· fn_available={debugInfo.stateSummary.function_available ?? debugInfo.stateSummary.available ?? '?'}
+                  {' '}· js_dropped={debugInfo.stateSummary.js_safety_dropped ?? debugInfo.stateSummary.safety_dropped ?? '?'}
+                  {' '}· table_dropped={debugInfo.stateSummary.table_safety_dropped ?? '?'}
+                  {' '}· returned={debugInfo.stateSummary.returned ?? debugInfo.apiCount}
                 </div>
               )}
               {debugInfo.lastError && (
