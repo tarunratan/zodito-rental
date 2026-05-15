@@ -46,10 +46,29 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'not_found', id }, { status: 404 });
   }
 
+  // Cross-check: ask `bike_states` what it thinks this bike's flags are.
+  // If the function's view of `is_active` / `listing_status` differs from
+  // the table's, the function body in production is stale — re-run
+  // migration 042. Also surface the version marker so we can prove it.
+  const fromTs = new Date();
+  const toTs = new Date(fromTs.getTime() + 24 * 3600 * 1000);
+  const { data: fnRows } = await supabase.rpc('bike_states', {
+    p_from:    fromTs.toISOString(),
+    p_to:      toTs.toISOString(),
+    p_bike_id: id,
+  });
+  const fnRow = Array.isArray(fnRows) && fnRows.length > 0 ? fnRows[0] : null;
+  const { data: versionData } = await supabase.rpc('bike_states_version');
+  const version = typeof versionData === 'string' ? versionData : null;
+
   const now = new Date();
   const frozenUntil = (data as any).frozen_until ? new Date((data as any).frozen_until) : null;
   const frozenFrom  = (data as any).frozen_from  ? new Date((data as any).frozen_from)  : null;
   const freezeActiveNow = !!frozenUntil && frozenUntil > now && (!frozenFrom || frozenFrom <= now);
+
+  const functionAgrees = !!fnRow
+    && fnRow.is_active === (data as any).is_active
+    && fnRow.listing_status === (data as any).listing_status;
 
   return NextResponse.json(
     {
@@ -67,6 +86,11 @@ export async function GET(req: NextRequest) {
         frozen_until_in_db:   (data as any).frozen_until,
         freeze_reason_in_db:  (data as any).freeze_reason,
         server_now:           now.toISOString(),
+      },
+      bike_states_function: {
+        version_marker: version,           // null if migration 042 hasn't run
+        returned_row:   fnRow,             // null if function returned no row
+        function_agrees_with_table: functionAgrees,
       },
     },
     { headers: { 'Cache-Control': 'no-store' } },
