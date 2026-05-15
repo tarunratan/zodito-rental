@@ -154,6 +154,27 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
   const [searched, setSearched] = useState(false);
   const [dateError, setDateError] = useState<string | null>(null);
 
+  // Debug overlay state — only populated when ?debug=1 is in the URL.
+  // Shows exactly what the API returned vs what React state holds so we can
+  // tell whether a stale-bike sighting is a state bug, a render bug, or a
+  // wrong-component-on-screen bug. Zero perf cost when debug is off.
+  const [debugOn, setDebugOn] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<{
+    fetchedAt: string;
+    fetchUrl: string;
+    apiCount: number;
+    apiIds: string[];
+    apiVersion?: string;
+    stateSummary?: any;
+    lastError?: string;
+  } | null>(null);
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      setDebugOn(sp.get('debug') === '1');
+    } catch { /* SSR or weird env — no-op */ }
+  }, []);
+
   const [vehicleType, setVehicleType] = useState<VehicleType>('all');
   const [ccFilter, setCcFilter] = useState<(typeof CC_FILTERS)[number]['id']>('all');
   const [sort, setSort] = useState('newest');
@@ -173,14 +194,39 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
       return;
     }
     setLoading(true);
+    const url = `/api/bikes/available?from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
     try {
-      const res = await fetch(`/api/bikes/available?from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`);
+      const res = await fetch(url, { cache: 'no-store' });
       const data = await res.json();
       if (res.ok) {
         setAvailableBikes(data.bikes);
         setUnavailableCount(data.unavailable_count ?? 0);
         setSearched(true);
+        setDebugInfo({
+          fetchedAt: new Date().toISOString(),
+          fetchUrl: url,
+          apiCount: Array.isArray(data.bikes) ? data.bikes.length : 0,
+          apiIds: Array.isArray(data.bikes) ? data.bikes.map((b: any) => b.id) : [],
+          apiVersion: data._route_version,
+          stateSummary: data._state_summary,
+        });
+      } else {
+        setDebugInfo({
+          fetchedAt: new Date().toISOString(),
+          fetchUrl: url,
+          apiCount: 0,
+          apiIds: [],
+          lastError: `HTTP ${res.status}: ${data?.error ?? 'unknown'}`,
+        });
       }
+    } catch (e: any) {
+      setDebugInfo({
+        fetchedAt: new Date().toISOString(),
+        fetchUrl: url,
+        apiCount: 0,
+        apiIds: [],
+        lastError: e?.message ?? String(e),
+      });
     } finally {
       setLoading(false);
     }
@@ -531,6 +577,66 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
           {filtered.map((b: BikeRow) => <BikeCard key={b.id} bike={b} searchFrom={searched ? fromVal : undefined} searchTo={searched ? toVal : undefined} />)}
+        </div>
+      )}
+
+      {/* Debug overlay — only when ?debug=1. Compares "what API returned"
+          vs "what React state holds" vs "what's rendered after filters". If
+          a stale bike id shows on screen but isn't in stateIds, the bike is
+          coming from a component OUTSIDE BrowseSection. If it IS in stateIds,
+          React's holding stale data. Either way, this answers the question. */}
+      {debugOn && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 12,
+            left: 12,
+            right: 12,
+            maxWidth: 720,
+            margin: '0 auto',
+            background: 'rgba(0,0,0,0.92)',
+            color: '#fff',
+            padding: '12px 14px',
+            borderRadius: 10,
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            fontSize: 11,
+            lineHeight: 1.45,
+            zIndex: 9999,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            border: '1px solid rgba(255,255,255,0.15)',
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 4, color: '#7cf' }}>
+            [debug] BrowseSection live state
+          </div>
+          {debugInfo ? (
+            <>
+              <div>fetched: {debugInfo.fetchedAt}</div>
+              <div>api version: {debugInfo.apiVersion ?? '(missing)'}</div>
+              <div>api returned: {debugInfo.apiCount} bike(s)</div>
+              <div>state holds: {availableBikes?.length ?? 0} bike(s)</div>
+              <div>rendered after filters: {filtered.length} bike(s)</div>
+              <div style={{ marginTop: 4 }}>
+                state ids: {(availableBikes ?? []).map((b: any) => b.id?.slice(0, 8)).join(', ') || '(none)'}
+              </div>
+              <div>
+                rendered ids: {filtered.map((b: any) => b.id?.slice(0, 8)).join(', ') || '(none)'}
+              </div>
+              {debugInfo.stateSummary && (
+                <div style={{ marginTop: 4, color: '#aaa' }}>
+                  server summary: total={debugInfo.stateSummary.total_bikes} available={debugInfo.stateSummary.available} dropped={debugInfo.stateSummary.safety_dropped}
+                </div>
+              )}
+              {debugInfo.lastError && (
+                <div style={{ color: '#f88', marginTop: 4 }}>last error: {debugInfo.lastError}</div>
+              )}
+              <div style={{ marginTop: 6, color: '#888', fontSize: 10 }}>
+                If a bike is on screen but NOT in &apos;rendered ids&apos; → it&apos;s rendered by another component, not BrowseSection.
+              </div>
+            </>
+          ) : (
+            <div>waiting for first fetch…</div>
+          )}
         </div>
       )}
     </section>
