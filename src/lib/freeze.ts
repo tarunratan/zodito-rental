@@ -37,7 +37,7 @@ export function isFrozenInWindow(
   if (fu <= from) return false;                 // freeze ends before window starts
   if (!bike.frozen_from) return true;           // freeze runs from -inf — overlaps
   const ff = new Date(bike.frozen_from);
-  return ff < fu;                                // freeze starts before window ends
+  return ff < to;                                // freeze starts before window ends
 }
 
 /** Convenience for the common "is this bike frozen right now" check. */
