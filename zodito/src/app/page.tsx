@@ -4,6 +4,7 @@ import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode, MOCK_BIKES } from '@/lib/mock';
 
 export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
 
 async function fetchBikes() {
   if (isMockMode()) return MOCK_BIKES;
