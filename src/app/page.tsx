@@ -34,6 +34,7 @@ async function fetchBikes() {
       vendor:vendors(id, business_name, pickup_area)
     `)
     .eq('is_active', true)
+    .eq('is_frozen', true)
     .eq('listing_status', 'approved')
     .order('created_at', { ascending: false });
 
