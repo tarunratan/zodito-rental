@@ -37,6 +37,7 @@ async function fetchBikes() {
     .eq('is_frozen', false)
     .eq('listing_status', 'approved')
     .order('created_at', { ascending: false });
+  console.log("supabase data: ", bikesRes);
 
   if (bikesRes.error) {
     console.error('[home.fetchBikes] bikes query failed:', bikesRes.error);
