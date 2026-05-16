@@ -3,7 +3,7 @@ import { BrowseSection } from '@/components/home/BrowseSection';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode, MOCK_BIKES } from '@/lib/mock';
 
-export const revalidate = 60; // cache the bike list for 60s
+export const dynamic = 'force-dynamic';
 
 async function fetchBikes() {
   if (isMockMode()) return MOCK_BIKES;
