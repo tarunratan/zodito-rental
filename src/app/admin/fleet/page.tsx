@@ -39,6 +39,7 @@ export default async function AdminFleetPage() {
         model:bike_models!inner(display_name, cc)
       `)
       .eq('is_active', true)
+      .eq('is_frozen',false)
       .eq('listing_status', 'approved')
       .order('created_at', { ascending: false }),
   ]);
