@@ -105,6 +105,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
     revalidatePath(`/bikes/${params.id}`);
+    revalidatePath(`/`);
     return NextResponse.json({ package: data });
   } catch {
     return NextResponse.json({ error: 'Admin only' }, { status: 403 });
@@ -127,6 +128,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
       .eq('bike_id', params.id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     revalidatePath(`/bikes/${params.id}`);
+    revalidatePath(`/`);
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: 'Admin only' }, { status: 403 });
