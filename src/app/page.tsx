@@ -27,7 +27,7 @@ async function fetchBikes() {
     .from('bikes')
     .select(`
       id, emoji, image_url, color, color_hex, year, total_rides, rating_avg, rating_count, owner_type,
-      is_active, listing_status,
+      is_active,is_frozen, listing_status,
       model:bike_models!inner(id, name, display_name, category, cc,
         packages:bike_model_packages(tier, price, km_limit)
       ),
