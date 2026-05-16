@@ -33,6 +33,7 @@ console.log("superbase data:", data);
 
 export default async function HomePage() {
   const bikes = await fetchBikes();
+  console.log("SUPABASE log: ", bikes);
   return (
     <>
       <Hero />
