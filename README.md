@@ -1,6 +1,6 @@
 # Zodito Rentals
 
-Production-grade bike rental platform for Hyderabad — customer booking flow, vendor dashboard, and admin panel in a single Next.js app.
+Production-grade bike rental platform for Hyderabad — customer booking flow, vendor dashboard, and admin panel in a single Next.js app
 
 ---
 
