@@ -9,6 +9,7 @@ export function BikeCard({ bike, searchFrom, searchTo }: { bike: Bike; searchFro
   // through, the card itself refuses to render an inactive / unapproved
   // listing. There is NO scenario where a customer should see such a card.
   if (bike?.is_active === false) return null;
+  if(bike?.is_frozen === true) return null;
   if (bike?.listing_status && bike.listing_status !== 'approved') return null;
 
   const isVendor = bike.owner_type === 'vendor';
