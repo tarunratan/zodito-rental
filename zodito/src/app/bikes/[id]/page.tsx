@@ -25,6 +25,7 @@ async function fetchBike(id: string) {
     `)
     .eq('id', id)
     .eq('is_active', true)
+    .eq('is_frozen',false)
     .eq('listing_status', 'approved')
     .maybeSingle();
 
