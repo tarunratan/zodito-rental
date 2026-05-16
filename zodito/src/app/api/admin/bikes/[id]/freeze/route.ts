@@ -1,4 +1,22 @@
+/**
+ * Freeze / unfreeze a bike.
+ *
+ * Post-migration 043: visibility is decided by the `bikes.is_frozen`
+ * boolean — NOT by date math on `frozen_until`. The legacy date columns
+ * are still accepted from the admin UI but they're informational only
+ * (the admin can record "I plan to thaw on May 20" but the customer
+ * doesn't see the bike either way while is_frozen=true).
+ *
+ * Accepted request shapes:
+ *   { is_frozen: true,  frozen_until?: string, freeze_reason?: string }
+ *   { is_frozen: false }
+ *   // Legacy shapes still accepted — translated to is_frozen=true/false:
+ *   { frozen_until: string, ... }                  → is_frozen=true
+ *   { unfreeze: true }                             → is_frozen=false
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
@@ -6,50 +24,86 @@ import { isMockMode } from '@/lib/mock';
 
 export const runtime = 'nodejs';
 
-const freezeSchema = z.union([
+const bodySchema = z.union([
+  // New canonical shapes.
   z.object({
-    unfreeze: z.literal(true),
+    is_frozen:     z.literal(true),
+    frozen_from:   z.string().optional(),
+    frozen_until:  z.string().optional(),
+    freeze_reason: z.string().optional(),
   }),
+  z.object({ is_frozen: z.literal(false) }),
+  // Legacy shapes — preserved for older clients / scripts.
+  z.object({ unfreeze: z.literal(true) }),
   z.object({
-    frozen_from: z.string(),
-    frozen_until: z.string(),
-    freeze_reason: z.string().min(1),
+    frozen_from:   z.string().optional(),
+    frozen_until:  z.string(), // legacy "freeze" had this as required
+    freeze_reason: z.string().optional(),
   }),
 ]);
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
+    if (!isMockMode()) await requireAdmin();
     if (isMockMode()) return NextResponse.json({ ok: true, mock: true });
-    await requireAdmin();
 
-    const body = await req.json();
-    const parse = freezeSchema.safeParse(body);
+    const raw = await req.json();
+    const parse = bodySchema.safeParse(raw);
     if (!parse.success) return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
 
+    const body = parse.data as any;
+
+    // Decide which way the toggle is going.
+    const goingToUnfreeze =
+      ('is_frozen' in body && body.is_frozen === false) ||
+      ('unfreeze'  in body && body.unfreeze  === true);
+
     const supabase = createSupabaseAdmin();
-
-    if ('unfreeze' in parse.data) {
-      const { error } = await supabase
-        .from('bikes')
-        .update({ frozen_from: null, frozen_until: null, freeze_reason: null })
-        .eq('id', params.id);
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-      return NextResponse.json({ ok: true, action: 'unfrozen' });
+    let update: Record<string, any>;
+    if (goingToUnfreeze) {
+      // Clear everything — visibility AND metadata. Simple and unambiguous.
+      update = {
+        is_frozen:     false,
+        frozen_from:   null,
+        frozen_until:  null,
+        freeze_reason: null,
+        updated_at:    new Date().toISOString(),
+      };
+    } else {
+      // Freezing. Validate date metadata if provided.
+      if (body.frozen_from && body.frozen_until
+          && new Date(body.frozen_until) <= new Date(body.frozen_from)) {
+        return NextResponse.json({ error: 'End date must be after start date' }, { status: 400 });
+      }
+      update = {
+        is_frozen:     true,
+        frozen_from:   body.frozen_from   ? new Date(body.frozen_from).toISOString()   : null,
+        frozen_until:  body.frozen_until  ? new Date(body.frozen_until).toISOString()  : null,
+        freeze_reason: body.freeze_reason || null,
+        updated_at:    new Date().toISOString(),
+      };
     }
 
-    const { frozen_from, frozen_until, freeze_reason } = parse.data;
-    if (new Date(frozen_until) <= new Date(frozen_from)) {
-      return NextResponse.json({ error: 'End time must be after start time' }, { status: 400 });
-    }
-
-    const { error } = await supabase
+    // Atomic write. Returns the updated row so the admin client can update
+    // its local state from the source of truth — no optimistic divergence.
+    const { data, error } = await supabase
       .from('bikes')
-      .update({ frozen_from, frozen_until, freeze_reason })
-      .eq('id', params.id);
+      .update(update)
+      .eq('id', params.id)
+      .select('id, is_active, listing_status, is_frozen, frozen_from, frozen_until, freeze_reason, updated_at')
+      .single();
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ ok: true, action: 'frozen' });
-  } catch {
+    if (error) {
+      console.error('[api/admin/bikes/:id/freeze] update failed:', error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    // Bust SSR / route cache so customer pages re-render with the new state.
+    revalidatePath('/');
+    revalidatePath(`/bikes/${params.id}`);
+    return NextResponse.json({ ok: true, bike: data });
+  } catch (e: any) {
+    console.error('[api/admin/bikes/:id/freeze] unexpected error:', e?.message ?? e);
     return NextResponse.json({ error: 'Admin only' }, { status: 403 });
   }
 }
