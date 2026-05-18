@@ -7,6 +7,7 @@ import { getCurrentAppUser } from '@/lib/auth';
 import type { CustomPackage } from '@/lib/pricing';
 import { mergeBikePackages } from '@/lib/pricing';
 import { isFrozenNow } from '@/lib/freeze';
+import { BikeDebugPoller } from '@/components/debug/BikeDebugPoller';
 
 // Customer detail page must always reflect the latest admin-set pricing.
 // Static ISR was masking price edits for up to an hour — render dynamically
@@ -120,7 +121,12 @@ export default async function BikeDetailPage({
   // see WHY the link isn't loading.
   if (!bike) {
     if (reason === 'not_found') notFound();
-    return <BikeUnavailable reason={reason} bikeId={params.id} isAdmin={user?.role === 'admin'} rawBike={isDebug ? rawBike : null} fetchedAt={isDebug ? fetchedAt : null} />;
+    return (
+      <>
+        <BikeUnavailable reason={reason} bikeId={params.id} isAdmin={user?.role === 'admin'} rawBike={isDebug ? rawBike : null} fetchedAt={isDebug ? fetchedAt : null} />
+        <BikeDebugPoller bikeId={params.id} enabled={isDebug} />
+      </>
+    );
   }
 
   const kycStatus = user?.kyc_status ?? null;
@@ -259,6 +265,10 @@ export default async function BikeDetailPage({
           </div>
         </div>
       )}
+
+      {/* Live poller — re-fetches the DB row every 3s so a freeze/unfreeze
+          from /admin in another tab shows here without a page reload. */}
+      <BikeDebugPoller bikeId={bike.id} enabled={isDebug} />
     </div>
   );
 }

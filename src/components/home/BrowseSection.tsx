@@ -175,6 +175,36 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
     } catch { /* SSR or weird env — no-op */ }
   }, []);
 
+  // Live snapshot of EVERY bike row (including hidden / frozen) for the
+  // debug overlay. Polled every 3s while ?debug=1 is on so an admin can
+  // open the home page in one tab, freeze a bike from /admin in another
+  // tab, and watch the row's is_frozen flip in real time. Off otherwise.
+  const [allBikesDebug, setAllBikesDebug] = useState<{
+    fetched_at: string;
+    bikes: Array<{
+      id: string; model_name: string | null;
+      is_active: boolean; listing_status: string; is_frozen: boolean;
+      frozen_from: string | null; frozen_until: string | null;
+      freeze_reason: string | null; updated_at: string | null;
+      visible_to_customers: boolean;
+    }>;
+  } | null>(null);
+  useEffect(() => {
+    if (!debugOn) return;
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const r = await fetch('/api/debug/all-bikes', { cache: 'no-store' });
+        if (!r.ok || cancelled) return;
+        const j = await r.json();
+        setAllBikesDebug(j);
+      } catch { /* swallow — overlay shows stale data, not a blocking failure */ }
+    };
+    pull();
+    const t = setInterval(pull, 3000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [debugOn]);
+
   const [vehicleType, setVehicleType] = useState<VehicleType>('all');
   const [ccFilter, setCcFilter] = useState<(typeof CC_FILTERS)[number]['id']>('all');
   const [sort, setSort] = useState('newest');
@@ -650,6 +680,30 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
                       listing=<span style={{ color: b.listing_status === 'approved' ? '#8f8' : '#f88' }}>{b.listing_status}</span> ·{' '}
                       is_frozen=<span style={{ color: b.is_frozen === true ? '#f88' : '#8f8' }}>{String(b.is_frozen ?? 'undefined')}</span>
                       {b.freeze_reason && <> · reason=&quot;{b.freeze_reason}&quot;</>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Every bike in the DB (incl. frozen / hidden / unapproved).
+                  Auto-refreshes every 3s — open this tab next to the admin
+                  freeze flow and watch is_frozen flip live. */}
+              {allBikesDebug && (
+                <div style={{ marginTop: 8, paddingTop: 6, borderTop: '1px dashed #444', maxHeight: 220, overflowY: 'auto' }}>
+                  <div style={{ color: '#7cf', marginBottom: 2 }}>
+                    ALL bikes in DB ({allBikesDebug.bikes.length}) — auto-refresh 3s, last poll {new Date(allBikesDebug.fetched_at).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '70px 1fr 60px 60px 70px 50px', gap: '0 8px', color: '#888', fontSize: 10, marginBottom: 2 }}>
+                    <span>id</span><span>model</span><span>active</span><span>frozen</span><span>listing</span><span>shown?</span>
+                  </div>
+                  {allBikesDebug.bikes.map(b => (
+                    <div key={b.id} style={{ display: 'grid', gridTemplateColumns: '70px 1fr 60px 60px 70px 50px', gap: '0 8px', color: '#ccc', fontSize: 10, lineHeight: 1.5 }}>
+                      <span style={{ color: '#fff' }}>{b.id.slice(0, 8)}</span>
+                      <span>{b.model_name ?? '—'}</span>
+                      <span style={{ color: b.is_active ? '#8f8' : '#f88' }}>{String(b.is_active)}</span>
+                      <span style={{ color: b.is_frozen ? '#f88' : '#8f8' }}>{String(b.is_frozen)}</span>
+                      <span style={{ color: b.listing_status === 'approved' ? '#8f8' : '#fa8' }}>{b.listing_status?.replace('_approval', '') ?? '—'}</span>
+                      <span style={{ color: b.visible_to_customers ? '#8f8' : '#f88', fontWeight: 700 }}>{b.visible_to_customers ? 'YES' : 'no'}</span>
                     </div>
                   ))}
                 </div>
