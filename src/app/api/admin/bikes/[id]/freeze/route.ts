@@ -21,6 +21,7 @@ import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode } from '@/lib/mock';
+import { istLocalToUtcIso } from '@/lib/datetime';
 
 export const runtime = 'nodejs';
 
@@ -70,15 +71,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         updated_at:    new Date().toISOString(),
       };
     } else {
-      // Freezing. Validate date metadata if provided.
-      if (body.frozen_from && body.frozen_until
-          && new Date(body.frozen_until) <= new Date(body.frozen_from)) {
+      // Freezing. Normalize incoming wall-clock times as IST so a bare
+      // datetime-local string never gets mis-stamped as UTC if the client
+      // forgot to convert (defense in depth — the admin UI already converts).
+      const frozenFromIso  = istLocalToUtcIso(body.frozen_from);
+      const frozenUntilIso = istLocalToUtcIso(body.frozen_until);
+      if (frozenFromIso && frozenUntilIso
+          && new Date(frozenUntilIso) <= new Date(frozenFromIso)) {
         return NextResponse.json({ error: 'End date must be after start date' }, { status: 400 });
       }
       update = {
         is_frozen:     true,
-        frozen_from:   body.frozen_from   ? new Date(body.frozen_from).toISOString()   : null,
-        frozen_until:  body.frozen_until  ? new Date(body.frozen_until).toISOString()  : null,
+        frozen_from:   frozenFromIso,
+        frozen_until:  frozenUntilIso,
         freeze_reason: body.freeze_reason || null,
         updated_at:    new Date().toISOString(),
       };

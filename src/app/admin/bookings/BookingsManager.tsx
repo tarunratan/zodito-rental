@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { OnlineBookingDetailModal } from './OnlineBookingDetailModal';
+import { istLocalToUtcIso, utcToIstLocal } from '@/lib/datetime';
 
 type Booking = {
   id: string;
@@ -340,14 +341,15 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
 
   async function extendBooking() {
     if (!extendModal || !extendNewEnd) return;
-    if (new Date(extendNewEnd) <= new Date(extendModal.currentEnd)) {
+    const newEndIso = istLocalToUtcIso(extendNewEnd);
+    if (!newEndIso || new Date(newEndIso) <= new Date(extendModal.currentEnd)) {
       setExtendError('New end time must be after current end time');
       return;
     }
     setExtendLoading(true);
     setExtendError(null);
     try {
-      const body: any = { booking_id: extendModal.id, new_end_ts: new Date(extendNewEnd).toISOString() };
+      const body: any = { booking_id: extendModal.id, new_end_ts: newEndIso };
       if (extendAmtCollected) body.amount_collected = parseFloat(extendAmtCollected);
       if (extendExtraKm) body.extra_km = parseInt(extendExtraKm, 10);
 
@@ -360,7 +362,7 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
       if (res.ok) {
         setBookings(prev => prev.map(b => {
           if (b.id !== extendModal.id) return b;
-          const upd = { ...b, end_ts: new Date(extendNewEnd).toISOString() };
+          const upd = { ...b, end_ts: newEndIso };
           if (data.updates?.km_limit != null) upd.km_limit = data.updates.km_limit;
           if (data.updates?.advance_paid != null) upd.advance_paid = data.updates.advance_paid;
           if (data.updates?.pending_amount != null) upd.pending_amount = data.updates.pending_amount;
@@ -519,8 +521,8 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
         customer_phone: manualForm.customer_phone.trim(),
         customer_email: manualForm.customer_email.trim() || undefined,
         alternate_phone: manualForm.alternate_phone.trim() || undefined,
-        start_ts: new Date(manualForm.start_ts).toISOString(),
-        end_ts: new Date(manualForm.end_ts).toISOString(),
+        start_ts: istLocalToUtcIso(manualForm.start_ts),
+        end_ts: istLocalToUtcIso(manualForm.end_ts),
         total_amount: totalAmt,
         advance_paid: advanceAmt,
         security_deposit: manualForm.security_deposit ? parseFloat(manualForm.security_deposit) : 0,
@@ -1026,7 +1028,7 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
               <input
                 type="datetime-local"
                 value={extendNewEnd}
-                min={new Date(extendModal.currentEnd).toISOString().slice(0, 16)}
+                min={utcToIstLocal(extendModal.currentEnd)}
                 onChange={e => setExtendNewEnd(e.target.value)}
                 className="input-field w-full"
               />

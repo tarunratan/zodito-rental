@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { istLocalToUtcIso } from '@/lib/datetime';
 
 export const runtime = 'nodejs';
 
@@ -43,8 +44,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (d.is_public !== undefined)        updates.is_public = d.is_public;
   if (d.is_active !== undefined)        updates.is_active = d.is_active;
   if (d.usage_scope !== undefined)      updates.usage_scope = d.usage_scope;
-  if (d.expires_at !== undefined)       updates.expires_at = d.expires_at ? new Date(d.expires_at).toISOString() : null;
-  if (d.active_from !== undefined)      updates.active_from = d.active_from ? new Date(d.active_from).toISOString() : null;
+  if (d.expires_at !== undefined)       updates.expires_at = istLocalToUtcIso(d.expires_at);
+  if (d.active_from !== undefined)      updates.active_from = istLocalToUtcIso(d.active_from);
   if (d.time_window_start !== undefined) updates.time_window_start = d.time_window_start ?? null;
   if (d.time_window_end !== undefined)   updates.time_window_end   = d.time_window_end ?? null;
   if (d.valid_weekdays !== undefined)

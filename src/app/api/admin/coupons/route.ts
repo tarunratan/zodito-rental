@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { istLocalToUtcIso } from '@/lib/datetime';
 
 export const runtime = 'nodejs';
 
@@ -59,8 +60,8 @@ export async function POST(req: NextRequest) {
       max_uses: d.max_uses,
       is_public: d.is_public,
       usage_scope: d.usage_scope,
-      expires_at:        d.expires_at        ? new Date(d.expires_at).toISOString()        : null,
-      active_from:       d.active_from       ? new Date(d.active_from).toISOString()       : null,
+      expires_at:        istLocalToUtcIso(d.expires_at),
+      active_from:       istLocalToUtcIso(d.active_from),
       time_window_start: d.time_window_start ?? null,
       time_window_end:   d.time_window_end   ?? null,
       valid_weekdays:    d.valid_weekdays && d.valid_weekdays.length > 0 ? d.valid_weekdays : null,

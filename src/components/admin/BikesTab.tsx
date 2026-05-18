@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowser } from '@/lib/supabase/client';
+import { istLocalToUtcIso, utcToIstLocal } from '@/lib/datetime';
 
 type Model = { id: string; name: string; display_name: string; category: string; cc: number };
 type Bike = {
@@ -248,8 +249,8 @@ export function BikesTab({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         is_frozen: true,
-        frozen_from:   freezeFrom  ? new Date(freezeFrom).toISOString()  : null,
-        frozen_until:  freezeUntil ? new Date(freezeUntil).toISOString() : null,
+        frozen_from:   istLocalToUtcIso(freezeFrom),
+        frozen_until:  istLocalToUtcIso(freezeUntil),
         freeze_reason: freezeReason || null,
       }),
     });
@@ -630,7 +631,7 @@ export function BikesTab({
               <div>
                 <label className="block text-xs font-medium mb-1">Freeze until <span className="text-danger">*</span></label>
                 <input type="datetime-local" value={freezeUntil} onChange={e => setFreezeUntil(e.target.value)}
-                  min={freezeFrom || new Date().toISOString().slice(0, 16)}
+                  min={freezeFrom || utcToIstLocal(new Date())}
                   className="input-field w-full text-sm" />
               </div>
             </div>

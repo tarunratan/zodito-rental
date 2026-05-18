@@ -4,6 +4,7 @@ import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { findConflictingBooking, PENDING_PAYMENT_TTL_MIN } from '@/lib/booking-overlap';
 import { isFrozenInWindow } from '@/lib/freeze';
+import { istLocalToUtcIso } from '@/lib/datetime';
 
 export const runtime = 'nodejs';
 
@@ -76,16 +77,21 @@ export async function POST(req: NextRequest) {
     notes,
   } = parse.data;
 
-  const startTs = new Date(start_ts);
-  const endTs   = new Date(end_ts);
+  // Normalize as IST so a bare datetime-local string never gets mis-stamped
+  // as UTC (the admin UI converts already; this is defense in depth).
+  const startIso = istLocalToUtcIso(start_ts);
+  const endIso   = istLocalToUtcIso(end_ts);
+  if (!startIso || !endIso) {
+    return NextResponse.json({ error: 'Invalid pickup or drop-off time' }, { status: 400 });
+  }
+  const startTs = new Date(startIso);
+  const endTs   = new Date(endIso);
 
   if (endTs <= startTs) {
     return NextResponse.json({ error: 'Drop-off must be after pickup' }, { status: 400 });
   }
 
-  const supabase   = createSupabaseAdmin();
-  const startIso   = startTs.toISOString();
-  const endIso     = endTs.toISOString();
+  const supabase = createSupabaseAdmin();
 
   // Parallel: candidate-overlap fetch + bike freeze check — independent reads.
   // We pull ONLY statuses that can possibly block (confirmed/ongoing/pending_payment)

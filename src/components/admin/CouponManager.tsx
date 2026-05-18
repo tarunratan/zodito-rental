@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { istLocalToUtcIso } from '@/lib/datetime';
 
 type DiscountType = 'percent' | 'fixed' | 'gst_waiver';
 type UsageScope = 'one_per_user' | 'unlimited_per_user' | 'first_booking_only';
@@ -92,8 +93,8 @@ export function CouponManager({ initialCoupons }: { initialCoupons: Coupon[] }) 
           discount_type: form.discount_type,
           discount_value: form.discount_type === 'gst_waiver' ? 0 : Number(form.discount_value),
           max_uses: form.max_uses ? Number(form.max_uses) : null,
-          expires_at: form.expires_at || null,
-          active_from: form.active_from || null,
+          expires_at: istLocalToUtcIso(form.expires_at),
+          active_from: istLocalToUtcIso(form.active_from),
           is_public: form.is_public,
           usage_scope: form.usage_scope,
           time_window_start: form.time_window_start || null,
