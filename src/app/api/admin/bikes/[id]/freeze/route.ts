@@ -25,21 +25,26 @@ import { istLocalToUtcIso } from '@/lib/datetime';
 
 export const runtime = 'nodejs';
 
+// `.nullish()` (= nullable + optional) so an empty admin form that sends
+// explicit `null` for "no from-date / no until-date / no reason" passes
+// validation. The original `.optional()` only accepted `undefined`, which
+// silently rejected every freeze the admin UI ever submitted with a blank
+// field — that's how indefinite freeze appeared "completely broken".
 const bodySchema = z.union([
   // New canonical shapes.
   z.object({
     is_frozen:     z.literal(true),
-    frozen_from:   z.string().optional(),
-    frozen_until:  z.string().optional(),
-    freeze_reason: z.string().optional(),
+    frozen_from:   z.string().nullish(),
+    frozen_until:  z.string().nullish(),
+    freeze_reason: z.string().nullish(),
   }),
   z.object({ is_frozen: z.literal(false) }),
   // Legacy shapes — preserved for older clients / scripts.
   z.object({ unfreeze: z.literal(true) }),
   z.object({
-    frozen_from:   z.string().optional(),
+    frozen_from:   z.string().nullish(),
     frozen_until:  z.string(), // legacy "freeze" had this as required
-    freeze_reason: z.string().optional(),
+    freeze_reason: z.string().nullish(),
   }),
 ]);
 
@@ -50,7 +55,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     const raw = await req.json();
     const parse = bodySchema.safeParse(raw);
-    if (!parse.success) return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+    if (!parse.success) {
+      // Loud log + structured response. Past silent rejections (the schema
+      // returned 400 with no clue why) made this endpoint look like the DB
+      // was ignoring writes for months — never again.
+      console.error('[api/admin/bikes/:id/freeze] validation failed',
+        { bike_id: params.id, body: raw, issues: parse.error.issues });
+      return NextResponse.json(
+        { error: 'Invalid request', issues: parse.error.issues },
+        { status: 400 },
+      );
+    }
 
     const body = parse.data as any;
 

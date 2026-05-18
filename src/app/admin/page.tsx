@@ -74,7 +74,11 @@ async function fetchAdminData() {
   };
 }
 
-export default async function AdminPage() {
+export default async function AdminPage({
+  searchParams,
+}: {
+  searchParams?: { debug?: string };
+}) {
   const data = await fetchAdminData();
-  return <AdminTabs data={data} />;
+  return <AdminTabs data={data} isDebug={searchParams?.debug === '1'} />;
 }

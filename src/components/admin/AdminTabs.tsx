@@ -9,7 +9,7 @@ import { BookingsTab } from './BookingsTab';
 
 type TabId = 'vendors' | 'bikes' | 'kyc' | 'bookings';
 
-export function AdminTabs({ data }: { data: any }) {
+export function AdminTabs({ data, isDebug }: { data: any; isDebug?: boolean }) {
   const [tab, setTab] = useState<TabId>('vendors');
 
   const TABS: Array<{ id: TabId; label: string; badge?: number }> = [
@@ -57,7 +57,7 @@ export function AdminTabs({ data }: { data: any }) {
 
       {/* Panel content */}
       {tab === 'vendors' && <VendorsTab vendors={data.vendors} />}
-      {tab === 'bikes' && <BikesTab pendingBikes={data.pending_bikes} allBikes={data.all_bikes ?? []} models={data.bike_models ?? []} />}
+      {tab === 'bikes' && <BikesTab pendingBikes={data.pending_bikes} allBikes={data.all_bikes ?? []} models={data.bike_models ?? []} isDebug={isDebug} />}
       {tab === 'kyc' && <KycTab users={data.pending_kyc} />}
       {tab === 'bookings' && <BookingsTab bookings={data.bookings} />}
     </>

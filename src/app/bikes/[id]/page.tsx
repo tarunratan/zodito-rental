@@ -35,7 +35,7 @@ async function fetchBike(id: string, allowPreview: boolean) {
         id, emoji, image_url, image_url_2, image_url_3, color, color_hex, year,
         total_rides, rating_avg, rating_count, owner_type, registration_number,
         extra_km_rate, late_penalty_hour, is_active, listing_status,
-        frozen_from, frozen_until, freeze_reason,
+        is_frozen, frozen_from, frozen_until, freeze_reason, updated_at,
         model:bike_models!inner(
           id, name, display_name, category, cc,
           excess_km_rate, late_hourly_penalty, has_weekend_override, weekend_override_model_id,
@@ -63,13 +63,13 @@ async function fetchBike(id: string, allowPreview: boolean) {
 
   if (bikeRes.error) {
     console.error('[bikes/[id]] fetch error:', bikeRes.error, 'id:', id);
-    return { bike: null, customPackages: [] as CustomPackage[], reason: 'query_error' as FetchReason };
+    return { bike: null, rawBike: null, customPackages: [] as CustomPackage[], reason: 'query_error' as FetchReason };
   }
 
   const bike = bikeRes.data as any;
   if (!bike) {
     console.warn('[bikes/[id]] bike not found in DB:', id);
-    return { bike: null, customPackages: [] as CustomPackage[], reason: 'not_found' as FetchReason };
+    return { bike: null, rawBike: null, customPackages: [] as CustomPackage[], reason: 'not_found' as FetchReason };
   }
 
   // Enforce the public-visibility filters unless an admin is previewing.
@@ -78,11 +78,11 @@ async function fetchBike(id: string, allowPreview: boolean) {
     // from the select) doesn't accidentally mark the bike inactive.
     if (bike.is_active === false) {
       console.warn('[bikes/[id]] bike is deactivated:', id, 'is_active:', bike.is_active);
-      return { bike: null, customPackages: [] as CustomPackage[], reason: 'inactive' as FetchReason };
+      return { bike: null, rawBike: bike, customPackages: [] as CustomPackage[], reason: 'inactive' as FetchReason };
     }
     if (bike.listing_status && bike.listing_status !== 'approved') {
       console.warn('[bikes/[id]] bike listing not approved:', id, 'status:', bike.listing_status);
-      return { bike: null, customPackages: [] as CustomPackage[], reason: 'unapproved' as FetchReason };
+      return { bike: null, rawBike: bike, customPackages: [] as CustomPackage[], reason: 'unapproved' as FetchReason };
     }
     // Currently frozen → block detail-page render too. Customers shouldn't be
     // able to reach the booking flow via a direct URL while a freeze is in
@@ -90,14 +90,14 @@ async function fetchBike(id: string, allowPreview: boolean) {
     // the booking flow blocks the dates inside the window.
     if (isFrozenNow(bike)) {
       console.warn('[bikes/[id]] bike is currently frozen:', id, 'until:', bike.frozen_until);
-      return { bike: null, customPackages: [] as CustomPackage[], reason: 'frozen' as FetchReason };
+      return { bike: null, rawBike: bike, customPackages: [] as CustomPackage[], reason: 'frozen' as FetchReason };
     }
   }
 
   // UNION merge — see commit 4f5202d for the rationale.
   bike.model.packages = mergeBikePackages(bike.model.packages, bikePackagesRes as any[]);
 
-  return { bike, customPackages: customPkgsRes, reason: null as FetchReason | null };
+  return { bike, rawBike: bike, customPackages: customPkgsRes, reason: null as FetchReason | null };
 }
 
 export default async function BikeDetailPage({
@@ -105,20 +105,22 @@ export default async function BikeDetailPage({
   searchParams,
 }: {
   params: { id: string };
-  searchParams: { preview?: string };
+  searchParams: { preview?: string; debug?: string };
 }) {
   const user = await getCurrentAppUser();
   // Admins can append `?preview=1` to view a bike that isn't approved or is
   // deactivated — useful for previewing a listing before publishing without
   // toggling the bike live. Customers get the standard visibility filters.
   const allowPreview = !!(user?.role === 'admin' && searchParams?.preview === '1');
-  const { bike, customPackages, reason } = await fetchBike(params.id, allowPreview);
+  const isDebug = !!(user?.role === 'admin' && searchParams?.debug === '1');
+  const fetchedAt = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+  const { bike, rawBike, customPackages, reason } = await fetchBike(params.id, allowPreview);
 
   // Friendly explanation instead of a bare 404 so the admin / vendor can
   // see WHY the link isn't loading.
   if (!bike) {
     if (reason === 'not_found') notFound();
-    return <BikeUnavailable reason={reason} bikeId={params.id} isAdmin={user?.role === 'admin'} />;
+    return <BikeUnavailable reason={reason} bikeId={params.id} isAdmin={user?.role === 'admin'} rawBike={isDebug ? rawBike : null} fetchedAt={isDebug ? fetchedAt : null} />;
   }
 
   const kycStatus = user?.kyc_status ?? null;
@@ -233,6 +235,30 @@ export default async function BikeDetailPage({
       <Suspense fallback={<div className="h-72 rounded-card bg-border/20 animate-pulse" />}>
         <BookingFlow bike={bike} kycStatus={kycStatus} isLoggedIn={!!user} customPackages={customPackages} />
       </Suspense>
+
+      {isDebug && (
+        <div style={{ position:'fixed', bottom:12, right:12, maxWidth:480, background:'rgba(0,0,0,0.92)', color:'#fff', padding:'12px 14px', borderRadius:10, fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace', fontSize:11, lineHeight:1.5, zIndex:9999, boxShadow:'0 8px 24px rgba(0,0,0,0.4)', border:'1px solid rgba(255,255,255,0.15)' }}>
+          <div style={{ fontWeight:700, marginBottom:4, color:'#7cf' }}>[debug] Bike detail — fetched at {fetchedAt} IST</div>
+          <div>id: <span style={{ color:'#fff' }}>{bike.id}</span></div>
+          <div style={{ marginTop:4 }}>
+            is_active=<span style={{ color: bike.is_active ? '#8f8' : '#f88' }}>{String(bike.is_active)}</span>
+            {' · '}listing_status=<span style={{ color: bike.listing_status === 'approved' ? '#8f8' : '#f88' }}>{bike.listing_status}</span>
+            {' · '}is_frozen=<span style={{ color: bike.is_frozen ? '#f88' : '#8f8' }}>{String(bike.is_frozen ?? 'undefined')}</span>
+          </div>
+          <div style={{ marginTop:2 }}>
+            frozen_from: <span style={{ color:'#ccc' }}>{bike.frozen_from ?? '—'}</span>
+          </div>
+          <div>
+            frozen_until: <span style={{ color:'#ccc' }}>{bike.frozen_until ?? '—'}</span>
+          </div>
+          <div>
+            freeze_reason: <span style={{ color:'#ccc' }}>{bike.freeze_reason ?? '—'}</span>
+          </div>
+          <div style={{ marginTop:4, color:'#888' }}>
+            updated_at: {bike.updated_at ?? '—'}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -246,7 +272,7 @@ function Spec({ label, value }: { label: string; value: string }) {
   );
 }
 
-function BikeUnavailable({ reason, bikeId, isAdmin }: { reason: FetchReason | null; bikeId: string; isAdmin: boolean }) {
+function BikeUnavailable({ reason, bikeId, isAdmin, rawBike, fetchedAt }: { reason: FetchReason | null; bikeId: string; isAdmin: boolean; rawBike?: any; fetchedAt?: string | null }) {
   const copy = (() => {
     switch (reason) {
       case 'inactive':    return { title: 'This bike is currently offline', body: 'The owner has temporarily deactivated this listing. Browse other available bikes instead.' };
@@ -270,12 +296,30 @@ function BikeUnavailable({ reason, bikeId, isAdmin }: { reason: FetchReason | nu
             Bike id <span className="font-mono">{bikeId}</span> &middot;
             reason: <span className="font-mono">{reason ?? 'unknown'}</span>
           </p>
+          {rawBike && (
+            <div style={{ fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace', fontSize:11, background:'rgba(0,0,0,0.85)', color:'#fff', borderRadius:8, padding:'8px 10px', marginBottom:8 }}>
+              <div style={{ color:'#7cf', fontWeight:700, marginBottom:4 }}>[debug] raw DB state — fetched at {fetchedAt} IST</div>
+              <div>is_active=<span style={{ color: rawBike.is_active ? '#8f8' : '#f88' }}>{String(rawBike.is_active)}</span>{' · '}listing_status=<span style={{ color: rawBike.listing_status === 'approved' ? '#8f8' : '#f88' }}>{rawBike.listing_status}</span>{' · '}is_frozen=<span style={{ color: rawBike.is_frozen ? '#f88' : '#8f8' }}>{String(rawBike.is_frozen ?? 'undefined')}</span></div>
+              <div style={{ color:'#ccc' }}>frozen_from: {rawBike.frozen_from ?? '—'}</div>
+              <div style={{ color:'#ccc' }}>frozen_until: {rawBike.frozen_until ?? '—'}</div>
+              <div style={{ color:'#ccc' }}>freeze_reason: {rawBike.freeze_reason ?? '—'}</div>
+              <div style={{ color:'#888', marginTop:2 }}>updated_at: {rawBike.updated_at ?? '—'}</div>
+            </div>
+          )}
           <Link
             href={`/bikes/${bikeId}?preview=1`}
             className="inline-block text-xs font-semibold text-accent hover:underline"
           >
             Open as admin preview →
           </Link>
+          {rawBike && (
+            <Link
+              href={`/bikes/${bikeId}?preview=1&debug=1`}
+              className="inline-block text-xs font-semibold text-accent hover:underline ml-4"
+            >
+              Open as admin preview + debug →
+            </Link>
+          )}
         </div>
       )}
 

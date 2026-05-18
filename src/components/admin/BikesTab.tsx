@@ -26,6 +26,7 @@ type Bike = {
   image_url_3: string | null;
   rejection_reason: string | null;
   created_at: string;
+  updated_at: string | null;
   model: { id: string; display_name: string; name?: string; category: string; cc: number } | null;
   vendor: { id?: string; business_name: string; pickup_area?: string } | null;
 };
@@ -72,10 +73,12 @@ export function BikesTab({
   pendingBikes,
   allBikes,
   models: initialModels,
+  isDebug,
 }: {
   pendingBikes: Bike[];
   allBikes: Bike[];
   models: Model[];
+  isDebug?: boolean;
 }) {
   const router = useRouter();
 
@@ -83,6 +86,9 @@ export function BikesTab({
   const [models, setModels]       = useState<Model[]>(initialModels);
   // local bikes list so is_active toggle is reflected instantly without reload
   const [bikes, setBikes]         = useState<Bike[]>(allBikes);
+
+  const [pageLoadedAt]            = useState(() => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }));
+  const [lastAction, setLastAction] = useState<{ action: string; bikeId: string; result: any; at: string } | null>(null);
 
   const [subTab, setSubTab]       = useState<'all' | 'pending'>('all');
   const [showForm, setShowForm]   = useState(false);
@@ -105,6 +111,7 @@ export function BikesTab({
   const [freezeUntil, setFreezeUntil]         = useState('');
   const [freezeReason, setFreezeReason]       = useState('');
   const [freezeLoading, setFreezeLoading]     = useState(false);
+  const [freezeError, setFreezeError]         = useState<string | null>(null);
 
   const selectedModel = models.find(m => m.id === form.model_id) ?? null;
 
@@ -241,8 +248,12 @@ export function BikesTab({
 
   async function freezeBike() {
     if (!freezeTarget) return;
-    if (freezeFrom && freezeUntil && new Date(freezeUntil) <= new Date(freezeFrom)) return;
+    if (freezeFrom && freezeUntil && new Date(freezeUntil) <= new Date(freezeFrom)) {
+      setFreezeError('End date must be after start date');
+      return;
+    }
     setFreezeLoading(true);
+    setFreezeError(null);
     // v043: visibility is decided by the boolean. Dates are optional metadata.
     const res = await fetch(`/api/admin/bikes/${freezeTarget.id}/freeze`, {
       method: 'POST',
@@ -255,14 +266,22 @@ export function BikesTab({
       }),
     });
     setFreezeLoading(false);
-    if (res.ok) {
-      const { bike } = await res.json();
-      if (bike) setBikes(prev => prev.map(b => b.id === bike.id ? { ...b, ...bike } : b));
+    if (!res.ok) {
+      // Keep modal open and surface what went wrong. Silent failure here is
+      // exactly what hid the validation bug for months — never collapse
+      // failed writes into a successful-looking modal close.
+      const body = await res.json().catch(() => ({} as any));
+      setFreezeError(body?.error ? `${body.error}: ${JSON.stringify(body.issues ?? body)}` : `Freeze failed (HTTP ${res.status})`);
+      return;
     }
+    const { bike } = await res.json();
+    if (bike) setBikes(prev => prev.map(b => b.id === bike.id ? { ...b, ...bike } : b));
+    setLastAction({ action: 'freeze', bikeId: freezeTarget.id, result: bike, at: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) });
     setFreezeTarget(null);
     setFreezeFrom('');
     setFreezeUntil('');
     setFreezeReason('');
+    setFreezeError(null);
     router.refresh();
   }
 
@@ -277,6 +296,7 @@ export function BikesTab({
     if (res.ok) {
       const { bike } = await res.json();
       if (bike) setBikes(prev => prev.map(b => b.id === bike.id ? { ...b, ...bike } : b));
+      setLastAction({ action: 'unfreeze', bikeId: id, result: bike ?? null, at: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) });
     }
     router.refresh();
   }
@@ -629,10 +649,11 @@ export function BikesTab({
                 <p className="text-[11px] text-muted mt-0.5">Leave blank = now</p>
               </div>
               <div>
-                <label className="block text-xs font-medium mb-1">Freeze until <span className="text-danger">*</span></label>
+                <label className="block text-xs font-medium mb-1">Freeze until</label>
                 <input type="datetime-local" value={freezeUntil} onChange={e => setFreezeUntil(e.target.value)}
                   min={freezeFrom || utcToIstLocal(new Date())}
                   className="input-field w-full text-sm" />
+                <p className="text-[11px] text-muted mt-0.5">Leave blank = indefinite</p>
               </div>
             </div>
             <div>
@@ -640,9 +661,14 @@ export function BikesTab({
               <input value={freezeReason} onChange={e => setFreezeReason(e.target.value)}
                 className="input-field w-full" placeholder="e.g. Service, damage repair" />
             </div>
+            {freezeError && (
+              <div className="text-xs text-danger bg-danger/10 border border-danger/30 rounded-md px-3 py-2">
+                {freezeError}
+              </div>
+            )}
             <div className="flex justify-end gap-3">
-              <button onClick={() => setFreezeTarget(null)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-border/50">Cancel</button>
-              <button onClick={freezeBike} disabled={!freezeUntil || freezeLoading}
+              <button onClick={() => { setFreezeTarget(null); setFreezeError(null); }} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-border/50">Cancel</button>
+              <button onClick={freezeBike} disabled={freezeLoading}
                 className="px-4 py-2 text-sm bg-warning text-white rounded-lg hover:bg-warning/90 disabled:opacity-50">
                 {freezeLoading ? 'Saving…' : 'Freeze bike'}
               </button>
@@ -676,6 +702,44 @@ export function BikesTab({
               <button onClick={() => deleteBike(deleteConfirm)} className="px-4 py-2 text-sm bg-danger text-white rounded-lg hover:bg-danger/90">Delete</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Debug overlay — only when ?debug=1 ───────────── */}
+      {isDebug && (
+        <div style={{ position:'fixed', bottom:12, left:12, right:12, maxWidth:860, margin:'0 auto', background:'rgba(0,0,0,0.92)', color:'#fff', padding:'12px 14px', borderRadius:10, fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace', fontSize:11, lineHeight:1.5, zIndex:9999, boxShadow:'0 8px 24px rgba(0,0,0,0.4)', border:'1px solid rgba(255,255,255,0.15)', maxHeight:260, overflowY:'auto' }}>
+          <div style={{ fontWeight:700, color:'#7cf', marginBottom:4 }}>
+            [debug] Admin BikesTab — loaded at {pageLoadedAt} IST · {bikes.length} bikes
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'80px 1fr 70px 70px 80px 1fr 1fr', gap:'0 8px', color:'#888', marginBottom:2 }}>
+            <span>id</span><span>model</span><span>is_frozen</span><span>is_active</span><span>listing</span><span>frozen_until</span><span>updated_at</span>
+          </div>
+          {bikes.map(b => (
+            <div key={b.id} style={{ display:'grid', gridTemplateColumns:'80px 1fr 70px 70px 80px 1fr 1fr', gap:'0 8px', color:'#ccc', fontSize:10 }}>
+              <span style={{ color:'#fff' }}>{b.id.slice(0,8)}</span>
+              <span>{b.model?.display_name ?? '—'}</span>
+              <span style={{ color: b.is_frozen ? '#f88' : '#8f8' }}>{String(b.is_frozen)}</span>
+              <span style={{ color: b.is_active ? '#8f8' : '#f88' }}>{String(b.is_active)}</span>
+              <span style={{ color: b.listing_status === 'approved' ? '#8f8' : '#fa8' }}>{b.listing_status.replace('_approval','')}</span>
+              <span>{b.frozen_until ? new Date(b.frozen_until).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',hour12:false}) : '—'}</span>
+              <span style={{ color:'#888' }}>{b.updated_at ? new Date(b.updated_at).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',hour12:false}) : '—'}</span>
+            </div>
+          ))}
+          {lastAction && (
+            <div style={{ marginTop:8, paddingTop:6, borderTop:'1px dashed #444' }}>
+              <span style={{ color:'#7cf', fontWeight:700 }}>last action: </span>
+              <span style={{ color: lastAction.action === 'freeze' ? '#f88' : '#8f8' }}>{lastAction.action}</span>
+              {' on '}<span style={{ color:'#fff' }}>{lastAction.bikeId.slice(0,8)}</span>
+              {' at '}<span style={{ color:'#aaa' }}>{lastAction.at}</span>
+              {lastAction.result && (
+                <div style={{ color:'#ccc', marginTop:2 }}>
+                  DB confirmed: is_frozen=<span style={{ color: lastAction.result.is_frozen ? '#f88' : '#8f8' }}>{String(lastAction.result.is_frozen)}</span>
+                  {' · '}frozen_until={lastAction.result.frozen_until ?? '—'}
+                  {' · '}updated_at={lastAction.result.updated_at ?? '—'}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
