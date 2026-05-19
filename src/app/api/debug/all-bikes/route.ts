@@ -11,13 +11,17 @@
  */
 
 import { NextResponse } from 'next/server';
-import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { createSupabaseAdminFresh } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 
 export async function GET() {
-  const supabase = createSupabaseAdmin();
+  // Fresh client: Next.js 14 caches GET fetches by default, so a stock admin
+  // client would pin the first poll's response forever. See helper docstring.
+  const supabase = createSupabaseAdminFresh();
   const { data, error } = await supabase
     .from('bikes')
     .select(`

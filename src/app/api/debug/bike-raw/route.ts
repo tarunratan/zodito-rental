@@ -16,10 +16,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { createSupabaseAdminFresh } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
   const id = new URL(req.url).searchParams.get('id');
@@ -27,7 +29,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'id is required' }, { status: 400 });
   }
 
-  const supabase = createSupabaseAdmin();
+  // Fresh client — see helper docstring. Same Next.js fetch-cache hazard
+  // applies here even though we filter by id (cache key is the URL).
+  const supabase = createSupabaseAdminFresh();
   const { data, error } = await supabase
     .from('bikes')
     .select(`

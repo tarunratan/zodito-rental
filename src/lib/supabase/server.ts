@@ -38,3 +38,30 @@ export function createSupabaseAdmin() {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 }
+
+/**
+ * Like createSupabaseAdmin, but every inner GET to PostgREST passes through
+ * `fetch(..., { cache: 'no-store' })`. Use for diagnostic/realtime endpoints
+ * where Next.js 14's default GET-fetch cache would silently serve a stale
+ * row long after the underlying DB changed.
+ *
+ * Concrete failure mode this prevents: a polling debug overlay opened before
+ * the admin edits a bike will keep returning the pre-edit row forever,
+ * because the Next fetch cache was populated on the first poll and the
+ * route's `dynamic = 'force-dynamic'` does NOT propagate to inner fetches.
+ */
+export function createSupabaseAdminFresh() {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE) {
+    return new Proxy({} as any, {
+      get() {
+        throw new Error('SUPABASE_SERVICE_ROLE_KEY not set — check Vercel env vars');
+      },
+    });
+  }
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: {
+      fetch: (url, init) => fetch(url as any, { ...(init ?? {}), cache: 'no-store' as RequestCache }),
+    },
+  });
+}
