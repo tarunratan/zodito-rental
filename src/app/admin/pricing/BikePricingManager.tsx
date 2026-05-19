@@ -540,7 +540,7 @@ function PricingEditPanel({
 // ─────────────────────────────────────────────────────────────────────────────
 // Main manager
 // ─────────────────────────────────────────────────────────────────────────────
-export function BikePricingManager({ initialBikes }: { initialBikes: Bike[] }) {
+export function BikePricingManager({ initialBikes, isDebug }: { initialBikes: Bike[]; isDebug?: boolean }) {
   const [bikes, setBikes]             = useState<Bike[]>(initialBikes);
   const [editingBike, setEditingBike] = useState<Bike | null>(null);
   const [packages, setPackages]       = useState<PkgRow[]>([]);
@@ -816,6 +816,162 @@ export function BikePricingManager({ initialBikes }: { initialBikes: Bike[] }) {
           </div>
         </>
       )}
+
+      {isDebug && <PricingDebugOverlay bikes={bikes} />}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Debug overlay — only mounted when ?debug=1.
+//
+// For every bike in the fleet, fetches /api/debug/bike-pricing and shows:
+//   • all standard package sources (model default vs bike override)
+//   • all custom packages
+//   • the merged result
+//   • the "Starts at ₹X" the home card would render now (and which row won)
+//
+// Purpose: when admin says "I configured ₹400 for 12hr but the home shows
+// ₹450", this overlay traces the discrepancy without leaving the page.
+// Read-only — never writes back to the DB.
+// ─────────────────────────────────────────────────────────────────────────────
+function PricingDebugOverlay({ bikes }: { bikes: Bike[] }) {
+  type PricingSnap = {
+    bike: { id: string; model_name: string | null };
+    model_defaults: Array<{ tier: string; price: number; km_limit: number }>;
+    bike_overrides: Array<{ tier: string; price: number; km_limit: number }>;
+    custom_packages: Array<{ id: string; label: string; price: number; km_limit: number; is_active: boolean; min_duration_hours: number; duration_hours: number }>;
+    merged_packages: Array<{ tier: string; price: number; km_limit: number; source: string; overrides_model_default: boolean }>;
+    display: {
+      from_price: number | null;
+      from_source: { kind: string; tier: string | null; source: string; price: number; label: string | null } | null;
+      pkg_24hr: { tier: string; price: number; km_limit: number } | null;
+    };
+  };
+  const [data, setData] = useState<Record<string, PricingSnap | { error: string }>>({});
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  async function loadAll() {
+    setLoading(true);
+    const out: Record<string, PricingSnap | { error: string }> = {};
+    await Promise.all(bikes.map(async (b: any) => {
+      try {
+        const r = await fetch(`/api/debug/bike-pricing?id=${encodeURIComponent(b.id)}`, { cache: 'no-store' });
+        if (!r.ok) { out[b.id] = { error: `HTTP ${r.status}` }; return; }
+        out[b.id] = await r.json();
+      } catch (e: any) {
+        out[b.id] = { error: e?.message ?? 'fetch failed' };
+      }
+    }));
+    setData(out);
+    setLoading(false);
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', bottom: 12, right: 12, width: 520, maxHeight: '70vh',
+      background: 'rgba(0,0,0,0.94)', color: '#fff', padding: '10px 12px',
+      borderRadius: 10, fontFamily: 'ui-monospace,SFMono-Regular,Menlo,monospace',
+      fontSize: 11, lineHeight: 1.45, zIndex: 9999,
+      boxShadow: '0 8px 24px rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.15)',
+      display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <div style={{ fontWeight: 700, color: '#7cf' }}>
+          [debug] Pricing per bike ({bikes.length})
+        </div>
+        <button
+          onClick={loadAll}
+          disabled={loading}
+          style={{ background: '#1a4', color: '#fff', border: 0, padding: '3px 10px', borderRadius: 4, fontSize: 11, cursor: loading ? 'wait' : 'pointer', opacity: loading ? 0.6 : 1 }}
+        >
+          {loading ? 'Loading…' : (Object.keys(data).length ? 'Refresh' : 'Load all')}
+        </button>
+      </div>
+      <div style={{ color: '#888', fontSize: 10, marginBottom: 4 }}>
+        Click a row to expand. Probe one: <code>/api/debug/bike-pricing?id=&lt;uuid&gt;</code>
+      </div>
+      <div style={{ overflowY: 'auto', flex: 1, minHeight: 60 }}>
+        {bikes.map((b: any) => {
+          const snap = data[b.id];
+          const isExpanded = !!expanded[b.id];
+          return (
+            <div key={b.id} style={{ borderTop: '1px dashed #333', padding: '4px 0' }}>
+              <div
+                onClick={() => setExpanded(s => ({ ...s, [b.id]: !s[b.id] }))}
+                style={{ cursor: 'pointer', color: '#ccc' }}
+              >
+                <span style={{ color: '#fff' }}>{b.id.slice(0, 8)}</span>{' '}
+                {b.model?.display_name ?? '—'}
+                {snap && 'error' in snap && (
+                  <span style={{ color: '#f88' }}> · err: {snap.error}</span>
+                )}
+                {snap && !('error' in snap) && (
+                  <>
+                    {' · '}<span style={{ color: '#8fc', fontWeight: 700 }}>
+                      from ₹{snap.display.from_price ?? '—'}
+                    </span>
+                    {snap.display.from_source && (
+                      <span style={{ color: '#888' }}>
+                        {' '}({snap.display.from_source.kind === 'custom'
+                          ? `custom "${snap.display.from_source.label}"`
+                          : `${snap.display.from_source.source}/${snap.display.from_source.tier}`})
+                      </span>
+                    )}
+                    {snap.display.pkg_24hr && <> · 24hr=₹{snap.display.pkg_24hr.price}</>}
+                  </>
+                )}
+                {!snap && <span style={{ color: '#666' }}> · (click Load all)</span>}
+                <span style={{ float: 'right', color: '#666' }}>{isExpanded ? '▾' : '▸'}</span>
+              </div>
+              {isExpanded && snap && !('error' in snap) && (
+                <div style={{ paddingLeft: 12, marginTop: 4, color: '#bbb', fontSize: 10 }}>
+                  <div style={{ color: '#9cf', marginTop: 2 }}>model defaults ({snap.model_defaults.length}):</div>
+                  {snap.model_defaults.length === 0
+                    ? <div style={{ color: '#666' }}>  (none — model has no default packages)</div>
+                    : snap.model_defaults.map(p => (
+                        <div key={`md-${p.tier}`}>  {p.tier}=₹{p.price}/{p.km_limit}km</div>
+                      ))}
+                  <div style={{ color: '#9cf', marginTop: 4 }}>bike overrides ({snap.bike_overrides.length}):</div>
+                  {snap.bike_overrides.length === 0
+                    ? <div style={{ color: '#666' }}>  (none — bike uses model defaults)</div>
+                    : snap.bike_overrides.map(p => (
+                        <div key={`bo-${p.tier}`}>  {p.tier}=₹{p.price}/{p.km_limit}km</div>
+                      ))}
+                  <div style={{ color: '#9cf', marginTop: 4 }}>custom packages ({snap.custom_packages.length}):</div>
+                  {snap.custom_packages.length === 0
+                    ? <div style={{ color: '#666' }}>  (none)</div>
+                    : snap.custom_packages.map(p => (
+                        <div key={p.id}>
+                          {'  '}{p.is_active ? '✦' : '✗'} &quot;{p.label}&quot; ({p.min_duration_hours}–{p.duration_hours}h) ₹{p.price}/{p.km_limit}km
+                          {!p.is_active && <span style={{ color: '#f88' }}> · inactive (not shown to customers)</span>}
+                        </div>
+                      ))}
+                  <div style={{ color: '#9cf', marginTop: 4 }}>merged (what bike_states returns):</div>
+                  {snap.merged_packages.length === 0
+                    ? <div style={{ color: '#666' }}>  (empty merge — bike has zero packages)</div>
+                    : snap.merged_packages.map(p => (
+                        <div key={`mg-${p.tier}`}>
+                          {'  '}{p.tier}=₹{p.price} · <span style={{ color: p.source === 'bike_override' ? '#fa8' : '#8af' }}>{p.source}</span>
+                          {p.overrides_model_default && <span style={{ color: '#666' }}> (shadows model default)</span>}
+                        </div>
+                      ))}
+                  <div style={{ color: '#9cf', marginTop: 4 }}>display calc:</div>
+                  <div>
+                    {'  '}home would show: <span style={{ color: '#8fc', fontWeight: 700 }}>from ₹{snap.display.from_price ?? '—'}</span>
+                  </div>
+                  {snap.display.from_source && (
+                    <div style={{ color: '#aaa' }}>
+                      {'  '}reason: cheapest active price across merged + custom
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

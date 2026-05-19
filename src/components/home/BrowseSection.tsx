@@ -685,6 +685,50 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
                 </div>
               )}
 
+              {/* Pricing per visible bike. Uses the same `bike.model.packages`
+                  the home card reads, so what's printed here is exactly what
+                  the customer's card is using. If the listed prices look
+                  wrong, the bug is upstream in /api/bikes/available's merge —
+                  not in the card. Click /api/debug/bike-pricing?id=<uuid>
+                  for the per-source breakdown (model default vs override). */}
+              {(availableBikes ?? []).length > 0 && (
+                <div style={{ marginTop: 8, paddingTop: 6, borderTop: '1px dashed #444' }}>
+                  <div style={{ color: '#7cf', marginBottom: 2 }}>pricing per visible bike (what the card reads)</div>
+                  {(availableBikes ?? []).map((b: any) => {
+                    const pkgs: any[] = b.model?.packages ?? [];
+                    const customs: any[] = b.custom_packages ?? [];
+                    const activeCustoms = customs.filter((c: any) => c.is_active !== false);
+                    const allRows = [
+                      ...pkgs.map(p => ({ kind: 'std', label: p.tier, price: Number(p.price), km: p.km_limit })),
+                      ...activeCustoms.map(c => ({ kind: 'cst', label: c.label, price: Number(c.price), km: c.km_limit })),
+                    ].filter(r => r.price > 0).sort((a, b) => a.price - b.price);
+                    const min = allRows[0] ?? null;
+                    const pkg24 = pkgs.find(p => p.tier === '24hr');
+                    return (
+                      <div key={b.id} style={{ color: '#ccc', fontSize: 10, lineHeight: 1.5, marginBottom: 4 }}>
+                        <div>
+                          <span style={{ color: '#fff' }}>{b.id?.slice(0, 8)}</span>{' '}
+                          {b.model?.display_name ?? '(no model)'} ·{' '}
+                          <span style={{ color: '#8fc' }}>from ₹{min?.price ?? '—'}</span>{' '}
+                          <span style={{ color: '#888' }}>({min?.kind === 'cst' ? `custom "${min.label}"` : `tier ${min?.label}`})</span>
+                          {pkg24 && <> · 24hr=₹{Number(pkg24.price)}</>}
+                          {' · '}std={pkgs.length} · custom={activeCustoms.length}/{customs.length} active
+                        </div>
+                        {allRows.length > 0 && (
+                          <div style={{ paddingLeft: 12, color: '#aaa', fontSize: 9, lineHeight: 1.5 }}>
+                            {allRows.map((r, i) => (
+                              <span key={i} style={{ marginRight: 8, color: i === 0 ? '#8fc' : '#aaa' }}>
+                                {r.kind === 'cst' ? '✦' : '·'} {r.label}=₹{r.price}{r.km ? `/${r.km}km` : ''}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               {/* Every bike in the DB (incl. frozen / hidden / unapproved).
                   Auto-refreshes every 3s — open this tab next to the admin
                   freeze flow and watch is_frozen flip live. */}

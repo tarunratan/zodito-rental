@@ -6,7 +6,11 @@ import { isMockMode } from '@/lib/mock';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AdminPricingPage() {
+export default async function AdminPricingPage({
+  searchParams,
+}: {
+  searchParams?: { debug?: string };
+}) {
   await requireAdmin();
 
   if (isMockMode()) {
@@ -38,7 +42,7 @@ export default async function AdminPricingPage() {
   return (
     <div className="max-w-7xl mx-auto px-6 py-8">
       <AdminNav />
-      <BikePricingManager initialBikes={bikes ?? []} />
+      <BikePricingManager initialBikes={bikes ?? []} isDebug={searchParams?.debug === '1'} />
     </div>
   );
 }
