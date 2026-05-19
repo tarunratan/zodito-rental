@@ -12,6 +12,8 @@ import { getBikeState } from '@/lib/bike-state';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 
 const NO_STORE: HeadersInit = { 'Cache-Control': 'no-store, no-cache, must-revalidate' };
 

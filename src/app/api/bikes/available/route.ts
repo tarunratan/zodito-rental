@@ -18,11 +18,18 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { createSupabaseAdminFresh } from '@/lib/supabase/server';
 import { getBikeStates } from '@/lib/bike-state';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// Belt-and-braces: Next.js 14 caches GET fetches by default, which
+// silently pinned step-3's display query to a pre-edit snapshot. The
+// fresh admin client below opts each inner fetch out, but explicitly
+// disabling fetchCache on the route makes the intent loud at the top
+// of the file too.
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -82,7 +89,13 @@ export async function GET(req: NextRequest) {
   // hidden bike cannot make it to the response.
   let displayRows: any[] = [];
   if (availableIds.length > 0) {
-    const supabase = createSupabaseAdmin();
+    // Fresh client: this query is the immovable safety net described above.
+    // The default admin client routes through Next.js's cached fetch, which
+    // means a previous response with stale `is_active=true` would pin
+    // forever and the safety filter would compare two equally stale values
+    // and pass the bike through. The fresh client guarantees the row we
+    // read here is the row that's in Postgres right now.
+    const supabase = createSupabaseAdminFresh();
     const { data, error } = await supabase
       .from('bikes')
       .select(`

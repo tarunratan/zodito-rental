@@ -18,7 +18,7 @@
  * is that pricing JS now receives canonical inputs.
  */
 
-import { createSupabaseAdmin } from './supabase/server';
+import { createSupabaseAdminFresh } from './supabase/server';
 import type { CustomPackage } from './pricing';
 import type { PackageTier } from './supabase/types';
 
@@ -55,7 +55,11 @@ export async function getBikeState(
   from: Date,
   to:   Date,
 ): Promise<BikeStateRow | null> {
-  const supabase = createSupabaseAdmin();
+  // Fresh client — Next.js 14 caches GET fetches by default and supabase-js
+  // routes through the same fetch. Even though .rpc() is POST and shouldn't
+  // be cached, the helper has had silent staleness issues in production, so
+  // defense in depth: never serve stale state to a real customer.
+  const supabase = createSupabaseAdminFresh();
   const { data, error } = await supabase.rpc('bike_states', {
     p_from:    from.toISOString(),
     p_to:      to.toISOString(),
@@ -77,7 +81,11 @@ export async function getBikeStates(
   from: Date,
   to:   Date,
 ): Promise<BikeStateRow[]> {
-  const supabase = createSupabaseAdmin();
+  // Fresh client — Next.js 14 caches GET fetches by default and supabase-js
+  // routes through the same fetch. Even though .rpc() is POST and shouldn't
+  // be cached, the helper has had silent staleness issues in production, so
+  // defense in depth: never serve stale state to a real customer.
+  const supabase = createSupabaseAdminFresh();
   const { data, error } = await supabase.rpc('bike_states', {
     p_from:    from.toISOString(),
     p_to:      to.toISOString(),
