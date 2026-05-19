@@ -74,7 +74,7 @@ async function fetchAnalytics() {
     const end = new Date(d.getFullYear(), d.getMonth() + 1, 1).toISOString();
     const mb = revenueBookings.filter(b => b.created_at >= start && b.created_at < end);
     monthlyRevenue.push({
-      month: d.toLocaleString('en-IN', { month: 'short', year: '2-digit' }),
+      month: d.toLocaleString('en-IN', { month: 'short', year: '2-digit', timeZone: 'Asia/Kolkata' }),
       revenue: mb.reduce((s, b) => s + Number(b.total_amount), 0),
       bookings: mb.length,
     });

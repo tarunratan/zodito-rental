@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { formatIstDateTime } from '@/lib/datetime';
 
 type VendorRow = {
   id: string;
@@ -30,7 +31,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 function fmt(ts: string | null) {
   if (!ts) return '—';
-  return new Date(ts).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+  return formatIstDateTime(ts);
 }
 
 export function VendorReviewManager({ initialVendors }: { initialVendors: VendorRow[] }) {

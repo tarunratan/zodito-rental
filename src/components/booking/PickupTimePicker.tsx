@@ -65,7 +65,7 @@ export function PickupTimePicker({
             ‹
           </button>
           <div className="font-display font-semibold">
-            {monthCursor.toLocaleString('en-IN', { month: 'long', year: 'numeric' })}
+            {monthCursor.toLocaleString('en-IN', { month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' })}
           </div>
           <button
             onClick={() => setMonthCursor(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}

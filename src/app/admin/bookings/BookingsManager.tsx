@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { OnlineBookingDetailModal } from './OnlineBookingDetailModal';
-import { istLocalToUtcIso, utcToIstLocal } from '@/lib/datetime';
+import { istLocalToUtcIso, utcToIstLocal, formatIstDateTime } from '@/lib/datetime';
 
 type Booking = {
   id: string;
@@ -79,7 +79,7 @@ const PAYMENT_COLORS: Record<string, string> = {
 
 function fmt(ts: string | null) {
   if (!ts) return '—';
-  return new Date(ts).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
+  return formatIstDateTime(ts);
 }
 
 function rupee(n: number) {
@@ -1356,9 +1356,9 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                       <span className="text-muted">Phone</span>
                       <span className="font-medium">{manualForm.customer_phone || '—'}</span>
                       <span className="text-muted">Pickup</span>
-                      <span className="font-medium">{manualForm.start_ts ? new Date(manualForm.start_ts).toLocaleString('en-IN',{dateStyle:'short',timeStyle:'short'}) : '—'}</span>
+                      <span className="font-medium">{manualForm.start_ts ? formatIstDateTime(istLocalToUtcIso(manualForm.start_ts)) : '—'}</span>
                       <span className="text-muted">Drop-off</span>
-                      <span className="font-medium">{manualForm.end_ts ? new Date(manualForm.end_ts).toLocaleString('en-IN',{dateStyle:'short',timeStyle:'short'}) : '—'}</span>
+                      <span className="font-medium">{manualForm.end_ts ? formatIstDateTime(istLocalToUtcIso(manualForm.end_ts)) : '—'}</span>
                       <span className="text-muted">Total</span>
                       <span className="font-medium">₹{parseFloat(manualForm.total_amount||'0').toLocaleString('en-IN')}</span>
                       <span className="text-muted">KYC docs</span>

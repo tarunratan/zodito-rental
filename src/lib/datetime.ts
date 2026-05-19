@@ -75,3 +75,61 @@ export function utcToIstLocal(input: string | Date | null | undefined): string {
   return `${ist.getUTCFullYear()}-${pad(ist.getUTCMonth() + 1)}-${pad(ist.getUTCDate())}`
        + `T${pad(ist.getUTCHours())}:${pad(ist.getUTCMinutes())}`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IST display helpers. These force `timeZone: 'Asia/Kolkata'` on Intl so the
+// rendered string is identical on Vercel (UTC), an admin's laptop (IST), or a
+// CI runner (whatever). Use these everywhere we render a date to a user —
+// emails, admin UI, customer flows, debug overlays — instead of bare
+// `.toLocaleString()` which silently inherits the runtime timezone.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const IST_TZ = 'Asia/Kolkata';
+
+function toDate(input: string | Date | number | null | undefined): Date | null {
+  if (input === null || input === undefined || input === '') return null;
+  const d = input instanceof Date ? input : new Date(input);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** "19 May 2026, 2:30 PM IST" — full date + time, the canonical display form. */
+export function formatIstDateTime(input: string | Date | number | null | undefined): string {
+  const d = toDate(input);
+  if (!d) return '';
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: IST_TZ,
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  }).format(d) + ' IST';
+}
+
+/** "19 May 2026" — date only. */
+export function formatIstDate(input: string | Date | number | null | undefined): string {
+  const d = toDate(input);
+  if (!d) return '';
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: IST_TZ,
+    day: '2-digit', month: 'short', year: 'numeric',
+  }).format(d);
+}
+
+/** "2:30 PM IST" — time only. */
+export function formatIstTime(input: string | Date | number | null | undefined): string {
+  const d = toDate(input);
+  if (!d) return '';
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: IST_TZ,
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  }).format(d) + ' IST';
+}
+
+/** "19 May, 2:30 PM" — compact, no year, no "IST" suffix. For tight UI. */
+export function formatIstShort(input: string | Date | number | null | undefined): string {
+  const d = toDate(input);
+  if (!d) return '';
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: IST_TZ,
+    day: '2-digit', month: 'short',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  }).format(d);
+}

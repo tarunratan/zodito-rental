@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { formatIstDate } from '@/lib/datetime';
 
 type BikeOption = {
   id: string;
@@ -214,7 +215,7 @@ export function ExpensesManager({ initialExpenses, bikes }: { initialExpenses: E
                 {filtered.map(e => (
                   <tr key={e.id} className="border-b border-border last:border-0 hover:bg-bg/40 transition-colors">
                     <td className="px-4 py-3 text-xs text-muted">
-                      {new Date(e.expense_date).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+                      {formatIstDate(e.expense_date)}
                     </td>
                     <td className="px-4 py-3 text-xs">{bikeName(e.bike)}</td>
                     <td className="px-4 py-3">

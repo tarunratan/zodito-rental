@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { istLocalToUtcIso } from '@/lib/datetime';
+import { istLocalToUtcIso, formatIstDate } from '@/lib/datetime';
 
 type DiscountType = 'percent' | 'fixed' | 'gst_waiver';
 type UsageScope = 'one_per_user' | 'unlimited_per_user' | 'first_booking_only';
@@ -452,10 +452,10 @@ function scheduleSummary(c: Coupon): string {
     parts.push(c.valid_weekdays.map(d => WEEKDAYS[d]?.label ?? d).join('·'));
   }
   if (c.active_from) {
-    parts.push(`from ${new Date(c.active_from).toLocaleDateString('en-IN')}`);
+    parts.push(`from ${formatIstDate(c.active_from)}`);
   }
   if (c.expires_at) {
-    parts.push(`till ${new Date(c.expires_at).toLocaleDateString('en-IN')}`);
+    parts.push(`till ${formatIstDate(c.expires_at)}`);
   }
   return parts.length ? parts.join(' · ') : 'Always';
 }

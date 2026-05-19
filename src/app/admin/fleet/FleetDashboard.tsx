@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { formatIstDateTime } from '@/lib/datetime';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -107,7 +108,7 @@ function timeStatus(end_ts: string, status: string): {
 }
 
 function fmtDate(ts: string) {
-  return new Date(ts).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
+  return formatIstDateTime(ts);
 }
 
 const TIER_LABELS: Record<string, string> = {

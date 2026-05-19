@@ -13,6 +13,7 @@ import {
 import { isFrozenInWindow } from '@/lib/freeze';
 import type { PackageTier } from '@/lib/supabase/types';
 import type { CustomPackage } from '@/lib/pricing';
+import { formatIstDateTime } from '@/lib/datetime';
 import { isCouponInActiveWindow, isCouponUsable, type CouponRecord } from '@/lib/coupon-eligibility';
 
 // Edge runtime: no cold start, runs at the network edge closest to the user.
@@ -175,9 +176,8 @@ export async function POST(req: NextRequest) {
 
   // Freeze window check — canonical helper (accepts NULL `frozen_from`).
   if (isFrozenInWindow({ frozen_from: bike.frozen_from, frozen_until: bike.frozen_until }, startTs, resolvedEndTs)) {
-    const fu = new Date(bike.frozen_until!);
     return NextResponse.json(
-      { error: `This bike is under maintenance until ${fu.toLocaleString('en-IN')}${bike.freeze_reason ? '. Reason: ' + bike.freeze_reason : ''}` },
+      { error: `This bike is under maintenance until ${formatIstDateTime(bike.frozen_until!)}${bike.freeze_reason ? '. Reason: ' + bike.freeze_reason : ''}` },
       { status: 409 }
     );
   }

@@ -13,6 +13,7 @@ import {
   mergeBikePackages,
 } from '@/lib/pricing';
 import type { CustomPackage } from '@/lib/pricing';
+import { formatIstDateTime } from '@/lib/datetime';
 import { isCouponInActiveWindow, isCouponUsable, type CouponRecord } from '@/lib/coupon-eligibility';
 import { isFrozenInWindow } from '@/lib/freeze';
 import { isMockMode, mockBookingsStore } from '@/lib/mock';
@@ -149,9 +150,8 @@ export async function POST(req: NextRequest) {
   // was the historical hole that let frozen bikes stay bookable.
   const b = bike as any;
   if (isFrozenInWindow({ frozen_from: b.frozen_from, frozen_until: b.frozen_until }, startTs, resolvedEndTs)) {
-    const fu = new Date(b.frozen_until!);
     return NextResponse.json(
-      { error: `This bike is under maintenance until ${fu.toLocaleString('en-IN')}${b.freeze_reason ? '. Reason: ' + b.freeze_reason : ''}` },
+      { error: `This bike is under maintenance until ${formatIstDateTime(b.frozen_until!)}${b.freeze_reason ? '. Reason: ' + b.freeze_reason : ''}` },
       { status: 409 }
     );
   }

@@ -3,7 +3,7 @@
 import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowser } from '@/lib/supabase/client';
-import { istLocalToUtcIso, utcToIstLocal } from '@/lib/datetime';
+import { istLocalToUtcIso, utcToIstLocal, formatIstDateTime, formatIstDate } from '@/lib/datetime';
 
 type Model = { id: string; name: string; display_name: string; category: string; cc: number };
 type Bike = {
@@ -87,7 +87,7 @@ export function BikesTab({
   // local bikes list so is_active toggle is reflected instantly without reload
   const [bikes, setBikes]         = useState<Bike[]>(allBikes);
 
-  const [pageLoadedAt]            = useState(() => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }));
+  const [pageLoadedAt]            = useState(() => formatIstDateTime(new Date()));
   const [lastAction, setLastAction] = useState<{ action: string; bikeId: string; result: any; at: string } | null>(null);
 
   const [subTab, setSubTab]       = useState<'all' | 'pending'>('all');
@@ -276,7 +276,7 @@ export function BikesTab({
     }
     const { bike } = await res.json();
     if (bike) setBikes(prev => prev.map(b => b.id === bike.id ? { ...b, ...bike } : b));
-    setLastAction({ action: 'freeze', bikeId: freezeTarget.id, result: bike, at: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) });
+    setLastAction({ action: 'freeze', bikeId: freezeTarget.id, result: bike, at: formatIstDateTime(new Date()) });
     setFreezeTarget(null);
     setFreezeFrom('');
     setFreezeUntil('');
@@ -296,7 +296,7 @@ export function BikesTab({
     if (res.ok) {
       const { bike } = await res.json();
       if (bike) setBikes(prev => prev.map(b => b.id === bike.id ? { ...b, ...bike } : b));
-      setLastAction({ action: 'unfreeze', bikeId: id, result: bike ?? null, at: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) });
+      setLastAction({ action: 'unfreeze', bikeId: id, result: bike ?? null, at: formatIstDateTime(new Date()) });
     }
     router.refresh();
   }
@@ -378,7 +378,7 @@ export function BikesTab({
                       <span className="text-[10px] bg-accent/10 text-accent px-2 py-0.5 rounded-full font-medium">Zodito Fleet</span>
                     )}
                     {isFrozen(bike) && (
-                      <span className="text-[10px] bg-info/10 text-info px-2 py-0.5 rounded-full font-medium">❄️ Frozen until {new Date(bike.frozen_until!).toLocaleDateString('en-IN')}</span>
+                      <span className="text-[10px] bg-info/10 text-info px-2 py-0.5 rounded-full font-medium">❄️ Frozen until {formatIstDate(bike.frozen_until!)}</span>
                     )}
                   </div>
                   <div className="text-xs text-muted mt-0.5 flex flex-wrap gap-x-2">
@@ -721,8 +721,8 @@ export function BikesTab({
               <span style={{ color: b.is_frozen ? '#f88' : '#8f8' }}>{String(b.is_frozen)}</span>
               <span style={{ color: b.is_active ? '#8f8' : '#f88' }}>{String(b.is_active)}</span>
               <span style={{ color: b.listing_status === 'approved' ? '#8f8' : '#fa8' }}>{b.listing_status.replace('_approval','')}</span>
-              <span>{b.frozen_until ? new Date(b.frozen_until).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',hour12:false}) : '—'}</span>
-              <span style={{ color:'#888' }}>{b.updated_at ? new Date(b.updated_at).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',hour12:false}) : '—'}</span>
+              <span>{b.frozen_until ? formatIstDateTime(b.frozen_until) : '—'}</span>
+              <span style={{ color:'#888' }}>{b.updated_at ? formatIstDateTime(b.updated_at) : '—'}</span>
             </div>
           ))}
           {lastAction && (

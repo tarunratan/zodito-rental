@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { formatIstDateTime } from '@/lib/datetime';
 
 type DetailBooking = {
   id: string;
@@ -112,18 +113,12 @@ const DOC_LABELS: Record<string, string> = {
 
 function fmtDateTime(ts: string | null) {
   if (!ts) return '—';
-  return new Date(ts).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
+  return formatIstDateTime(ts);
 }
 
-/** 12-hour IST formatter — e.g. "14 May 2026, 9:00 PM". Used in the order
- *  confirmation card the admin sees after handover has been saved. */
 function fmtDateTime12(ts: string | null) {
   if (!ts) return '—';
-  return new Date(ts).toLocaleString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric',
-    hour: 'numeric', minute: '2-digit', hour12: true,
-    timeZone: 'Asia/Kolkata',
-  });
+  return formatIstDateTime(ts);
 }
 
 function rupee(n: number) {
