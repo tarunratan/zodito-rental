@@ -3,7 +3,7 @@
 import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowser } from '@/lib/supabase/client';
-import { istLocalToUtcIso, utcToIstLocal, formatIstDateTime, formatIstDate } from '@/lib/datetime';
+import { formatIstDateTime } from '@/lib/datetime';
 
 type Model = { id: string; name: string; display_name: string; category: string; cc: number };
 type Bike = {
@@ -107,8 +107,6 @@ export function BikesTab({
   const [rejectTarget, setRejectTarget]       = useState<string | null>(null);
   const [rejectReason, setRejectReason]       = useState('');
   const [freezeTarget, setFreezeTarget]       = useState<Bike | null>(null);
-  const [freezeFrom, setFreezeFrom]           = useState('');
-  const [freezeUntil, setFreezeUntil]         = useState('');
   const [freezeReason, setFreezeReason]       = useState('');
   const [freezeLoading, setFreezeLoading]     = useState(false);
   const [freezeError, setFreezeError]         = useState<string | null>(null);
@@ -248,28 +246,21 @@ export function BikesTab({
 
   async function freezeBike() {
     if (!freezeTarget) return;
-    if (freezeFrom && freezeUntil && new Date(freezeUntil) <= new Date(freezeFrom)) {
-      setFreezeError('End date must be after start date');
-      return;
-    }
     setFreezeLoading(true);
     setFreezeError(null);
-    // v043: visibility is decided by the boolean. Dates are optional metadata.
+    // Boolean-only freeze. The legacy frozen_from / frozen_until inputs were
+    // removed because they caused repeated visibility inconsistencies — the
+    // single is_frozen flag is the source of truth for "hidden right now".
     const res = await fetch(`/api/admin/bikes/${freezeTarget.id}/freeze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         is_frozen: true,
-        frozen_from:   istLocalToUtcIso(freezeFrom),
-        frozen_until:  istLocalToUtcIso(freezeUntil),
         freeze_reason: freezeReason || null,
       }),
     });
     setFreezeLoading(false);
     if (!res.ok) {
-      // Keep modal open and surface what went wrong. Silent failure here is
-      // exactly what hid the validation bug for months — never collapse
-      // failed writes into a successful-looking modal close.
       const body = await res.json().catch(() => ({} as any));
       setFreezeError(body?.error ? `${body.error}: ${JSON.stringify(body.issues ?? body)}` : `Freeze failed (HTTP ${res.status})`);
       return;
@@ -278,8 +269,6 @@ export function BikesTab({
     if (bike) setBikes(prev => prev.map(b => b.id === bike.id ? { ...b, ...bike } : b));
     setLastAction({ action: 'freeze', bikeId: freezeTarget.id, result: bike, at: formatIstDateTime(new Date()) });
     setFreezeTarget(null);
-    setFreezeFrom('');
-    setFreezeUntil('');
     setFreezeReason('');
     setFreezeError(null);
     router.refresh();
@@ -378,7 +367,7 @@ export function BikesTab({
                       <span className="text-[10px] bg-accent/10 text-accent px-2 py-0.5 rounded-full font-medium">Zodito Fleet</span>
                     )}
                     {isFrozen(bike) && (
-                      <span className="text-[10px] bg-info/10 text-info px-2 py-0.5 rounded-full font-medium">❄️ Frozen until {formatIstDate(bike.frozen_until!)}</span>
+                      <span className="text-[10px] bg-info/10 text-info px-2 py-0.5 rounded-full font-medium">❄️ Frozen</span>
                     )}
                   </div>
                   <div className="text-xs text-muted mt-0.5 flex flex-wrap gap-x-2">
@@ -403,7 +392,7 @@ export function BikesTab({
                   {isFrozen(bike) ? (
                     <button onClick={() => unfreezeBike(bike.id)} className="text-xs px-3 py-1.5 bg-info/10 text-info rounded-lg hover:bg-info/20 font-medium">Unfreeze</button>
                   ) : bike.listing_status === 'approved' ? (
-                    <button onClick={() => { setFreezeTarget(bike); setFreezeFrom(''); setFreezeUntil(''); setFreezeReason(''); }} className="text-xs px-3 py-1.5 bg-warning/10 text-warning rounded-lg hover:bg-warning/20 font-medium">Freeze</button>
+                    <button onClick={() => { setFreezeTarget(bike); setFreezeReason(''); setFreezeError(null); }} className="text-xs px-3 py-1.5 bg-warning/10 text-warning rounded-lg hover:bg-warning/20 font-medium">Freeze</button>
                   ) : null}
                   {/* Listing on/off toggle */}
                   <button
@@ -641,21 +630,9 @@ export function BikesTab({
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-primary rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-4">
             <h3 className="font-semibold">Freeze {freezeTarget.model?.display_name ?? 'bike'}</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium mb-1">Freeze from</label>
-                <input type="datetime-local" value={freezeFrom} onChange={e => setFreezeFrom(e.target.value)}
-                  className="input-field w-full text-sm" />
-                <p className="text-[11px] text-muted mt-0.5">Leave blank = now</p>
-              </div>
-              <div>
-                <label className="block text-xs font-medium mb-1">Freeze until</label>
-                <input type="datetime-local" value={freezeUntil} onChange={e => setFreezeUntil(e.target.value)}
-                  min={freezeFrom || utcToIstLocal(new Date())}
-                  className="input-field w-full text-sm" />
-                <p className="text-[11px] text-muted mt-0.5">Leave blank = indefinite</p>
-              </div>
-            </div>
+            <p className="text-xs text-muted">
+              Bike will be hidden from customers immediately. Click <b>Unfreeze</b> to bring it back.
+            </p>
             <div>
               <label className="block text-xs font-medium mb-1">Reason (optional)</label>
               <input value={freezeReason} onChange={e => setFreezeReason(e.target.value)}
