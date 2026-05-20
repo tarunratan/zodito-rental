@@ -1,6 +1,6 @@
 import { Hero } from '@/components/home/Hero';
 import { BrowseSection } from '@/components/home/BrowseSection';
-import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { createSupabaseAdminFresh as createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode, MOCK_BIKES } from '@/lib/mock';
 import { mergeBikePackages } from '@/lib/pricing';
 
