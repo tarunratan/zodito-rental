@@ -5,7 +5,7 @@ import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { createRazorpayOrder } from '@/lib/razorpay';
 import { quoteExtension } from '@/lib/extension-pricing';
 import { findConflictingBooking } from '@/lib/booking-overlap';
-import { mergeBikePackages, type CustomPackage } from '@/lib/pricing';
+import { mergeBikePackages, type CustomPackage, isWithinStoreHours } from '@/lib/pricing';
 
 export const runtime = 'nodejs';
 
@@ -20,6 +20,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const newEndTs = new Date(parse.data.new_end_ts);
   if (isNaN(newEndTs.getTime())) return NextResponse.json({ error: 'Invalid date' }, { status: 400 });
+  if (!isWithinStoreHours(newEndTs)) {
+    return NextResponse.json(
+      { error: 'Drop-offs accepted only between 6 AM and 10:30 PM IST' },
+      { status: 400 },
+    );
+  }
 
   const admin = createSupabaseAdmin();
 

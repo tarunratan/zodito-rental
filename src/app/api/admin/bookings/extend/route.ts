@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
+import { isWithinStoreHours } from '@/lib/pricing';
 
 export const runtime = 'nodejs';
 
@@ -36,6 +37,14 @@ export async function POST(req: NextRequest) {
   }
   if (new Date(new_end_ts) <= new Date(booking.end_ts)) {
     return NextResponse.json({ error: 'New end time must be after current end time' }, { status: 400 });
+  }
+  // Store window guard — UI restricts the picker to 6 AM – 10 PM IST, but the
+  // API stands on its own. Reject any drop-off that falls outside the window.
+  if (!isWithinStoreHours(new Date(new_end_ts))) {
+    return NextResponse.json(
+      { error: 'Drop-offs accepted only between 6 AM and 10:30 PM IST' },
+      { status: 400 },
+    );
   }
 
   const updates: Record<string, unknown> = { end_ts: new_end_ts };

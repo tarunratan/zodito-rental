@@ -333,7 +333,14 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
   }
 
   const [extendModal, setExtendModal] = useState<{ id: string; number: string; currentEnd: string; pendingAmount: number; kmLimit: number } | null>(null);
-  const [extendNewEnd, setExtendNewEnd] = useState('');
+  // Drop-off as date + hour (no minutes). Combined to an ISO string only when
+  // firing the extend POST. Mirrors the customer ExtendBookingPanel so admin
+  // and customer flows share the same "6 AM – 10 PM, hour-only" UX.
+  const [extendNewDate, setExtendNewDate] = useState('');
+  const [extendNewHour, setExtendNewHour] = useState<number>(10);
+  const extendNewEnd = extendNewDate
+    ? `${extendNewDate}T${String(extendNewHour).padStart(2, '0')}:00`
+    : '';
   const [extendAmtCollected, setExtendAmtCollected] = useState('');
   const [extendExtraKm, setExtendExtraKm] = useState('');
   const [extendLoading, setExtendLoading] = useState(false);
@@ -370,7 +377,8 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
           return upd;
         }));
         setExtendModal(null);
-        setExtendNewEnd('');
+        setExtendNewDate('');
+        setExtendNewHour(10);
         setExtendAmtCollected('');
         setExtendExtraKm('');
       } else {
@@ -713,11 +721,16 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                           {['confirmed', 'ongoing'].includes(b.status) && (
                             <button
                               onClick={() => {
-                                const localEnd = new Date(b.end_ts);
-                                const pad = (n: number) => n.toString().padStart(2, '0');
-                                const localStr = `${localEnd.getFullYear()}-${pad(localEnd.getMonth()+1)}-${pad(localEnd.getDate())}T${pad(localEnd.getHours())}:${pad(localEnd.getMinutes())}`;
+                                // Prefill the date with the current drop-off day in IST, and
+                                // start the hour-picker at the closest in-window hour after it
+                                // (clamped to store window 6 AM – 10 PM).
+                                const istLocal = utcToIstLocal(b.end_ts); // "YYYY-MM-DDTHH:mm" in IST
+                                const date = istLocal.slice(0, 10);
+                                const curHour = parseInt(istLocal.slice(11, 13), 10) || 10;
+                                const startHour = Math.min(22, Math.max(6, curHour));
                                 setExtendModal({ id: b.id, number: b.booking_number, currentEnd: b.end_ts, pendingAmount: b.pending_amount ?? 0, kmLimit: b.km_limit });
-                                setExtendNewEnd(localStr);
+                                setExtendNewDate(date);
+                                setExtendNewHour(startHour);
                                 setExtendAmtCollected('');
                                 setExtendExtraKm('');
                                 setExtendError(null);
@@ -1024,14 +1037,27 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
               <p className="text-sm font-medium">{fmt(extendModal.currentEnd)}</p>
             </div>
             <div>
-              <label className="text-xs font-semibold text-muted uppercase tracking-wide block mb-1">New drop-off time <span className="text-danger">*</span></label>
-              <input
-                type="datetime-local"
-                value={extendNewEnd}
-                min={utcToIstLocal(extendModal.currentEnd)}
-                onChange={e => setExtendNewEnd(e.target.value)}
-                className="input-field w-full"
-              />
+              <label className="text-xs font-semibold text-muted uppercase tracking-wide block mb-1">New drop-off date &amp; hour <span className="text-danger">*</span></label>
+              <div className="flex gap-2">
+                <input
+                  type="date"
+                  value={extendNewDate}
+                  min={utcToIstLocal(extendModal.currentEnd).slice(0, 10)}
+                  onChange={e => setExtendNewDate(e.target.value)}
+                  className="input-field flex-1 text-sm"
+                />
+                <select
+                  value={extendNewHour}
+                  onChange={e => setExtendNewHour(parseInt(e.target.value, 10))}
+                  className="input-field text-sm w-32"
+                >
+                  {Array.from({ length: 17 }, (_, i) => 6 + i).map(h => {
+                    const label = h === 12 ? '12 PM' : h < 12 ? `${h} AM` : h === 24 ? '12 AM' : `${h - 12} PM`;
+                    return <option key={h} value={h}>{label}</option>;
+                  })}
+                </select>
+              </div>
+              <p className="text-[10px] text-muted mt-1">Drop-offs accepted 6 AM – 10 PM. Hour-only — no minutes.</p>
               {extendNewEnd && new Date(extendNewEnd) > new Date(extendModal.currentEnd) && (
                 <p className="text-[11px] text-purple-600 mt-1">
                   +{Math.round((new Date(extendNewEnd).getTime() - new Date(extendModal.currentEnd).getTime()) / 3_600_000)} hrs extension
