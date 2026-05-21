@@ -25,6 +25,15 @@ export default function SignUpPage() {
   const [loading, setLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
 
+  // OTP fallback state — the "Check your inbox" screen below offers a
+  // 6-digit code input so users whose Supabase confirmation email got
+  // delayed/spam-filtered can still verify the account inline.
+  const [otp, setOtp]                 = useState('');
+  const [otpVerifying, setOtpVerifying] = useState(false);
+  const [otpInfo, setOtpInfo]         = useState('');
+  const [otpError, setOtpError]       = useState('');
+  const [resending, setResending]     = useState(false);
+
   function field(key: keyof typeof form) {
     return (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [key]: e.target.value }));
   }
@@ -44,6 +53,9 @@ export default function SignUpPage() {
           last_name: form.last_name,
           phone: form.phone || null,
         },
+        // Existing email-link flow still goes through this callback. If the
+        // user can't click the link they fall back to OTP below.
+        emailRedirectTo: `${window.location.origin}/auth/callback?next=/`,
       },
     });
 
@@ -63,16 +75,91 @@ export default function SignUpPage() {
     setLoading(false);
   }
 
+  async function verifySignupOtp(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    if (otp.length < 6) { setOtpError('Enter the 6-digit code from your email'); return; }
+    setOtpVerifying(true);
+    setOtpError('');
+    try {
+      const supabase = createSupabaseBrowser();
+      const { error } = await supabase.auth.verifyOtp({
+        email: form.email,
+        token: otp.trim(),
+        type: 'signup',
+      });
+      if (error) throw error;
+      // Account confirmed and session established — go straight to home.
+      router.push('/');
+      router.refresh();
+    } catch (e: any) {
+      setOtpError(e?.message ?? 'Invalid or expired code');
+    } finally {
+      setOtpVerifying(false);
+    }
+  }
+
+  async function resendConfirmation() {
+    setResending(true);
+    setOtpError('');
+    setOtpInfo('');
+    try {
+      const supabase = createSupabaseBrowser();
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: form.email,
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/` },
+      });
+      if (error) throw error;
+      setOtpInfo(`New code sent to ${form.email}. Check spam if it doesn't arrive in a minute.`);
+    } catch (e: any) {
+      setOtpError(e?.message ?? 'Could not resend');
+    } finally {
+      setResending(false);
+    }
+  }
+
   if (emailSent) {
     return (
-      <div className="max-w-md mx-auto px-6 py-16 text-center">
-        <div className="text-5xl mb-4">📬</div>
-        <h1 className="font-display font-bold text-2xl tracking-tight mb-2">Check your inbox</h1>
-        <p className="text-muted text-sm mb-6">
-          We sent a confirmation link to <strong>{form.email}</strong>.<br />
-          Click it to activate your account, then sign in.
-        </p>
-        <Link href="/sign-in" className="btn-accent inline-block">Go to Sign in</Link>
+      <div className="max-w-md mx-auto px-6 py-16">
+        <div className="text-center mb-6">
+          <div className="text-5xl mb-4">📬</div>
+          <h1 className="font-display font-bold text-2xl tracking-tight mb-2">Check your inbox</h1>
+          <p className="text-muted text-sm">
+            We sent a confirmation email to <strong>{form.email}</strong>.<br />
+            Either click the link OR enter the 6-digit code below.
+          </p>
+        </div>
+
+        <form onSubmit={verifySignupOtp} className="card p-6 flex flex-col gap-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">6-digit code from email</label>
+            <input
+              type="text" inputMode="numeric"
+              pattern="[0-9]*" maxLength={6}
+              value={otp}
+              onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              className="input w-full text-center text-2xl tracking-[0.5em] font-mono"
+              placeholder="••••••"
+              autoComplete="one-time-code"
+              autoFocus
+            />
+            <p className="text-[11px] text-muted mt-1">
+              Didn&apos;t get an email?{' '}
+              <button type="button" onClick={resendConfirmation} disabled={resending}
+                className="text-accent hover:underline disabled:opacity-60">
+                {resending ? 'Resending…' : 'Resend'}
+              </button>
+            </p>
+          </div>
+          {otpInfo  && <p className="text-success text-sm bg-success/10 px-3 py-2 rounded-md">{otpInfo}</p>}
+          {otpError && <p className="text-danger text-sm bg-danger/10 px-3 py-2 rounded-md">{otpError}</p>}
+          <button type="submit" disabled={otpVerifying || otp.length < 6} className="btn-accent w-full">
+            {otpVerifying ? 'Verifying…' : 'Verify & sign in'}
+          </button>
+          <Link href="/sign-in" className="text-sm text-center text-muted hover:text-primary">
+            Already confirmed? Sign in
+          </Link>
+        </form>
       </div>
     );
   }
