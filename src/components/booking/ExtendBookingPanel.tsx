@@ -41,6 +41,11 @@ interface Quote {
   totalDelta: number;
   matchedTier: string | null;
   matchedLabel: string;
+  // Present when the booking is past its drop-off — the server stacks a
+  // per-hour late penalty onto totalDelta so Razorpay collects it upfront.
+  latePenalty?: number;
+  hoursOverdue?: number;
+  latePenaltyRate?: number;
 }
 
 interface QuoteResponse {
@@ -96,7 +101,15 @@ export function ExtendBookingPanel({
   latePenaltyPerHour?: number;
   supportPhone?: string;
 }) {
-  const [open, setOpen]           = useState(false);
+  // Deep-link support: ?extend=1 (sent by admin via WhatsApp) auto-opens the
+  // extend form so overdue customers land straight on payment. Read once on
+  // mount; safe to compute lazily because the URL doesn't change during the
+  // panel's life.
+  const initiallyOpen = (() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('extend') === '1';
+  })();
+  const [open, setOpen]           = useState(initiallyOpen);
   // Drop-off as date + 12-hour-clock hour (no minutes). Combined to an ISO
   // timestamp lazily when we need to fire the quote / payment call.
   const [newDate, setNewDate]     = useState('');
@@ -249,25 +262,28 @@ export function ExtendBookingPanel({
         <div className="flex items-start justify-between gap-3 mb-1">
           <div>
             <h2 className="font-display font-semibold text-lg">
-              {isOverdue ? 'Return overdue' : 'Extend booking'}
+              {isOverdue ? 'Return overdue — pay & extend' : 'Extend booking'}
             </h2>
             <p className="text-xs text-muted mt-0.5">
               Current drop-off: <span className="font-medium text-primary">{formatDateTime(endTs)}</span> · {kmLimit} km included
             </p>
           </div>
-          {status === 'ongoing' && !isOverdue && (
+          {status === 'ongoing' && (
             <button
               onClick={() => { setOpen(o => !o); resetQuote(); }}
-              className="text-xs font-semibold bg-accent text-white px-3 py-1.5 rounded-lg hover:bg-accent/90"
+              className={`text-xs font-semibold text-white px-3 py-1.5 rounded-lg ${
+                isOverdue ? 'bg-red-600 hover:bg-red-700' : 'bg-accent hover:bg-accent/90'
+              }`}
             >
-              {open ? 'Close' : 'Extend Booking →'}
+              {open ? 'Close' : (isOverdue ? 'Pay & Extend →' : 'Extend Booking →')}
             </button>
           )}
         </div>
 
-        {/* Overdue / return-required state — self-service extension is locked.
-            Customer must return the bike (handover) or call support for an
-            admin-assisted extension with late fees applied. */}
+        {/* Overdue state — self-service extension is still available but a
+            per-hour late penalty is added to the Razorpay total. Pre-collecting
+            via Razorpay is the fix for customers who promised to pay "later"
+            and then went dark. */}
         {isOverdue && (
           <div className="mt-3 rounded-lg border-2 border-red-200 bg-red-50 p-4 space-y-2 text-sm text-red-900">
             <div className="flex items-center gap-2">
@@ -289,14 +305,12 @@ export function ExtendBookingPanel({
               </div>
             </div>
             <p className="text-xs leading-relaxed pt-1">
-              Self-service extension is locked once the drop-off time has passed.
-              Please return the bike at the rental shop, or contact support to extend with late fees applied.
+              Pick a new drop-off time below and pay online to extend.
+              The late penalty for time already overrun is added to the total.
+              {supportPhone && (
+                <> Need to return the bike instead? Call <a href={`tel:${supportPhone}`} className="underline font-semibold">{supportPhone}</a>.</>
+              )}
             </p>
-            {supportPhone && (
-              <a href={`tel:${supportPhone}`} className="inline-block bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-4 py-2 rounded-lg mt-1">
-                📞 Call support to return / extend
-              </a>
-            )}
           </div>
         )}
 
@@ -309,7 +323,7 @@ export function ExtendBookingPanel({
           </div>
         )}
 
-        {open && status === 'ongoing' && !isOverdue && (
+        {open && status === 'ongoing' && (
           <div className="mt-4 space-y-3">
             <div>
               <label className="text-[11px] text-muted block mb-1">New drop-off date & time</label>
@@ -317,7 +331,10 @@ export function ExtendBookingPanel({
                 <input
                   type="date"
                   value={newDate}
-                  min={endTs.slice(0, 10)}
+                  // When overdue, the original drop-off date is in the past —
+                  // pin the min to today so the customer can pick a forward
+                  // date. Otherwise pin to the original drop-off.
+                  min={(isOverdue ? new Date().toISOString() : endTs).slice(0, 10)}
                   onChange={e => { setNewDate(e.target.value); resetQuote(); }}
                   className="input-field flex-1 text-sm"
                 />
@@ -350,14 +367,29 @@ export function ExtendBookingPanel({
                 <div className="flex justify-between"><span className="text-muted">Extra KM allowance</span><span className="font-semibold">+{quote.extraKm} km</span></div>
                 <div className="flex justify-between"><span className="text-muted">New KM limit</span><span className="font-semibold">{quote.newKmLimit} km</span></div>
                 <div className="border-t border-border my-1.5" />
-                <div className="flex justify-between"><span className="text-muted">Extra rent</span><span>{formatINR(quote.baseDelta)}</span></div>
+                {/* For overdue bookings the server folds the late penalty
+                    into baseDelta + totalDelta; we subtract it back out here
+                    so the customer sees a clean breakdown of extension cost
+                    vs. penalty. */}
+                <div className="flex justify-between">
+                  <span className="text-muted">Extra rent</span>
+                  <span>{formatINR(Math.max(0, quote.baseDelta - (quote.latePenalty ?? 0)))}</span>
+                </div>
+                {(quote.latePenalty ?? 0) > 0 && (
+                  <div className="flex justify-between text-red-700">
+                    <span>Late penalty ({quote.hoursOverdue ?? 0} hr × ₹{quote.latePenaltyRate ?? lateRate}/hr)</span>
+                    <span className="font-semibold">{formatINR(quote.latePenalty ?? 0)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between"><span className="text-muted">GST</span><span className="text-green-600 font-semibold">Waived</span></div>
                 <div className="flex justify-between text-sm pt-1">
                   <span className="font-display font-semibold">Total payable</span>
                   <span className="font-display font-bold text-accent">{formatINR(quote.totalDelta)}</span>
                 </div>
                 <p className="text-[10px] text-muted mt-2">
-                  No GST on extensions. Booking is only extended after successful payment.
+                  {(quote.latePenalty ?? 0) > 0
+                    ? 'Includes late penalty for hours already overrun. No GST on extensions.'
+                    : 'No GST on extensions. Booking is only extended after successful payment.'}
                 </p>
 
                 {/* Debug breakdown — surfaces the exact tier/package the backend
@@ -383,7 +415,8 @@ export function ExtendBookingPanel({
                     <div className="flex justify-between"><span className="text-muted">Tier code</span><span>{quote.matchedTier ?? 'custom'}</span></div>
                     <div className="flex justify-between"><span className="text-muted">Original KM limit</span><span>{quote.originalKmLimit}</span></div>
                     <div className="flex justify-between"><span className="text-muted">New KM limit</span><span>{quote.newKmLimit}</span></div>
-                    <div className="flex justify-between"><span className="text-muted">Base delta</span><span>₹{quote.baseDelta}</span></div>
+                    <div className="flex justify-between"><span className="text-muted">Base delta (incl. penalty)</span><span>₹{quote.baseDelta}</span></div>
+                    <div className="flex justify-between"><span className="text-muted">Late penalty</span><span>₹{quote.latePenalty ?? 0} ({quote.hoursOverdue ?? 0} hr × ₹{quote.latePenaltyRate ?? lateRate})</span></div>
                     <div className="flex justify-between"><span className="text-muted">GST delta</span><span>₹{quote.gstDelta} (waived)</span></div>
                     <div className="flex justify-between"><span className="text-muted">Total delta</span><span>₹{quote.totalDelta}</span></div>
                   </div>

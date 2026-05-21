@@ -5,6 +5,7 @@ import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { findConflictingBooking, PENDING_PAYMENT_TTL_MIN } from '@/lib/booking-overlap';
 import { isFrozenInWindow } from '@/lib/freeze';
 import { istLocalToUtcIso, formatIstDateTime } from '@/lib/datetime';
+import { sendBookingConfirmation } from '@/lib/email';
 
 export const runtime = 'nodejs';
 
@@ -201,6 +202,44 @@ export async function POST(req: NextRequest) {
   if (error) {
     console.error('Manual booking error:', error);
     return NextResponse.json({ error: 'Failed to create booking: ' + error.message }, { status: 500 });
+  }
+
+  // Confirmation email — only when admin captured an email for the customer.
+  // Fire-and-forget; node runtime keeps the promise alive after the response.
+  if (customer_email) {
+    void (async () => {
+      try {
+        const { data: bikeRow } = await supabase
+          .from('bikes')
+          .select(`
+            registration_number, color, extra_km_rate, late_penalty_hour,
+            model:bike_models!inner(display_name, cc, excess_km_rate, late_hourly_penalty)
+          `)
+          .eq('id', bike_id)
+          .maybeSingle();
+        const m = (bikeRow as any)?.model;
+        const bikeDetails = [bikeRow?.registration_number, bikeRow?.color, m?.cc ? `${m.cc}cc` : null].filter(Boolean).join(' · ');
+        await sendBookingConfirmation(customer_email, {
+          name: customer_name.split(' ')[0] || 'there',
+          bookingNumber: booking.booking_number,
+          bike: m?.display_name ?? 'Bike',
+          bikeDetails: bikeDetails || undefined,
+          startDate: formatIstDateTime(startIso),
+          endDate: formatIstDateTime(endIso),
+          kmLimit: km_limit,
+          total: total_amount,
+          advancePaid: advance_paid,
+          pending: pendingAmount,
+          securityDeposit: security_deposit,
+          pickupLocation: 'Zodito KPHB Store, 436 Sri Sai Vamshi Residency, Gokul Plots, Kukatpally, Hyderabad – 500085',
+          pickupPhone: '+91 93929 12953',
+          extraKmRate: (bikeRow as any)?.extra_km_rate ?? m?.excess_km_rate,
+          latePenaltyRate: (bikeRow as any)?.late_penalty_hour ?? m?.late_hourly_penalty,
+        });
+      } catch (e) {
+        console.error('[manual-booking] confirmation email failed', e);
+      }
+    })();
   }
 
   return NextResponse.json({

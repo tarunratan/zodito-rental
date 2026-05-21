@@ -400,6 +400,10 @@ export function OnlineBookingDetailModal({
     const altPhone = edit.alternate_phone || booking!.alternate_phone || '—';
     const remarks  = (edit.notes || booking!.notes || '').trim() || '—';
 
+    // NOTE on emojis: WhatsApp transit and copy/paste through some clients
+    // mangle composed sequences (heart + VS-16 selector, etc.) and certain
+    // BMP-supplementary glyphs. Use only single-codepoint, widely-supported
+    // emojis here so the recipient sees them rendered, not as � replacement.
     return [
       `BOOKING DETAILS : ${statusLabel}`,
       `Customer Name : ${customer}`,
@@ -419,11 +423,11 @@ export function OnlineBookingDetailModal({
       `Handover Remarks : ${remarks}`,
       '',
       `${isScooter ? 'Scooty' : 'Bike'}: ₹${extraKmRate} per extra km / ₹${latePenaltyRate} per hour for late penalty.`,
-      `🕛 Hub timings 6:00am - 10:30pm.`,
+      `⏰ Hub timings 6:00am - 10:30pm.`,
       `Please note: Bike drop-offs are not accepted after 10:30 PM. An overnight rental fee will apply, and bikes must be returned after 6:00am.`,
       `# The booking amount for the bike is non-refundable once confirmed. #`,
       `Have a great and safe Ride 🤝`,
-      `Thank you for Choosing Zoditorentals ❤️😊`,
+      `Thank you for Choosing Zoditorentals ♥`,
     ].join('\n');
   }
 
@@ -451,6 +455,50 @@ export function OnlineBookingDetailModal({
     const digits = String(raw).replace(/\D+/g, '');
     const target = digits ? `https://wa.me/${digits}?text=${encodeURIComponent(buildSummaryText())}`
                           : `https://wa.me/?text=${encodeURIComponent(buildSummaryText())}`;
+    window.open(target, '_blank', 'noopener,noreferrer');
+  }
+
+  // Send the customer a WhatsApp message containing a deep-link to the
+  // customer-facing extend flow. The link uses ?extend=1 so the panel
+  // auto-opens; the customer signs in if needed, picks a new drop-off,
+  // and pays the extension + late penalty via Razorpay. Solves the
+  // "I'll pay later" ghosting pattern.
+  function sendExtendLink() {
+    const raw = phone || edit.alternate_phone || booking!.alternate_phone || '';
+    const digits = String(raw).replace(/\D+/g, '');
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const deepLink = `${origin}/my-bookings/${booking!.id}?extend=1`;
+
+    const nowMs = Date.now();
+    const endMs = new Date(booking!.end_ts).getTime();
+    const hoursOverdue = Math.max(0, Math.ceil((nowMs - endMs) / 3_600_000));
+    const ratePerHour = Number(booking!.bike?.late_penalty_hour ?? booking!.bike?.model?.late_hourly_penalty ?? 49);
+    const penaltySoFar = hoursOverdue * ratePerHour;
+
+    const lines = hoursOverdue > 0 ? [
+      `Hi ${customer},`,
+      ``,
+      `Your booking #${booking!.booking_number} (${booking!.bike?.model?.display_name ?? 'bike'}) is currently ${hoursOverdue} hour${hoursOverdue === 1 ? '' : 's'} past the drop-off time (${fmtDateTime12(booking!.end_ts)}).`,
+      ``,
+      `Late penalty so far: ${rupee(penaltySoFar)} (at ₹${ratePerHour}/hr)`,
+      ``,
+      `To extend the booking and pay online, tap the link below:`,
+      deepLink,
+      ``,
+      `The payment includes the extension price + the late penalty. Booking extends only after successful payment.`,
+      ``,
+      `- Zodito Rentals`,
+    ] : [
+      `Hi ${customer},`,
+      ``,
+      `To extend your booking #${booking!.booking_number} (${booking!.bike?.model?.display_name ?? 'bike'}), tap the link below to pick a new drop-off and pay online:`,
+      deepLink,
+      ``,
+      `- Zodito Rentals`,
+    ];
+    const target = digits
+      ? `https://wa.me/${digits}?text=${encodeURIComponent(lines.join('\n'))}`
+      : `https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`;
     window.open(target, '_blank', 'noopener,noreferrer');
   }
 
@@ -518,6 +566,7 @@ export function OnlineBookingDetailModal({
               onEdit={() => setEditMode(true)}
               onCopy={copySummary}
               onWhatsApp={openWhatsApp}
+              onSendExtendLink={sendExtendLink}
               copyToast={copyToast}
               actionLoading={actionLoading}
               canMarkPickup={canMarkPickup}
@@ -1146,6 +1195,7 @@ function OrderConfirmationCard({
   onEdit,
   onCopy,
   onWhatsApp,
+  onSendExtendLink,
   copyToast,
   actionLoading,
   canMarkPickup,
@@ -1170,6 +1220,7 @@ function OrderConfirmationCard({
   onEdit: () => void;
   onCopy: () => void;
   onWhatsApp: () => void;
+  onSendExtendLink: () => void;
   copyToast: boolean;
   actionLoading: string | null;
   canMarkPickup: boolean;
@@ -1199,6 +1250,13 @@ function OrderConfirmationCard({
   const extraKmRate     = Number(booking.bike?.extra_km_rate ?? booking.bike?.model?.excess_km_rate ?? 3);
   const latePenaltyRate = Number(booking.bike?.late_penalty_hour ?? booking.bike?.model?.late_hourly_penalty ?? 49);
   const isScooter       = booking.bike?.model?.category === 'scooter';
+  // Overdue surfacing on the admin card — drives both the visible overdue
+  // banner and whether "Send extend payment link" is rendered.
+  const nowMs = Date.now();
+  const endMs = new Date(booking.end_ts).getTime();
+  const adminIsOverdue = booking.status === 'ongoing' && nowMs > endMs;
+  const adminHoursOverdue = adminIsOverdue ? Math.ceil((nowMs - endMs) / 3_600_000) : 0;
+  const adminPenaltySoFar = adminHoursOverdue * latePenaltyRate;
 
   return (
     <div className="space-y-3">
@@ -1287,6 +1345,35 @@ function OrderConfirmationCard({
         )}
       </div>
 
+      {/* Overdue alert for admin — surfaces when status is still 'ongoing'
+          but the drop-off time has passed. Pairs with "Send Extend Payment
+          Link" to nudge the admin to pre-collect via Razorpay instead of
+          accepting phone promises. */}
+      {adminIsOverdue && (
+        <div className="rounded-xl border-2 border-red-200 bg-red-50 p-3 space-y-2">
+          <div className="flex items-center gap-2 text-sm text-red-900">
+            <span className="text-lg">⏰</span>
+            <span className="font-semibold">Booking overdue · {adminHoursOverdue} hr late</span>
+            <span className="ml-auto text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-red-600 text-white">
+              Action needed
+            </span>
+          </div>
+          <div className="text-xs text-red-800">
+            Late penalty so far: <strong>{rupee(adminPenaltySoFar)}</strong> (at ₹{latePenaltyRate}/hr · accruing)
+          </div>
+          <button
+            onClick={onSendExtendLink}
+            className="w-full py-2 text-xs font-semibold rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors"
+          >
+            📤 Send Extend Payment Link via WhatsApp
+          </button>
+          <p className="text-[10px] text-red-700 leading-relaxed">
+            Sends the customer a wa.me link to /my-bookings with the extend form pre-opened.
+            Razorpay collects the extension price + late penalty upfront.
+          </p>
+        </div>
+      )}
+
       {/* Action toolbar: EDIT BOOKING / COPY SUMMARY / SEND TO WHATSAPP / START RIDE */}
       <div className="rounded-xl border border-border bg-white p-3 space-y-2">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-muted">Actions</p>
@@ -1309,6 +1396,14 @@ function OrderConfirmationCard({
           >
             💬 Send to WhatsApp
           </button>
+          {!adminIsOverdue && booking.status === 'ongoing' && (
+            <button
+              onClick={onSendExtendLink}
+              className="py-2 text-xs font-semibold rounded-lg bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors"
+            >
+              📤 Send Extend Link
+            </button>
+          )}
           {booking.status === 'pending_payment' && (
             <button
               onClick={() => onAction('confirmed', false, 'Confirm Booking')}

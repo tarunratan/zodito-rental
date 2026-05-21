@@ -33,8 +33,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     .select(`
       id, user_id, status, start_ts, end_ts, km_limit, base_price, gst_amount, bike_id,
       bike:bikes!inner(
-        id,
-        model:bike_models!inner(packages:bike_model_packages(tier, price, km_limit))
+        id, late_penalty_hour,
+        model:bike_models!inner(late_hourly_penalty, packages:bike_model_packages(tier, price, km_limit))
       )
     `)
     .eq('id', params.id)
@@ -45,16 +45,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (booking.status !== 'ongoing') {
     return NextResponse.json({ error: 'Only ongoing bookings can be extended' }, { status: 400 });
   }
-  // Self-service extension is only available BEFORE the original drop-off
-  // time. Once the booking is overdue, the customer must return the vehicle
-  // (or have the admin extend it manually with late fees). Mirrors the policy
-  // shown in the UI overdue notice.
-  if (new Date() > new Date(booking.end_ts)) {
-    return NextResponse.json(
-      { error: 'This booking is past its drop-off time. Please return the bike or contact support to extend.' },
-      { status: 400 },
-    );
-  }
+  // Overdue bookings are still extendable, BUT a late penalty is added to the
+  // Razorpay total. This is intentional — customers were ghosting on phone
+  // promises ("I'll pay later") and keeping bikes; pre-collecting via Razorpay
+  // is the fix. The late penalty is computed below from the bike's per-hour
+  // rate (falls back to model default, then ₹49).
+  const nowMs = Date.now();
+  const endMs = new Date(booking.end_ts).getTime();
+  const hoursOverdue = Math.max(0, Math.ceil((nowMs - endMs) / 3_600_000));
+  const latePenaltyRate = Number(
+    (booking.bike as any)?.late_penalty_hour ??
+    (booking.bike as any)?.model?.late_hourly_penalty ??
+    49
+  );
+  const latePenalty = hoursOverdue * latePenaltyRate;
 
   // Per-bike overrides + custom packages, same shape the booking-create flow uses.
   const [{ data: overrides }, { data: customPkgs }] = await Promise.all([
@@ -82,6 +86,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   if ('error' in quote) return NextResponse.json(quote, { status: 400 });
 
+  // Stack the late penalty onto the total payable. base/gst breakdown stays
+  // pure (extension package math); the late penalty is shown as a separate
+  // line item in the UI and rolled into totalDelta so Razorpay charges all of
+  // it in one transaction.
+  const quoteWithPenalty = {
+    ...quote,
+    latePenalty,
+    hoursOverdue,
+    latePenaltyRate,
+    totalDelta: quote.totalDelta + latePenalty,
+  };
+
   // Conflict check: another booking on this bike covering the extended window?
   const { data: candidates } = await admin
     .from('bookings')
@@ -100,7 +116,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   if (conflict) {
     return NextResponse.json({
-      quote,
+      quote: quoteWithPenalty,
       conflict: {
         booking_id: conflict.id,
         booking_number: conflict.booking_number,
@@ -111,5 +127,5 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }, { status: 200 });
   }
 
-  return NextResponse.json({ quote, available: true });
+  return NextResponse.json({ quote: quoteWithPenalty, available: true });
 }

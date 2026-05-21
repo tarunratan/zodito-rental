@@ -15,6 +15,7 @@ import type { PackageTier } from '@/lib/supabase/types';
 import type { CustomPackage } from '@/lib/pricing';
 import { formatIstDateTime } from '@/lib/datetime';
 import { isCouponInActiveWindow, isCouponUsable, type CouponRecord } from '@/lib/coupon-eligibility';
+import { sendBookingConfirmation } from '@/lib/email';
 
 // Edge runtime: no cold start, runs at the network edge closest to the user.
 // Supabase JS client uses native fetch — fully Edge-compatible.
@@ -133,7 +134,7 @@ export async function POST(req: NextRequest) {
       .eq('is_active', true)
       .eq('listing_status', 'approved')
       .maybeSingle(),
-    admin.from('users').select('id').eq('auth_id', authIdFromToken).maybeSingle(),
+    admin.from('users').select('id, email, first_name').eq('auth_id', authIdFromToken).maybeSingle(),
     couponPromise,
     customPkgPromise,
   ]);
@@ -162,6 +163,8 @@ export async function POST(req: NextRequest) {
 
   const bike = bikeResult.data as any;
   const userId = userResult.data.id as string;
+  const userEmail = (userResult.data as any).email as string | null;
+  const userFirstName = (userResult.data as any).first_name as string | null;
 
   let resolvedEndTs: Date;
   if (customPkg) {
@@ -328,6 +331,43 @@ export async function POST(req: NextRequest) {
     void admin.from('coupon_uses').insert({
       coupon_id: couponRow.id, user_id: userId, booking_id: booking.id, discount_amount: breakdown.couponDiscount,
     }).then(() => admin.rpc('increment_coupon_used_count', { p_coupon_id: couponRow!.id }));
+  }
+
+  // Booking confirmation email — awaited (Edge runtime terminates after the
+  // response, so void/promise patterns don't actually fire). Both the Resend
+  // call and the supplemental bike lookup tolerate failure: send() swallows
+  // Resend errors internally and try/catch handles the lookup. Worst case the
+  // email is skipped — the booking response is unaffected.
+  if (userEmail) {
+    try {
+      const [{ data: bikeMeta }, { data: modelRow }] = await Promise.all([
+        admin.from('bikes').select('registration_number, color').eq('id', bike.id).maybeSingle(),
+        admin.from('bike_models').select('display_name, cc, excess_km_rate, late_hourly_penalty').eq('id', bike.model.id).maybeSingle(),
+      ]);
+      const bikeDetails = [bikeMeta?.registration_number, bikeMeta?.color, modelRow?.cc ? `${modelRow.cc}cc` : null].filter(Boolean).join(' · ');
+      const pickup = bike?.owner_type === 'platform'
+        ? 'Zodito KPHB Store, 436 Sri Sai Vamshi Residency, Gokul Plots, Kukatpally, Hyderabad – 500085'
+        : undefined;
+      await sendBookingConfirmation(userEmail, {
+        name: userFirstName || 'there',
+        bookingNumber: booking.booking_number,
+        bike: modelRow?.display_name ?? 'Bike',
+        bikeDetails: bikeDetails || undefined,
+        startDate: formatIstDateTime(startTs.toISOString()),
+        endDate: formatIstDateTime(resolvedEndTs.toISOString()),
+        kmLimit: breakdown.kmLimit,
+        total: breakdown.totalAmount,
+        advancePaid: 0,
+        pending: breakdown.totalAmount,
+        securityDeposit: breakdown.securityDeposit,
+        pickupLocation: pickup,
+        pickupPhone: bike?.owner_type === 'platform' ? '+91 93929 12953' : undefined,
+        extraKmRate: modelRow?.excess_km_rate ?? undefined,
+        latePenaltyRate: modelRow?.late_hourly_penalty ?? undefined,
+      });
+    } catch (e) {
+      console.error('[create-cash] confirmation email failed', e);
+    }
   }
 
   return NextResponse.json({

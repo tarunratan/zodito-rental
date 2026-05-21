@@ -32,11 +32,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { data: booking } = await admin
     .from('bookings')
     .select(`
-      id, booking_number, user_id, status, start_ts, end_ts, km_limit, base_price, gst_amount,
+      id, booking_number, user_id, status, start_ts, end_ts, km_limit, base_price, gst_amount, advance_paid, pending_amount,
       bike_id,
       bike:bikes!inner(
-        id,
-        model:bike_models!inner(packages:bike_model_packages(tier, price, km_limit))
+        id, late_penalty_hour,
+        model:bike_models!inner(late_hourly_penalty, packages:bike_model_packages(tier, price, km_limit))
       )
     `)
     .eq('id', params.id)
@@ -47,14 +47,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (booking.status !== 'ongoing') {
     return NextResponse.json({ error: 'Only ongoing bookings can be extended' }, { status: 400 });
   }
-  // Mirror /quote: refuse self-service extension once the original drop-off
-  // time has passed. Customer must return the bike or have an admin extend.
-  if (new Date() > new Date(booking.end_ts)) {
-    return NextResponse.json(
-      { error: 'This booking is past its drop-off time. Please return the bike or contact support to extend.' },
-      { status: 400 },
-    );
-  }
+
+  // Late-penalty surcharge for overdue self-extends — see /quote for rationale.
+  // Quote response includes the same fields so the UI can show the breakdown
+  // before payment; this block recomputes to keep the server authoritative.
+  const nowMs = Date.now();
+  const endMs = new Date(booking.end_ts).getTime();
+  const hoursOverdue = Math.max(0, Math.ceil((nowMs - endMs) / 3_600_000));
+  const latePenaltyRate = Number(
+    (booking.bike as any)?.late_penalty_hour ??
+    (booking.bike as any)?.model?.late_hourly_penalty ??
+    49
+  );
+  const latePenalty = hoursOverdue * latePenaltyRate;
 
   const [{ data: overrides }, { data: customPkgs }] = await Promise.all([
     admin.from('bike_packages').select('tier, price, km_limit').eq('bike_id', booking.bike_id),
@@ -78,7 +83,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   });
 
   if ('error' in quote) return NextResponse.json(quote, { status: 400 });
-  if (quote.totalDelta <= 0) {
+  // Total payable rolls in the late penalty. An extension that's only past
+  // the drop-off time (no extra hours requested) still has totalDelta > 0
+  // because of the penalty; an extension with zero baseDelta AND zero
+  // penalty is rejected as a no-op.
+  const totalPayable = quote.totalDelta + latePenalty;
+  if (totalPayable <= 0) {
     return NextResponse.json({ error: 'Extension does not require any extra payment.' }, { status: 400 });
   }
 
@@ -112,9 +122,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       original_km_limit: quote.originalKmLimit,
       extra_km: quote.extraKm,
       new_km_limit: quote.newKmLimit,
-      base_delta: quote.baseDelta,
+      // The late penalty is folded into base_delta so the existing schema +
+      // verify flow keeps working without a new column. total_delta is the
+      // canonical Razorpay amount the customer actually pays.
+      base_delta: quote.baseDelta + latePenalty,
       gst_delta:  quote.gstDelta,
-      total_delta: quote.totalDelta,
+      total_delta: totalPayable,
       matched_tier: quote.matchedTier,
       custom_package_id: quote.matchedCustomPackageId,
     })
@@ -129,7 +142,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // Razorpay order — uses booking_number as receipt + extension id in notes.
   try {
     const order = await createRazorpayOrder({
-      amountRupees: quote.totalDelta,
+      amountRupees: totalPayable,
       bookingId: booking.id,
       bookingNumber: booking.booking_number,
       userId: user.id,
@@ -143,8 +156,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       extension_id: extension.id,
       booking_id: booking.id,
       booking_number: booking.booking_number,
-      totalAmount: quote.totalDelta,
-      quote,
+      totalAmount: totalPayable,
+      quote: { ...quote, latePenalty, hoursOverdue, latePenaltyRate, totalDelta: totalPayable },
       razorpay: {
         order_id: order.id,
         amount: order.amount,
