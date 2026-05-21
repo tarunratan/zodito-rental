@@ -450,6 +450,11 @@ export function BookingsManager({ initialBookings }: { initialBookings: Booking[
         </div>
       </div>
 
+      {/* Daily/weekly/monthly summary strip — quick "what do I need to do
+          today" surface. Computed from the already-loaded bookings, no
+          extra fetch. */}
+      <SummaryStrip bookings={bookings} />
+
       {/* Sub-tabs — replaces the old status-chip row. Active/Overdue/Upcoming/Past
           group the same statuses but by what an admin actually does with them. */}
       <div className="flex flex-wrap gap-2 mb-3">
@@ -927,6 +932,108 @@ function RowActions({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SummaryStrip — five compact cards above the sub-tabs showing the
+// operator's "what do I need to do" at a glance.
+//
+// All metrics are computed from the bookings array already loaded by the
+// page (200 most recent). For a small/medium tenant this covers daily and
+// weekly fine, and is close enough for monthly. If you outgrow that, swap
+// in a dedicated aggregation endpoint — the component interface stays the
+// same.
+// ─────────────────────────────────────────────────────────────────────────────
+function SummaryStrip({ bookings }: { bookings: Booking[] }) {
+  const [range, setRange] = useState<'today' | 'week' | 'month'>('today');
+
+  // IST-aware boundary math. Operator thinks in IST; if we compute boundaries
+  // in UTC, a 2 AM pickup looks like "yesterday" on the dashboard. Use the
+  // local Date object — Vercel + browsers both honour the user's TZ for new
+  // Date() comparisons.
+  const now = new Date();
+  let from = new Date(now);
+  let to   = new Date(now);
+  if (range === 'today') {
+    from.setHours(0, 0, 0, 0);
+    to.setHours(23, 59, 59, 999);
+  } else if (range === 'week') {
+    // Mon → Sun. JS Sunday = 0; shift so Monday is the start.
+    const day = (now.getDay() + 6) % 7;
+    from.setDate(now.getDate() - day);
+    from.setHours(0, 0, 0, 0);
+    to = new Date(from);
+    to.setDate(from.getDate() + 6);
+    to.setHours(23, 59, 59, 999);
+  } else {
+    from = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    to   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  }
+
+  const inRange = (iso: string | null | undefined) => {
+    if (!iso) return false;
+    const t = new Date(iso).getTime();
+    return t >= from.getTime() && t <= to.getTime();
+  };
+
+  // Pickups, returns, revenue, dues — scoped to the chosen range.
+  // Overdue is always "right now" since it's an actionable count, not a
+  // historical metric.
+  const nowMs = now.getTime();
+  const pickupsInRange  = bookings.filter(b => inRange(b.start_ts) && b.status !== 'cancelled' && b.status !== 'payment_failed').length;
+  const returnsInRange  = bookings.filter(b => inRange(b.end_ts)   && b.status !== 'cancelled' && b.status !== 'payment_failed').length;
+  const overdueNow      = bookings.filter(b =>
+    (b.status === 'ongoing'   && new Date(b.end_ts).getTime()   < nowMs) ||
+    (b.status === 'confirmed' && new Date(b.start_ts).getTime() < nowMs)
+  ).length;
+  const revenueInRange  = bookings
+    .filter(b => inRange(b.start_ts) && b.status !== 'cancelled' && b.status !== 'payment_failed')
+    .reduce((sum, b) => sum + Number(b.advance_paid ?? 0), 0);
+  const duesInRange     = bookings
+    .filter(b => inRange(b.end_ts) && (b.pending_amount ?? 0) > 0 && b.status !== 'cancelled')
+    .reduce((sum, b) => sum + Number(b.pending_amount ?? 0), 0);
+
+  const rangeLabel = range === 'today' ? 'today' : range === 'week' ? 'this week' : 'this month';
+
+  return (
+    <div className="rounded-xl border border-border bg-white p-3 mb-3">
+      <div className="flex items-center justify-between mb-2.5 flex-wrap gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted">Snapshot</p>
+        <div className="inline-flex rounded-lg overflow-hidden border border-border text-[10px] font-bold">
+          {(['today', 'week', 'month'] as const).map(r => (
+            <button
+              key={r}
+              onClick={() => setRange(r)}
+              className={`px-3 py-1.5 uppercase tracking-wide transition-colors ${
+                range === r ? 'bg-accent text-white' : 'bg-bg text-muted hover:bg-border/60'
+              }`}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        <Card label="Pickups"        value={String(pickupsInRange)}                                       sub={rangeLabel} />
+        <Card label="Returns due"    value={String(returnsInRange)}                                       sub={rangeLabel} />
+        <Card label="Overdue now"    value={String(overdueNow)}                                           sub="needs action" urgent={overdueNow > 0} />
+        <Card label="Revenue"        value={`₹${Math.round(revenueInRange).toLocaleString('en-IN')}`}     sub={`paid ${rangeLabel}`} />
+        <Card label="Dues"           value={`₹${Math.round(duesInRange).toLocaleString('en-IN')}`}        sub={`pending ${rangeLabel}`} accent={duesInRange > 0} />
+      </div>
+    </div>
+  );
+}
+
+function Card({ label, value, sub, urgent, accent }: { label: string; value: string; sub?: string; urgent?: boolean; accent?: boolean }) {
+  const valueClass = urgent ? 'text-red-700' : accent ? 'text-orange-600' : 'text-primary';
+  const borderClass = urgent ? 'border-red-200 bg-red-50/30' : 'border-border bg-bg/30';
+  return (
+    <div className={`rounded-lg border ${borderClass} px-3 py-2`}>
+      <p className="text-[10px] uppercase tracking-wide text-muted">{label}</p>
+      <p className={`font-display font-bold text-lg leading-tight mt-0.5 ${valueClass}`}>{value}</p>
+      {sub && <p className="text-[10px] text-muted mt-0.5">{sub}</p>}
     </div>
   );
 }
