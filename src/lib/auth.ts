@@ -37,7 +37,13 @@ export async function getCurrentAppUser(): Promise<User | null> {
       .single();
 
     return (created as User) ?? null;
-  } catch (err) {
+  } catch (err: any) {
+    // Next.js throws DYNAMIC_SERVER_USAGE whenever cookies() is read during
+    // static analysis — that's its signal to the framework "this route can't
+    // be static." Swallowing it here makes the route look error-free and
+    // also means Next.js doesn't mark it dynamic, leading to surprising
+    // build behaviour. Rethrow so the framework can do its job.
+    if (err?.digest === 'DYNAMIC_SERVER_USAGE') throw err;
     console.error('[auth] getCurrentAppUser error:', err);
     return null;
   }

@@ -16,12 +16,23 @@
  * which now just sets the password against the live session.
  */
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createSupabaseBrowser } from '@/lib/supabase/client';
 
 type Step = 'email' | 'otp' | 'password' | 'done';
+
+// Next.js requires components reading useSearchParams() to live under a
+// Suspense boundary for static export to succeed. The page export is the
+// boundary; the actual content moved into ForgotPasswordInner.
+export default function ForgotPasswordPage() {
+  return (
+    <Suspense fallback={<div className="max-w-md mx-auto px-6 py-16" />}>
+      <ForgotPasswordInner />
+    </Suspense>
+  );
+}
 
 function EyeIcon({ open }: { open: boolean }) {
   return open ? (
@@ -35,7 +46,7 @@ function EyeIcon({ open }: { open: boolean }) {
   );
 }
 
-export default function ForgotPasswordPage() {
+function ForgotPasswordInner() {
   const router    = useRouter();
   const searchParams = useSearchParams();
   const [step, setStep]     = useState<Step>('email');
