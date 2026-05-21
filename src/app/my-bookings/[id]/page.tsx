@@ -38,6 +38,17 @@ export default async function BookingDetailPage({ params }: { params: { id: stri
   if (!booking) notFound();
 
   const bike = booking.bike;
+  const now = new Date();
+  // "Ongoing past drop-off" — we don't mutate booking.status (admin closes
+  // the ride explicitly via handover), but the UI shows it as Overdue so the
+  // customer sees the same lifecycle Rapido / Royal Brothers surfaces.
+  const isOverdue = booking.status === 'ongoing' && new Date(booking.end_ts) < now;
+  const statusBadgeClass = isOverdue
+    ? 'bg-red-100 text-red-700'
+    : 'bg-success/15 text-success';
+  const statusBadgeLabel = isOverdue
+    ? 'Overdue — return required'
+    : booking.status.replace('_', ' ');
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
@@ -59,8 +70,8 @@ export default async function BookingDetailPage({ params }: { params: { id: stri
             <div className="text-sm text-muted mt-1">
               Booking #{booking.booking_number}
             </div>
-            <div className="inline-block mt-2 text-xs font-semibold uppercase tracking-wider px-2 py-1 rounded-md bg-success/15 text-success">
-              {booking.status.replace('_', ' ')}
+            <div className={`inline-block mt-2 text-xs font-semibold uppercase tracking-wider px-2 py-1 rounded-md ${statusBadgeClass}`}>
+              {statusBadgeLabel}
             </div>
           </div>
         </div>
@@ -82,6 +93,8 @@ export default async function BookingDetailPage({ params }: { params: { id: stri
         status={booking.status}
         endTs={booking.end_ts}
         kmLimit={booking.km_limit}
+        latePenaltyPerHour={bike.model?.late_hourly_penalty ?? 49}
+        supportPhone={bike.owner_type === 'vendor' ? bike.vendor?.contact_phone : '+919392912953'}
       />
 
 

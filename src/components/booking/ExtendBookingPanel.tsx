@@ -85,12 +85,16 @@ export function ExtendBookingPanel({
   status,
   endTs,
   kmLimit,
+  latePenaltyPerHour,
+  supportPhone,
 }: {
   bookingId: string;
   bookingNumber: string;
   status: string;
   endTs: string;
   kmLimit: number;
+  latePenaltyPerHour?: number;
+  supportPhone?: string;
 }) {
   const [open, setOpen]           = useState(false);
   // Drop-off as date + 12-hour-clock hour (no minutes). Combined to an ISO
@@ -106,6 +110,20 @@ export function ExtendBookingPanel({
   const [error, setError]         = useState<string | null>(null);
   const [success, setSuccess]     = useState<{ end_ts: string; km_limit: number } | null>(null);
   const [history, setHistory]     = useState<ExtensionEntry[] | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
+  // Live "now" — recomputed on each render. Drives the overdue gate and the
+  // ticking late-fee estimate; refreshed every minute below.
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const endMs       = new Date(endTs).getTime();
+  const isOverdue   = status === 'ongoing' && nowMs > endMs;
+  const hoursOverdue = isOverdue ? Math.ceil((nowMs - endMs) / 3_600_000) : 0;
+  const lateRate    = Number(latePenaltyPerHour ?? 49);
+  const estLateFee  = isOverdue ? hoursOverdue * lateRate : 0;
 
   // Load history (always — so completed extensions show up even when panel closed)
   useEffect(() => {
@@ -230,12 +248,14 @@ export function ExtendBookingPanel({
       <div className="card p-6 mb-4">
         <div className="flex items-start justify-between gap-3 mb-1">
           <div>
-            <h2 className="font-display font-semibold text-lg">Extend booking</h2>
+            <h2 className="font-display font-semibold text-lg">
+              {isOverdue ? 'Return overdue' : 'Extend booking'}
+            </h2>
             <p className="text-xs text-muted mt-0.5">
               Current drop-off: <span className="font-medium text-primary">{formatDateTime(endTs)}</span> · {kmLimit} km included
             </p>
           </div>
-          {status === 'ongoing' && (
+          {status === 'ongoing' && !isOverdue && (
             <button
               onClick={() => { setOpen(o => !o); resetQuote(); }}
               className="text-xs font-semibold bg-accent text-white px-3 py-1.5 rounded-lg hover:bg-accent/90"
@@ -244,6 +264,41 @@ export function ExtendBookingPanel({
             </button>
           )}
         </div>
+
+        {/* Overdue / return-required state — self-service extension is locked.
+            Customer must return the bike (handover) or call support for an
+            admin-assisted extension with late fees applied. */}
+        {isOverdue && (
+          <div className="mt-3 rounded-lg border-2 border-red-200 bg-red-50 p-4 space-y-2 text-sm text-red-900">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">⏰</span>
+              <span className="font-semibold">Booking time elapsed</span>
+              <span className="ml-auto text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-red-600 text-white">
+                Overdue
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <div className="text-[10px] text-red-700 uppercase tracking-wide">Hours late</div>
+                <div className="font-bold text-base">{hoursOverdue} hrs</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-red-700 uppercase tracking-wide">Late penalty</div>
+                <div className="font-bold text-base">{formatINR(estLateFee)}</div>
+                <div className="text-[10px] text-red-700">at {formatINR(lateRate)}/hr · accruing</div>
+              </div>
+            </div>
+            <p className="text-xs leading-relaxed pt-1">
+              Self-service extension is locked once the drop-off time has passed.
+              Please return the bike at the rental shop, or contact support to extend with late fees applied.
+            </p>
+            {supportPhone && (
+              <a href={`tel:${supportPhone}`} className="inline-block bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-4 py-2 rounded-lg mt-1">
+                📞 Call support to return / extend
+              </a>
+            )}
+          </div>
+        )}
 
         {success && (
           <div className="mt-3 rounded-lg border-2 border-green-200 bg-green-50 p-3 text-sm text-green-900">
@@ -254,7 +309,7 @@ export function ExtendBookingPanel({
           </div>
         )}
 
-        {open && status === 'ongoing' && (
+        {open && status === 'ongoing' && !isOverdue && (
           <div className="mt-4 space-y-3">
             <div>
               <label className="text-[11px] text-muted block mb-1">New drop-off date & time</label>
@@ -304,6 +359,35 @@ export function ExtendBookingPanel({
                 <p className="text-[10px] text-muted mt-2">
                   No GST on extensions. Booking is only extended after successful payment.
                 </p>
+
+                {/* Debug breakdown — surfaces the exact tier/package the backend
+                    matched, so the operator can validate pricing in support cases. */}
+                <button
+                  type="button"
+                  onClick={() => setShowDebug(s => !s)}
+                  className="text-[10px] text-accent hover:underline font-semibold mt-2"
+                >
+                  {showDebug ? '▾ Hide pricing details' : '▸ Show pricing details (debug)'}
+                </button>
+                {showDebug && (
+                  <div className="rounded-md border border-dashed border-border bg-white p-2 mt-1 space-y-0.5 text-[11px] font-mono">
+                    <div className="flex justify-between"><span className="text-muted">Booking #</span><span>{bookingNumber}</span></div>
+                    <div className="flex justify-between"><span className="text-muted">Original drop-off</span><span>{formatDateTime(endTs)}</span></div>
+                    <div className="flex justify-between"><span className="text-muted">Requested drop-off</span><span>{formatDateTime(newEnd)}</span></div>
+                    <div className="flex justify-between"><span className="text-muted">Extra hours (raw)</span><span>{quote.extraHours.toFixed(2)}</span></div>
+                    <div className="flex justify-between">
+                      <span className="text-muted">Extra days (ceil)</span>
+                      <span>{Math.ceil(quote.extraHours / 24)}</span>
+                    </div>
+                    <div className="flex justify-between"><span className="text-muted">Matched tier / pkg</span><span>{quote.matchedLabel || quote.matchedTier || '—'}</span></div>
+                    <div className="flex justify-between"><span className="text-muted">Tier code</span><span>{quote.matchedTier ?? 'custom'}</span></div>
+                    <div className="flex justify-between"><span className="text-muted">Original KM limit</span><span>{quote.originalKmLimit}</span></div>
+                    <div className="flex justify-between"><span className="text-muted">New KM limit</span><span>{quote.newKmLimit}</span></div>
+                    <div className="flex justify-between"><span className="text-muted">Base delta</span><span>₹{quote.baseDelta}</span></div>
+                    <div className="flex justify-between"><span className="text-muted">GST delta</span><span>₹{quote.gstDelta} (waived)</span></div>
+                    <div className="flex justify-between"><span className="text-muted">Total delta</span><span>₹{quote.totalDelta}</span></div>
+                  </div>
+                )}
               </div>
             )}
 

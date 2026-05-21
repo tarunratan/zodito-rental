@@ -19,11 +19,18 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }>
 export function BookingCard({ booking }: { booking: Booking }) {
   const bike = booking.bike;
   if (!bike) return null;
-  const style = STATUS_STYLES[booking.status] ?? STATUS_STYLES.completed;
   const isVendor = bike.owner_type === 'vendor';
   const canCancel = booking.status === 'confirmed' || booking.status === 'pending_payment';
   const paid = booking.status === 'confirmed' || booking.status === 'ongoing' || booking.status === 'completed';
-  const pickupOverdue = booking.status === 'confirmed' && new Date(booking.start_ts) <= new Date();
+  const now = new Date();
+  const pickupOverdue = booking.status === 'confirmed' && new Date(booking.start_ts) <= now;
+  // Ongoing past the drop-off time → "Overdue return", same lifecycle surfaced
+  // on the booking detail page. Status in the DB remains 'ongoing' until admin
+  // closes the ride via handover.
+  const returnOverdue = booking.status === 'ongoing' && new Date(booking.end_ts) < now;
+  const style = returnOverdue
+    ? { bg: 'bg-red-100', text: 'text-red-700', label: 'Overdue' }
+    : (STATUS_STYLES[booking.status] ?? STATUS_STYLES.completed);
 
   return (
     <div className="card p-4 md:p-5">
@@ -92,6 +99,13 @@ export function BookingCard({ booking }: { booking: Booking }) {
           {pickupOverdue && (
             <div className="mt-3 px-3 py-2 bg-orange-50 border border-orange-200 rounded-lg text-xs text-orange-700 font-medium">
               ⚠ Pickup time has passed — please contact the rental shop to confirm pickup or cancel.
+            </div>
+          )}
+
+          {/* Overdue return warning — booking time elapsed, vehicle still out */}
+          {returnOverdue && (
+            <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 font-medium">
+              ⏰ Drop-off time has passed — return the bike or call support to extend with late fees.
             </div>
           )}
 

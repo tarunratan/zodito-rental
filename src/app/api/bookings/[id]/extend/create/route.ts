@@ -47,6 +47,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (booking.status !== 'ongoing') {
     return NextResponse.json({ error: 'Only ongoing bookings can be extended' }, { status: 400 });
   }
+  // Mirror /quote: refuse self-service extension once the original drop-off
+  // time has passed. Customer must return the bike or have an admin extend.
+  if (new Date() > new Date(booking.end_ts)) {
+    return NextResponse.json(
+      { error: 'This booking is past its drop-off time. Please return the bike or contact support to extend.' },
+      { status: 400 },
+    );
+  }
 
   const [{ data: overrides }, { data: customPkgs }] = await Promise.all([
     admin.from('bike_packages').select('tier, price, km_limit').eq('bike_id', booking.bike_id),

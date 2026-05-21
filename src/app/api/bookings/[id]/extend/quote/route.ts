@@ -45,6 +45,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (booking.status !== 'ongoing') {
     return NextResponse.json({ error: 'Only ongoing bookings can be extended' }, { status: 400 });
   }
+  // Self-service extension is only available BEFORE the original drop-off
+  // time. Once the booking is overdue, the customer must return the vehicle
+  // (or have the admin extend it manually with late fees). Mirrors the policy
+  // shown in the UI overdue notice.
+  if (new Date() > new Date(booking.end_ts)) {
+    return NextResponse.json(
+      { error: 'This booking is past its drop-off time. Please return the bike or contact support to extend.' },
+      { status: 400 },
+    );
+  }
 
   // Per-bike overrides + custom packages, same shape the booking-create flow uses.
   const [{ data: overrides }, { data: customPkgs }] = await Promise.all([
