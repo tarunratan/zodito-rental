@@ -65,6 +65,26 @@ function ForgotPasswordInner() {
     if (e) setError(e);
   }, [searchParams]);
 
+  // Wrap raw errors with a human-readable explanation. "Failed to fetch" is
+  // the Supabase JS client's network-blip message; the user shouldn't see it
+  // verbatim. Rate-limit and expired-otp messages also get specific copy.
+  function humanError(err: any): string {
+    const msg = String(err?.message ?? err ?? '').toLowerCase();
+    if (msg.includes('failed to fetch') || msg.includes('network')) {
+      return 'Network hiccup. Check your connection and try again.';
+    }
+    if (msg.includes('rate') || msg.includes('too many')) {
+      return 'Too many attempts. Wait a minute, then try again.';
+    }
+    if (msg.includes('token has expired') || msg.includes('expired')) {
+      return 'That code has expired. Request a new one.';
+    }
+    if (msg.includes('invalid') && msg.includes('token')) {
+      return 'That code doesn\'t match. Double-check the email.';
+    }
+    return err?.message ?? 'Something went wrong. Please try again.';
+  }
+
   async function sendCode(e?: React.FormEvent) {
     if (e) e.preventDefault();
     setLoading(true);
@@ -82,7 +102,7 @@ function ForgotPasswordInner() {
       setStep('otp');
       setInfo(`Code sent to ${email}. Check your inbox (and spam).`);
     } catch (e: any) {
-      setError(e?.message ?? 'Failed to send reset code');
+      setError(humanError(e));
     } finally {
       setLoading(false);
     }
@@ -103,7 +123,7 @@ function ForgotPasswordInner() {
       if (error) throw error;
       setStep('password');
     } catch (e: any) {
-      setError(e?.message ?? 'Invalid or expired code');
+      setError(humanError(e));
     } finally {
       setLoading(false);
     }
@@ -122,7 +142,7 @@ function ForgotPasswordInner() {
       setStep('done');
       setTimeout(() => router.push('/sign-in'), 2000);
     } catch (e: any) {
-      setError(e?.message ?? 'Failed to set new password');
+      setError(humanError(e));
     } finally {
       setLoading(false);
     }
@@ -143,15 +163,6 @@ function ForgotPasswordInner() {
       <Link href="/sign-in" className="text-sm text-muted hover:text-primary inline-flex items-center gap-1 mb-8">
         ← Back to sign in
       </Link>
-
-      {/* Step indicator — gives the user a sense of progress without a full wizard */}
-      <div className="flex items-center gap-2 mb-6 text-[11px] font-semibold uppercase tracking-wider">
-        <Pill active={step === 'email'}                  done={step !== 'email'}                              label="1 · Email" />
-        <span className="text-muted">→</span>
-        <Pill active={step === 'otp'}                    done={step === 'password'}                           label="2 · Code" />
-        <span className="text-muted">→</span>
-        <Pill active={step === 'password'}               done={false}                                          label="3 · New password" />
-      </div>
 
       {step === 'email' && (
         <>
@@ -258,10 +269,3 @@ function ForgotPasswordInner() {
   );
 }
 
-function Pill({ active, done, label }: { active: boolean; done: boolean; label: string }) {
-  return (
-    <span className={`px-2 py-1 rounded ${active ? 'bg-accent text-white' : done ? 'bg-success/15 text-success' : 'bg-border/40 text-muted'}`}>
-      {label}
-    </span>
-  );
-}
