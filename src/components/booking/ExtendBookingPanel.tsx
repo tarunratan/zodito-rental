@@ -296,13 +296,13 @@ export function ExtendBookingPanel({
                 <div className="flex justify-between"><span className="text-muted">New KM limit</span><span className="font-semibold">{quote.newKmLimit} km</span></div>
                 <div className="border-t border-border my-1.5" />
                 <div className="flex justify-between"><span className="text-muted">Extra rent</span><span>{formatINR(quote.baseDelta)}</span></div>
-                <div className="flex justify-between"><span className="text-muted">Extra GST (18%)</span><span>{formatINR(quote.gstDelta)}</span></div>
+                <div className="flex justify-between"><span className="text-muted">GST</span><span className="text-green-600 font-semibold">Waived</span></div>
                 <div className="flex justify-between text-sm pt-1">
-                  <span className="font-display font-semibold">Total payable (incl. GST)</span>
+                  <span className="font-display font-semibold">Total payable</span>
                   <span className="font-display font-bold text-accent">{formatINR(quote.totalDelta)}</span>
                 </div>
                 <p className="text-[10px] text-muted mt-2">
-                  Includes 18% GST. Booking is only extended after successful payment.
+                  No GST on extensions. Booking is only extended after successful payment.
                 </p>
               </div>
             )}

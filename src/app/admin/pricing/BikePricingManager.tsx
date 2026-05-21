@@ -55,6 +55,13 @@ type PanelProps = {
     per_day_price?: number | null;
     per_day_km_limit?: number | null;
   }) => void;
+  onEditCustom: (id: string, updates: {
+    label?: string;
+    price?: number | null;
+    km_limit?: number | null;
+    per_day_price?: number | null;
+    per_day_km_limit?: number | null;
+  }) => Promise<boolean>;
   addingCustom: boolean;
   onSavePolicies: (extraKmRate: number, latePenaltyHour: number) => void;
   savingPolicies: boolean;
@@ -64,7 +71,7 @@ type PanelProps = {
 function PricingEditPanel({
   bike, packages, customPkgs, loadingPkg, saving, error, success,
   hasOverride, onUpdateField, onResetTier, onResetAll, onSave,
-  onDeleteCustom, onAddCustom, addingCustom, onSavePolicies, savingPolicies, onClose,
+  onDeleteCustom, onAddCustom, onEditCustom, addingCustom, onSavePolicies, savingPolicies, onClose,
 }: PanelProps) {
   const [customLabel, setCustomLabel]   = useState('');
   const [customUnit, setCustomUnit]     = useState<'days' | 'hours'>('days');
@@ -81,6 +88,55 @@ function PricingEditPanel({
 
   const [rateKm, setRateKm]           = useState(String(bike.extra_km_rate ?? 3));
   const [rateLate, setRateLate]       = useState(String(bike.late_penalty_hour ?? 49));
+
+  // Inline-edit state for an existing custom package.
+  const [editingPkgId, setEditingPkgId] = useState<string | null>(null);
+  const [editPrice, setEditPrice]   = useState('');
+  const [editKm, setEditKm]         = useState('');
+  const [editPerDayPrice, setEditPerDayPrice] = useState('');
+  const [editPerDayKm, setEditPerDayKm]       = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+
+  function startEdit(cp: CustomPkg) {
+    setEditingPkgId(cp.id);
+    setEditPrice(cp.per_day_price != null ? '' : String(cp.price ?? ''));
+    setEditKm(cp.per_day_price != null ? '' : String(cp.km_limit ?? ''));
+    setEditPerDayPrice(cp.per_day_price != null ? String(cp.per_day_price) : '');
+    setEditPerDayKm(cp.per_day_km_limit != null ? String(cp.per_day_km_limit) : '');
+  }
+
+  function cancelEdit() {
+    setEditingPkgId(null);
+    setEditPrice(''); setEditKm('');
+    setEditPerDayPrice(''); setEditPerDayKm('');
+  }
+
+  async function commitEdit(cp: CustomPkg) {
+    const isPerDay = cp.per_day_price != null;
+    const updates: {
+      price?: number | null;
+      km_limit?: number | null;
+      per_day_price?: number | null;
+      per_day_km_limit?: number | null;
+    } = {};
+    if (isPerDay) {
+      const pdp = parseFloat(editPerDayPrice);
+      const pdk = editPerDayKm === '' ? null : parseInt(editPerDayKm, 10);
+      if (!Number.isFinite(pdp) || pdp <= 0) return;
+      updates.per_day_price    = pdp;
+      updates.per_day_km_limit = pdk;
+    } else {
+      const p = parseFloat(editPrice);
+      const k = editKm === '' ? 0 : parseInt(editKm, 10);
+      if (!Number.isFinite(p) || p < 0) return;
+      updates.price    = p;
+      updates.km_limit = Number.isFinite(k) ? k : 0;
+    }
+    setEditSaving(true);
+    const ok = await onEditCustom(cp.id, updates);
+    setEditSaving(false);
+    if (ok) cancelEdit();
+  }
 
   function resetForm() {
     setCustomLabel(''); setCustomUnit('days');
@@ -234,34 +290,109 @@ function PricingEditPanel({
               {/* Existing custom packages */}
               {customPkgs.length > 0 && (
                 <div className="space-y-2 mb-3">
-                  {customPkgs.map(cp => (
-                    <div key={cp.id} className="flex items-center gap-3 p-3 rounded-lg border border-border bg-bg">
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-sm">{cp.label}</div>
-                        <div className="text-[11px] text-muted mt-0.5">
-                          {cp.min_duration_hours > 0 && (
-                            <>
-                              {cp.min_duration_hours % 24 === 0
-                                ? `${cp.min_duration_hours / 24}d`
-                                : `${cp.min_duration_hours}h`}
-                              {' – '}
-                            </>
+                  {customPkgs.map(cp => {
+                    const isEditing = editingPkgId === cp.id;
+                    const isPerDay  = cp.per_day_price != null;
+                    return (
+                      <div key={cp.id} className="p-3 rounded-lg border border-border bg-bg">
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-sm">{cp.label}</div>
+                            <div className="text-[11px] text-muted mt-0.5">
+                              {cp.min_duration_hours > 0 && (
+                                <>
+                                  {cp.min_duration_hours % 24 === 0
+                                    ? `${cp.min_duration_hours / 24}d`
+                                    : `${cp.min_duration_hours}h`}
+                                  {' – '}
+                                </>
+                              )}
+                              {cp.duration_hours % 24 === 0
+                                ? `${cp.duration_hours / 24} days`
+                                : `${cp.duration_hours} hrs`}
+                              {' · '}
+                              {isPerDay
+                                ? <>{formatINR(Number(cp.per_day_price))}/day{cp.per_day_km_limit ? ` · ${cp.per_day_km_limit} km/day` : ''}</>
+                                : <>{formatINR(cp.price)}{cp.km_limit > 0 && ` · ${cp.km_limit} km`}</>}
+                            </div>
+                          </div>
+                          {!isEditing ? (
+                            <div className="flex items-center gap-3 shrink-0">
+                              <button
+                                onClick={() => startEdit(cp)}
+                                className="text-xs text-accent hover:underline font-medium"
+                              >Edit</button>
+                              <button
+                                onClick={() => onDeleteCustom(cp.id)}
+                                className="text-xs text-danger hover:underline font-medium"
+                              >Delete</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-3 shrink-0">
+                              <button
+                                onClick={() => commitEdit(cp)}
+                                disabled={editSaving}
+                                className="text-xs text-white bg-accent px-2.5 py-1 rounded hover:bg-accent/90 disabled:opacity-50 font-medium"
+                              >{editSaving ? 'Saving…' : 'Save'}</button>
+                              <button
+                                onClick={cancelEdit}
+                                disabled={editSaving}
+                                className="text-xs text-muted hover:underline font-medium"
+                              >Cancel</button>
+                            </div>
                           )}
-                          {cp.duration_hours % 24 === 0
-                            ? `${cp.duration_hours / 24} days`
-                            : `${cp.duration_hours} hrs`}
-                          {' · '}
-                          {(cp as any).per_day_price
-                            ? <>{formatINR(Number((cp as any).per_day_price))}/day{(cp as any).per_day_km_limit ? ` · ${(cp as any).per_day_km_limit} km/day` : ''}</>
-                            : <>{formatINR(cp.price)}{cp.km_limit > 0 && ` · ${cp.km_limit} km`}</>}
                         </div>
+
+                        {isEditing && (
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            {isPerDay ? (
+                              <>
+                                <div>
+                                  <label className="text-[10px] text-muted uppercase tracking-wide block mb-1">Per-day price (₹)</label>
+                                  <input
+                                    type="number" inputMode="decimal" min={0} step={1}
+                                    value={editPerDayPrice}
+                                    onChange={e => setEditPerDayPrice(e.target.value)}
+                                    className="input-field text-sm py-1.5 px-2 w-full"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-muted uppercase tracking-wide block mb-1">Per-day KM</label>
+                                  <input
+                                    type="number" inputMode="numeric" min={0} step={10}
+                                    value={editPerDayKm}
+                                    onChange={e => setEditPerDayKm(e.target.value)}
+                                    className="input-field text-sm py-1.5 px-2 w-full"
+                                  />
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div>
+                                  <label className="text-[10px] text-muted uppercase tracking-wide block mb-1">Price (₹)</label>
+                                  <input
+                                    type="number" inputMode="decimal" min={0} step={1}
+                                    value={editPrice}
+                                    onChange={e => setEditPrice(e.target.value)}
+                                    className="input-field text-sm py-1.5 px-2 w-full"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-muted uppercase tracking-wide block mb-1">KM limit</label>
+                                  <input
+                                    type="number" inputMode="numeric" min={0} step={10}
+                                    value={editKm}
+                                    onChange={e => setEditKm(e.target.value)}
+                                    className="input-field text-sm py-1.5 px-2 w-full"
+                                  />
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <button
-                        onClick={() => onDeleteCustom(cp.id)}
-                        className="text-xs text-danger hover:underline shrink-0 font-medium"
-                      >Delete</button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
@@ -672,6 +803,34 @@ export function BikePricingManager({ initialBikes, isDebug }: { initialBikes: Bi
     }
   }
 
+  async function editCustomPackage(pkgId: string, updates: {
+    label?: string;
+    price?: number | null;
+    km_limit?: number | null;
+    per_day_price?: number | null;
+    per_day_km_limit?: number | null;
+  }): Promise<boolean> {
+    if (!editingBike) return false;
+    setError(null); setSuccess(null);
+    try {
+      const res = await fetch(`/api/admin/bikes/${editingBike.id}/custom-packages`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pkg_id: pkgId, ...updates }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error ?? 'Failed to update'); return false; }
+      if (data.package) {
+        setCustomPkgs(prev => prev.map(p => p.id === pkgId ? data.package : p));
+      }
+      setSuccess('Package updated');
+      return true;
+    } catch {
+      setError('Network error — please try again');
+      return false;
+    }
+  }
+
   async function deleteCustomPackage(pkgId: string) {
     if (!editingBike) return;
     setError(null); setSuccess(null);
@@ -705,6 +864,7 @@ export function BikePricingManager({ initialBikes, isDebug }: { initialBikes: Bi
     onSave: save,
     onDeleteCustom: deleteCustomPackage,
     onAddCustom: addCustomPackage,
+    onEditCustom: editCustomPackage,
     addingCustom,
     onSavePolicies: savePolicies,
     savingPolicies,

@@ -56,8 +56,9 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  let admin;
   try {
-    await requireAdmin();
+    admin = await requireAdmin();
   } catch {
     return NextResponse.json({ error: 'Admin only' }, { status: 403 });
   }
@@ -188,6 +189,11 @@ export async function POST(req: NextRequest) {
       kyc_aadhaar_front_url: kyc_aadhaar_front_url || null,
       kyc_aadhaar_back_url:  kyc_aadhaar_back_url  || null,
       kyc_selfie_url:        kyc_selfie_url        || null,
+      // Offline bookings are fully admin-entered at creation: stamp them as
+      // saved immediately so reopening shows the Order Confirmation view
+      // rather than the editable form again.
+      handover_saved_at: new Date().toISOString(),
+      handover_saved_by: admin.id,
     })
     .select('id, booking_number')
     .single();

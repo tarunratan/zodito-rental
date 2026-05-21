@@ -46,9 +46,26 @@ type Booking = {
   kyc_aadhaar_front_url?: string | null;
   kyc_aadhaar_back_url?: string | null;
   kyc_selfie_url?: string | null;
+  handover_saved_at?: string | null;
+  handover_saved_by?: string | null;
   user_id?: string | null;
   user: { id: string; email: string | null; first_name: string | null; last_name: string | null; phone: string | null } | null;
-  bike: { id: string; registration_number: string | null; color: string | null; emoji: string; image_url?: string | null; model: { display_name: string } | null } | null;
+  bike: {
+    id: string;
+    registration_number: string | null;
+    color: string | null;
+    emoji: string;
+    image_url?: string | null;
+    extra_km_rate?: number | null;
+    late_penalty_hour?: number | null;
+    model: {
+      display_name: string;
+      category?: string | null;
+      cc?: number | null;
+      excess_km_rate?: number | null;
+      late_hourly_penalty?: number | null;
+    } | null;
+  } | null;
 };
 
 function customerInfo(b: Booking) {
@@ -628,12 +645,11 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                       key={b.id}
                       className={`border-b border-border hover:bg-bg/40 cursor-pointer transition-colors ${expanded === b.id ? 'bg-bg/60' : ''}`}
                       onClick={() => {
-                        if (b.source !== 'manual') {
-                          setDetailBooking(b);
-                        } else {
-                          if (expanded !== b.id) initHandover(b);
-                          setExpanded(e => e === b.id ? null : b.id);
-                        }
+                        // Both online and offline now open the same Detail modal —
+                        // offline bookings already have handover_saved_at set at
+                        // creation, so they land directly on the Order Confirmation
+                        // view (per spec, identical flow for both sources).
+                        setDetailBooking(b);
                       }}
                     >
                       <td className="px-4 py-3">
@@ -780,16 +796,11 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                               Delete
                             </button>
                           )}
-                          <button onClick={() => {
-                            if (b.source !== 'manual') {
-                              setDetailBooking(b);
-                              return;
-                            }
-                            if (expanded !== b.id) initHandover(b);
-                            setExpanded(e => e === b.id ? null : b.id);
-                          }}
-                            className="text-xs px-2 py-1 bg-border text-primary rounded hover:bg-border/70 transition-colors">
-                            {b.source !== 'manual' ? 'Details' : (expanded === b.id ? 'Hide' : 'Details')}
+                          <button
+                            onClick={() => setDetailBooking(b)}
+                            className="text-xs px-2 py-1 bg-border text-primary rounded hover:bg-border/70 transition-colors"
+                          >
+                            Details
                           </button>
                         </div>
                       </td>

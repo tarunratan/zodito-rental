@@ -112,6 +112,99 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 }
 
+// Edit a custom package — admin can adjust price/km/duration after creation.
+// Mirrors the create-schema validations but every field is optional except
+// pkg_id; we only update what was sent.
+const patchSchema = z.object({
+  pkg_id:             z.string().uuid(),
+  label:              z.string().min(1).max(80).optional(),
+  min_duration_hours: z.number().int().min(0).optional(),
+  duration_hours:     z.number().int().min(1).max(8760).optional(),
+  price:              z.number().nonnegative().nullable().optional(),
+  km_limit:           z.number().int().nonnegative().nullable().optional(),
+  per_day_price:      z.number().positive().nullable().optional(),
+  per_day_km_limit:   z.number().int().nonnegative().nullable().optional(),
+  is_active:          z.boolean().optional(),
+});
+
+export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    if (isMockMode()) return NextResponse.json({ ok: true, mock: true });
+    await requireAdmin();
+    const parse = patchSchema.safeParse(await req.json());
+    if (!parse.success) return NextResponse.json({ error: 'Invalid data: ' + parse.error.message }, { status: 400 });
+    const { pkg_id, ...d } = parse.data;
+    const supabase = createSupabaseAdmin();
+
+    // Need current row to validate bounds and to recompute per-day-derived
+    // price/km when per-day fields change.
+    const { data: existing, error: fetchErr } = await supabase
+      .from('custom_packages')
+      .select('id, bike_id, min_duration_hours, duration_hours, price, km_limit, per_day_price, per_day_km_limit')
+      .eq('id', pkg_id)
+      .eq('bike_id', params.id)
+      .maybeSingle();
+    if (fetchErr || !existing) return NextResponse.json({ error: 'Package not found' }, { status: 404 });
+
+    const next = {
+      label:              d.label,
+      min_duration_hours: d.min_duration_hours ?? existing.min_duration_hours,
+      duration_hours:     d.duration_hours     ?? existing.duration_hours,
+      price:              d.price ?? existing.price,
+      km_limit:           d.km_limit ?? existing.km_limit,
+      per_day_price:      d.per_day_price === undefined ? existing.per_day_price : d.per_day_price,
+      per_day_km_limit:   d.per_day_km_limit === undefined ? existing.per_day_km_limit : d.per_day_km_limit,
+      is_active:          d.is_active,
+    };
+
+    if (next.duration_hours <= next.min_duration_hours) {
+      return NextResponse.json({ error: 'Upper bound must be greater than lower bound' }, { status: 400 });
+    }
+
+    // Keep the denormalised price/km in sync when per-day rate is being used.
+    if (next.per_day_price != null) {
+      const minDays = Math.max(1, Math.ceil((next.min_duration_hours || next.duration_hours) / 24));
+      next.price    = Math.round(Number(next.per_day_price) * minDays * 100) / 100;
+      next.km_limit = Math.round(Number(next.per_day_km_limit ?? 0) * minDays);
+    }
+
+    const updates: Record<string, unknown> = {};
+    if (d.label              !== undefined) updates.label              = next.label;
+    if (d.min_duration_hours !== undefined) updates.min_duration_hours = next.min_duration_hours;
+    if (d.duration_hours     !== undefined) updates.duration_hours     = next.duration_hours;
+    if (d.price              !== undefined || d.per_day_price !== undefined) updates.price    = next.price;
+    if (d.km_limit           !== undefined || d.per_day_price !== undefined) updates.km_limit = next.km_limit;
+    if (d.per_day_price      !== undefined) updates.per_day_price      = next.per_day_price;
+    if (d.per_day_km_limit   !== undefined) updates.per_day_km_limit   = next.per_day_km_limit;
+    if (d.is_active          !== undefined) updates.is_active          = next.is_active;
+
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json({ ok: true, noop: true });
+    }
+
+    const { data, error } = await supabase
+      .from('custom_packages')
+      .update(updates)
+      .eq('id', pkg_id)
+      .eq('bike_id', params.id)
+      .select('id, label, min_duration_hours, duration_hours, price, km_limit, per_day_price, per_day_km_limit, is_active, created_at')
+      .single();
+
+    if (error) {
+      if (error.code === '23505') {
+        return NextResponse.json({ error: 'Another package with this duration already exists' }, { status: 409 });
+      }
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    revalidatePath(`/bikes/${params.id}`);
+    revalidatePath(`/`);
+    return NextResponse.json({ package: data });
+  } catch {
+    return NextResponse.json({ error: 'Admin only' }, { status: 403 });
+  }
+}
+
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     if (isMockMode()) return NextResponse.json({ ok: true, mock: true });

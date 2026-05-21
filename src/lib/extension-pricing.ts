@@ -114,24 +114,27 @@ export function quoteExtension(input: ExtensionInputs): ExtensionQuote | { error
           hasOriginalDL: true,
         });
 
+    // GST is waived on extensions — customer/admin pay base price only.
+    // (Policy: extensions are treated as a courtesy adjustment, not a new
+    // standalone rental for tax purposes.)
     return {
       extraHours: Number(extraHours.toFixed(2)),
       extraKm:    extraBreakdown.kmLimit,
       originalKmLimit,
       newKmLimit: originalKmLimit + extraBreakdown.kmLimit,
       baseDelta:  extraBreakdown.basePrice,
-      gstDelta:   extraBreakdown.gstAmount,
-      totalDelta: extraBreakdown.basePrice + extraBreakdown.gstAmount,
+      gstDelta:   0,
+      totalDelta: extraBreakdown.basePrice,
       matchedTier:            extraMatch.type === 'standard' ? extraMatch.tier : null,
       matchedCustomPackageId: extraMatch.type === 'custom'   ? extraMatch.pkg.id : null,
       matchedLabel:           extraMatch.type === 'custom'   ? extraMatch.pkg.label : extraMatch.tier,
     };
   }
 
-  // Primary path — full-trip minus original.
+  // Primary path — full-trip minus original. GST is waived on extensions.
   const baseDelta  = Math.max(0, rawBaseDelta);
-  const gstDelta   = Math.max(0, fullBreakdown.gstAmount - originalGstAmount);
-  const totalDelta = baseDelta + gstDelta;
+  const gstDelta   = 0;
+  const totalDelta = baseDelta;
   const extraKm    = Math.max(0, rawKmDelta);
 
   return {

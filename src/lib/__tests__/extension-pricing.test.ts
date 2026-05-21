@@ -55,8 +55,9 @@ describe('quoteExtension', () => {
     if ('error' in r) throw new Error('Expected a quote, got error: ' + r.error);
     expect(r.extraHours).toBeCloseTo(12, 2);
     expect(r.baseDelta).toBe(200);
-    expect(r.gstDelta).toBe(36);
-    expect(r.totalDelta).toBe(236);
+    // GST is waived on extensions — see extension-pricing.ts policy comment.
+    expect(r.gstDelta).toBe(0);
+    expect(r.totalDelta).toBe(200);
     expect(r.extraKm).toBe(100);
     expect(r.newKmLimit).toBe(240);
     expect(r.matchedTier).toBe('36hr');
@@ -114,10 +115,11 @@ describe('quoteExtension', () => {
       customPackages: [],
     });
     if ('error' in r) throw new Error(r.error);
-    // Extra 14 hours → 24hr tier (covers 12-24) → ₹600 + ₹108 GST + 140km
+    // Extra 14 hours → 24hr tier (covers 12-24) → ₹600 base, 140km.
+    // GST is waived on extensions.
     expect(r.baseDelta).toBe(600);
-    expect(r.gstDelta).toBe(108);
-    expect(r.totalDelta).toBe(708);
+    expect(r.gstDelta).toBe(0);
+    expect(r.totalDelta).toBe(600);
     expect(r.extraKm).toBe(140);
     expect(r.newKmLimit).toBe(250 + 140); // original + extra
   });
