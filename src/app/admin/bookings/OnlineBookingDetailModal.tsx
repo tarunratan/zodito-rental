@@ -443,6 +443,36 @@ export function OnlineBookingDetailModal({
     const altPhone = edit.alternate_phone || booking!.alternate_phone || '—';
     const remarks  = (edit.notes || booking!.notes || '').trim() || '—';
 
+    // Recover the ORIGINAL drop-off from extension history. booking.end_ts has
+    // been mutated by every paid extension since, so it's not the date the
+    // customer booked. The first confirmed extension's original_end_ts is.
+    const confirmedExts = (extensions ?? []).filter((e: any) => e.status === 'confirmed');
+    const firstExt = confirmedExts.length > 0
+      ? [...confirmedExts].sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())[0]
+      : null;
+    const originalEndTs = firstExt ? firstExt.original_end_ts : booking!.end_ts;
+    const wasExtended = !!firstExt && originalEndTs !== booking!.end_ts;
+
+    // Build the extension lines that go BETWEEN booking details and rules.
+    // Order: oldest extension first so the reader gets a timeline.
+    const extensionLines: string[] = [];
+    if (wasExtended) {
+      extensionLines.push('');
+      extensionLines.push(`EXTENSIONS (${confirmedExts.length}× paid)`);
+      const ordered = [...confirmedExts].sort((a: any, b: any) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      ordered.forEach((e: any, i: number) => {
+        const extraDays = (e.extra_hours ?? 0) >= 24
+          ? `+${Math.round(((e.extra_hours ?? 0) / 24) * 10) / 10} day(s)`
+          : `+${Math.round(e.extra_hours ?? 0)} hr`;
+        extensionLines.push(`#${i + 1} · ${fmtDateTime12(e.original_end_ts)} → ${fmtDateTime12(e.new_end_ts)} (${extraDays})`);
+        if ((e.extra_km ?? 0) > 0) extensionLines.push(`   · +${e.extra_km} km, new limit ${e.new_km_limit} km`);
+        extensionLines.push(`   · Paid ${rupee(Number(e.total_delta))}${e.matched_tier ? ` · ${e.matched_tier}` : ''}`);
+      });
+      extensionLines.push('');
+      extensionLines.push(`Current drop-off (after extensions) : ${fmtDateTime12(booking!.end_ts)}`);
+    }
+
     // NOTE on emojis: WhatsApp transit and copy/paste through some clients
     // mangle composed sequences (heart + VS-16 selector, etc.) and certain
     // BMP-supplementary glyphs. Use only single-codepoint, widely-supported
@@ -454,7 +484,7 @@ export function OnlineBookingDetailModal({
       `Bike Booked : ${bikeName}`,
       `Bike Details : ${bikeDetails}`,
       `Pickup D&T : ${fmtDateTime12(booking!.start_ts)}`,
-      `Drop D&T : ${fmtDateTime12(booking!.end_ts)}`,
+      `Drop D&T (original) : ${fmtDateTime12(originalEndTs)}`,
       `Amount Paid : ${rupee(paid)}`,
       `Amount Pending : ${rupee(pending)}`,
       `Odometer Reading : ${odo}`,
@@ -464,6 +494,7 @@ export function OnlineBookingDetailModal({
       `Original DL taken : ${dl}`,
       `Fuel Level : —`,
       `Handover Remarks : ${remarks}`,
+      ...extensionLines,
       '',
       `${isScooter ? 'Scooty' : 'Bike'}: ₹${extraKmRate} per extra km / ₹${latePenaltyRate} per hour for late penalty.`,
       `⏰ Hub timings 6:00am - 10:30pm.`,
@@ -1271,6 +1302,17 @@ function OrderConfirmationCard({
   const adminHoursOverdue = adminIsOverdue ? Math.ceil((nowMs - endMs) / 3_600_000) : 0;
   const adminPenaltySoFar = adminHoursOverdue * latePenaltyRate;
 
+  // Recover the ORIGINAL drop-off from extension history. booking.end_ts has
+  // been mutated by every paid extension since, so the Order Confirmation
+  // card was silently showing the latest date as if it was the original
+  // booking — admins couldn't tell at a glance that the dates moved.
+  const confirmedExtensions = (extensions ?? []).filter((e: any) => e.status === 'confirmed');
+  const firstExtension = confirmedExtensions.length > 0
+    ? [...confirmedExtensions].sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())[0]
+    : null;
+  const originalDropTs = firstExtension ? firstExtension.original_end_ts : booking.end_ts;
+  const isExtended = !!firstExtension && originalDropTs !== booking.end_ts;
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1299,7 +1341,17 @@ function OrderConfirmationCard({
         <ConfRow label="Bike Booked"        value={bikeName} />
         <ConfRow label="Bike Details"       value={bikeDetails} />
         <ConfRow label="Pickup  D&T"        value={fmtDateTime12(booking.start_ts)} />
-        <ConfRow label="Drop  D&T"          value={fmtDateTime12(booking.end_ts)} />
+        <ConfRow
+          label={isExtended ? 'Drop  D&T (original)' : 'Drop  D&T'}
+          value={fmtDateTime12(originalDropTs)}
+        />
+        {isExtended && (
+          <ConfRow
+            label="Current drop"
+            value={`${fmtDateTime12(booking.end_ts)}  (extended ${confirmedExtensions.length}×)`}
+            accent
+          />
+        )}
         <ConfRow label="Amount Paid"        value={rupee(paid)} />
         <ConfRow label="Amount Pending"     value={rupee(pending)} accent={pending > 0} />
         <ConfRow label="Odometer Reading"   value={odo} />
