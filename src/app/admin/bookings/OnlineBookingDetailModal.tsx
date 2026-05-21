@@ -59,6 +59,39 @@ type DetailBooking = {
   } | null;
 };
 
+// Rich activity events — sourced from the unified /activity endpoint that
+// stitches booking creation + handover logs + extensions into one timeline
+// with descriptive titles and structured detail strings.
+type ActivityEvent = {
+  id: string;
+  ts: string;
+  kind: 'created' | 'confirmed' | 'started' | 'completed' | 'cancelled' | 'refunded'
+      | 'extended_paid' | 'extension_pending' | 'extension_failed' | 'extension_expired'
+      | 'settlement_created' | 'handover_save' | 'note';
+  title: string;
+  detail?: string | null;
+  actor?: string | null;
+};
+
+// Icon + accent colour per event kind — drives the timeline dot styling.
+const EVENT_STYLE: Record<ActivityEvent['kind'], { icon: string; ring: string }> = {
+  created:            { icon: '🆕', ring: 'bg-blue-500'   },
+  confirmed:          { icon: '✓',  ring: 'bg-blue-500'   },
+  started:            { icon: '🏁', ring: 'bg-orange-500' },
+  completed:          { icon: '✅', ring: 'bg-green-500'  },
+  cancelled:          { icon: '✕',  ring: 'bg-red-500'    },
+  refunded:           { icon: '↩',  ring: 'bg-blue-500'   },
+  extended_paid:      { icon: '⏩', ring: 'bg-purple-500' },
+  extension_pending:  { icon: '…',  ring: 'bg-yellow-500' },
+  extension_failed:   { icon: '⚠',  ring: 'bg-red-500'    },
+  extension_expired:  { icon: '⌛', ring: 'bg-gray-400'   },
+  settlement_created: { icon: '📤', ring: 'bg-red-500'    },
+  handover_save:      { icon: '✎',  ring: 'bg-accent'     },
+  note:               { icon: '📝', ring: 'bg-accent'     },
+};
+
+// Kept for backward-compat with the older `handover-logs` shape — still used
+// during the brief loading state.
 type HandoverLog = {
   id: string;
   kind: 'save' | 'confirm' | 'start' | 'complete' | 'cancel' | 'refund';
@@ -200,6 +233,11 @@ export function OnlineBookingDetailModal({
   const [editMode, setEditMode] = useState(false);
   const [copyToast, setCopyToast] = useState(false);
 
+  // Pull the unified activity feed (creation + status + extensions + edits).
+  // `activity = null` is the loading state; empty array means "fetched, none."
+  const [activity, setActivity] = useState<{ events: ActivityEvent[]; overview: string } | null>(null);
+  // Backward-compat alias — older consumers in this file still reference
+  // `logs`; setting it to null forces a refresh on next render.
   const [logs, setLogs] = useState<HandoverLog[] | null>(null);
   const [extensions, setExtensions] = useState<Array<{
     id: string; status: string; original_end_ts: string; new_end_ts: string;
@@ -217,7 +255,7 @@ export function OnlineBookingDetailModal({
     setActionError(null);
     setConfirmAction(null);
     setReasonText('');
-    setLogs(null);
+    setActivity(null);
     setEditMode(false); // reopen → always default to the saved-confirmation view
     setCopyToast(false);
     const initial: EditState = {
@@ -235,19 +273,19 @@ export function OnlineBookingDetailModal({
     setBaseline(initial);
   }, [booking]);
 
-  // Pull audit log when either the Handover edit tab is opened OR the summary
-  // view is showing — both render the activity timeline.
+  // Pull the unified activity feed when either the Handover edit tab is open
+  // OR the summary view is showing — both surfaces render the timeline.
   useEffect(() => {
-    if (!booking || logs !== null) return;
+    if (!booking || activity !== null) return;
     const inSummary = !!booking.handover_saved_at && !editMode;
     if (tab !== 'handover' && !inSummary) return;
     let abort = false;
-    fetch(`/api/admin/bookings/handover-logs?booking_id=${booking.id}`)
-      .then(r => r.ok ? r.json() : { logs: [] })
-      .then(d => { if (!abort) setLogs(d.logs ?? []); })
-      .catch(() => { if (!abort) setLogs([]); });
+    fetch(`/api/admin/bookings/activity?booking_id=${booking.id}`)
+      .then(r => r.ok ? r.json() : { events: [], overview: '' })
+      .then(d => { if (!abort) setActivity({ events: d.events ?? [], overview: d.overview ?? '' }); })
+      .catch(() => { if (!abort) setActivity({ events: [], overview: '' }); });
     return () => { abort = true; };
-  }, [booking, tab, logs, editMode]);
+  }, [booking, tab, activity, editMode]);
 
   // Pull extension history once when the Trip tab opens — also small.
   useEffect(() => {
@@ -306,7 +344,7 @@ export function OnlineBookingDetailModal({
       // Update the baseline so subsequent edits are detected as dirty.
       setBaseline(edit);
       setSavedOk(true);
-      setLogs(null);  // force refresh — next render in summary mode will refetch
+      setActivity(null);  // force refresh — next render in summary mode will refetch
       // After a successful save, drop the admin back to the Order Confirmation
       // view (covers both first-time save and edits via the EDIT BOOKING button).
       setEditMode(false);
@@ -361,7 +399,7 @@ export function OnlineBookingDetailModal({
       onActioned(next);
       setConfirmAction(null);
       setReasonText('');
-      setLogs(null); // force log refresh on next open
+      setActivity(null); // force log refresh on next open
     } catch {
       setActionError('Network error — please try again');
     } finally {
@@ -575,6 +613,7 @@ export function OnlineBookingDetailModal({
               onWhatsApp={openWhatsApp}
               onCreateSettlement={createSettlement}
               onSendSettlementWhatsApp={sendSettlementWhatsApp}
+              activity={activity}
               copyToast={copyToast}
               actionLoading={actionLoading}
               canMarkPickup={canMarkPickup}
@@ -582,7 +621,6 @@ export function OnlineBookingDetailModal({
               isDirty={isDirty}
               pickupErrors={pickupErrors}
               onAction={(a, reasonReq, label) => setConfirmAction({ action: a, reasonRequired: reasonReq, label })}
-              logs={logs}
             />
           )}
 
@@ -1096,29 +1134,7 @@ export function OnlineBookingDetailModal({
                 )}
               </div>
 
-              {/* Audit timeline */}
-              <div className="rounded-lg border border-border bg-white p-3 space-y-2">
-                <p className="text-[10px] text-muted uppercase tracking-wide font-semibold">Activity</p>
-                {logs === null ? (
-                  <p className="text-xs text-muted">Loading activity…</p>
-                ) : logs.length === 0 ? (
-                  <p className="text-xs text-muted">No activity yet.</p>
-                ) : (
-                  <ol className="space-y-1.5">
-                    {logs.map(log => (
-                      <li key={log.id} className="flex items-start gap-2 text-xs">
-                        <span className="mt-1 w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
-                        <div className="min-w-0 flex-1">
-                          <p className="font-medium">{LOG_LABELS[log.kind]}</p>
-                          <p className="text-[10px] text-muted">
-                            {fmtDateTime(log.created_at)}{log.admin_name ? ` · ${log.admin_name}` : ''}
-                          </p>
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </div>
+              <ActivityTimeline activity={activity} />
             </div>
           )}
 
@@ -1212,7 +1228,7 @@ function OrderConfirmationCard({
   isDirty,
   pickupErrors,
   onAction,
-  logs,
+  activity,
 }: {
   booking: DetailBooking;
   edit: {
@@ -1238,7 +1254,7 @@ function OrderConfirmationCard({
   isDirty: boolean;
   pickupErrors: string[];
   onAction: (action: string, reasonRequired: boolean, label: string) => void;
-  logs: HandoverLog[] | null;
+  activity: { events: ActivityEvent[]; overview: string } | null;
 }) {
   const customer = customerName(booking);
   const phone    = booking.user?.phone ?? booking.customer_phone ?? '—';
@@ -1448,30 +1464,7 @@ function OrderConfirmationCard({
         )}
       </div>
 
-      {/* Activity timeline — same audit log shown in edit mode, kept available
-          in summary view so admins can see who confirmed/started without flipping modes. */}
-      <div className="rounded-xl border border-border bg-white p-3 space-y-2">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted">Activity</p>
-        {logs === null ? (
-          <p className="text-xs text-muted">Loading activity…</p>
-        ) : logs.length === 0 ? (
-          <p className="text-xs text-muted">No activity yet.</p>
-        ) : (
-          <ol className="space-y-1.5">
-            {logs.map(log => (
-              <li key={log.id} className="flex items-start gap-2 text-xs">
-                <span className="mt-1 w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium">{LOG_LABELS[log.kind]}</p>
-                  <p className="text-[10px] text-muted">
-                    {fmtDateTime(log.created_at)}{log.admin_name ? ` · ${log.admin_name}` : ''}
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        )}
-      </div>
+      <ActivityTimeline activity={activity} />
     </div>
   );
 }
@@ -1702,3 +1695,62 @@ function SettlementComposer({
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ActivityTimeline — rich per-booking history. Shows a one-line overview
+// at the top (booked on X by Y, ride status, extensions paid) followed by
+// a chronological timeline with kind-specific icons, descriptive titles,
+// and detail strings. Replaces the older 'Updated handover details' spam.
+// ─────────────────────────────────────────────────────────────────────────────
+function ActivityTimeline({ activity }: { activity: { events: ActivityEvent[]; overview: string } | null }) {
+  return (
+    <div className="rounded-xl border border-border bg-white p-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted">Activity</p>
+        {activity && activity.events.length > 0 && (
+          <span className="text-[10px] text-muted">{activity.events.length} event{activity.events.length === 1 ? '' : 's'}</span>
+        )}
+      </div>
+
+      {activity?.overview && (
+        <p className="text-xs text-primary bg-bg/50 border border-border rounded-md px-3 py-2 leading-relaxed">
+          {activity.overview}
+        </p>
+      )}
+
+      {activity === null ? (
+        <p className="text-xs text-muted">Loading activity…</p>
+      ) : activity.events.length === 0 ? (
+        <p className="text-xs text-muted">No activity yet.</p>
+      ) : (
+        <ol className="space-y-2 relative">
+          {activity.events.map((evt, idx) => {
+            const style = EVENT_STYLE[evt.kind] ?? EVENT_STYLE.handover_save;
+            const isLast = idx === activity.events.length - 1;
+            return (
+              <li key={evt.id} className="flex items-start gap-3 text-xs relative">
+                {/* Vertical connector line between events */}
+                {!isLast && (
+                  <span className="absolute left-[10px] top-5 w-px h-full bg-border" aria-hidden />
+                )}
+                <span className={`mt-0.5 w-5 h-5 rounded-full ${style.ring} text-white text-[10px] flex items-center justify-center shrink-0 z-10`}>
+                  {style.icon}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">{evt.title}</p>
+                  {evt.detail && (
+                    <p className="text-[11px] text-muted leading-relaxed mt-0.5">{evt.detail}</p>
+                  )}
+                  <p className="text-[10px] text-muted mt-0.5">
+                    {fmtDateTime(evt.ts)}{evt.actor ? ` · ${evt.actor}` : ''}
+                  </p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </div>
+  );
+}
+

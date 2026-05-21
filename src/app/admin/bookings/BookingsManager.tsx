@@ -231,7 +231,8 @@ function BookingLocation({ booking }: { booking: Booking }) {
 export function BookingsManager({ initialBookings }: { initialBookings: Booking[] }) {
   const [bookings, setBookings] = useState<Booking[]>(initialBookings);
   // Sub-tab view filter — replaces the old chunky status-chip strip.
-  const [view, setView] = useState<'active' | 'overdue' | 'upcoming' | 'past'>('active');
+  // 'all' is global search across every bucket; rest are focused buckets.
+  const [view, setView] = useState<'all' | 'active' | 'overdue' | 'upcoming' | 'past'>('all');
   // Source filter, orthogonal to view — admins frequently want to scope to
   // walk-in (manual) bookings only when reconciling cash.
   const [sourceFilter, setSourceFilter] = useState<'all' | 'online' | 'offline'>('all');
@@ -361,7 +362,7 @@ export function BookingsManager({ initialBookings }: { initialBookings: Booking[
   }, { active: 0, overdue: 0, upcoming: 0, past: 0 });
 
   const filtered = bookings.filter(b => {
-    if (bucketOf(b) !== view) return false;
+    if (view !== 'all' && bucketOf(b) !== view) return false;
     if (sourceFilter === 'online'  && b.source === 'manual') return false;
     if (sourceFilter === 'offline' && b.source !== 'manual') return false;
     if (search) {
@@ -424,7 +425,9 @@ export function BookingsManager({ initialBookings }: { initialBookings: Booking[
     upcoming: counts.upcoming_visible ?? counts.upcoming ?? 0,
     past:     counts.past_visible     ?? counts.past     ?? 0,
   };
+  const totalVisible = visibleCounts.active + visibleCounts.overdue + visibleCounts.upcoming + visibleCounts.past;
   const VIEWS = [
+    { key: 'all'      as const, label: 'All',      badge: totalVisible           },
     { key: 'active'   as const, label: 'Active',   badge: visibleCounts.active   },
     { key: 'overdue'  as const, label: 'Overdue',  badge: visibleCounts.overdue,  urgent: visibleCounts.overdue > 0 },
     { key: 'upcoming' as const, label: 'Upcoming', badge: visibleCounts.upcoming },
@@ -880,7 +883,10 @@ function RowActions({
   if (primary.action !== 'details') items.push({ action: 'details', label: 'Open details' });
   if (['confirmed', 'ongoing'].includes(booking.status)) items.push({ action: 'extend', label: 'Extend (admin)' });
   if (booking.status === 'ongoing' && isReturnOverdue) items.push({ action: 'completed', label: 'Mark return' });
-  if (booking.status === 'ongoing' || isPickupOverdue) items.push({ action: 'no_show', label: 'Mark no-show', danger: true });
+  // No-show is a pickup decision — only meaningful while the booking is still
+  // 'confirmed' (whether future or past start_ts). Once 'ongoing', the customer
+  // already picked up so they can't no-show.
+  if (booking.status === 'confirmed') items.push({ action: 'no_show', label: 'Mark no-show', danger: true });
   if (['confirmed', 'pending_payment'].includes(booking.status)) items.push({ action: 'cancelled', label: 'Cancel booking', danger: true });
   if (booking.status === 'cancelled' && booking.payment_status === 'paid' && primary.action !== 'refunded') {
     items.push({ action: 'refunded', label: 'Mark refunded' });
