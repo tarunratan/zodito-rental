@@ -1,47 +1,24 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentAppUser } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isMockMode, mockBookingsStore, MOCK_BIKES } from '@/lib/mock';
-import { VendorBikeCard } from '@/components/vendor/VendorBikeCard';
-import { formatINR, formatDateTime } from '@/lib/utils';
-import { TIER_LABELS } from '@/lib/pricing';
+import { VendorDashboard } from '@/components/vendor/VendorDashboard';
 
 export const dynamic = 'force-dynamic';
 
-/** Load a vendor + bikes + bookings by vendor.id (used by both modes). */
-async function fetchVendorById(vendorId: string) {
-  const supabase = createSupabaseAdmin();
-  const { data: vendor } = await supabase
-    .from('vendors')
-    .select('*')
-    .eq('id', vendorId)
-    .maybeSingle();
-  if (!vendor) return null;
-
-  const { data: bikes } = await supabase
-    .from('bikes')
-    .select(`
-      id, emoji, listing_status, is_active, registration_number, color, year,
-      model:bike_models!inner(display_name, cc)
-    `)
-    .eq('vendor_id', vendor.id)
-    .order('created_at', { ascending: false });
-
-  const { data: bookings } = await supabase
-    .from('bookings')
-    .select(`
-      id, booking_number, start_ts, end_ts, package_tier, status, payment_status,
-      total_amount, platform_commission, vendor_payout, base_price,
-      bike:bikes!inner(id, emoji, model:bike_models!inner(display_name)),
-      user:users!inner(first_name, last_name, phone, email)
-    `)
-    .in('bike_id', (bikes ?? []).map((b: { id: string }) => b.id))
-    .order('start_ts', { ascending: false });
-
-  return { vendor, bikes: bikes ?? [], bookings: bookings ?? [] };
-}
-
+/**
+ * Vendor portal — strictly for vendor users.
+ *
+ *   • Signed-out visitors → /vendor/signup (public entry point).
+ *   • Admin users → /admin/vendors (their proper management surface).
+ *     The old "preview any vendor" mode was removed because it confused
+ *     admins (they were inside a read-only view that LOOKED interactive)
+ *     and made the auth boundary fuzzy. Full vendor CRUD lives in admin.
+ *   • Vendors (status='approved') → their own dashboard with KPIs,
+ *     bikes list, snapshot strip and bookings table.
+ *   • Pending/rejected vendor accounts → /vendor/signup so they finish
+ *     onboarding or see the rejection reason.
+ */
 async function fetchVendorData(userId: string) {
   if (isMockMode()) {
     const myBikes = MOCK_BIKES.filter(b => b.owner_type === 'vendor');
@@ -59,316 +36,48 @@ async function fetchVendorData(userId: string) {
   const supabase = createSupabaseAdmin();
   const { data: vendor } = await supabase
     .from('vendors')
-    .select('id')
+    .select('*')
     .eq('user_id', userId)
     .maybeSingle();
   if (!vendor) return null;
-  return fetchVendorById((vendor as any).id);
-}
 
-/** Admin-only: list all vendors for the picker page. */
-async function fetchAllVendors() {
-  const supabase = createSupabaseAdmin();
-  const { data } = await supabase
-    .from('vendors')
-    .select('id, business_name, pickup_area, status, commission_pct, created_at')
+  const { data: bikes } = await supabase
+    .from('bikes')
+    .select(`
+      id, emoji, listing_status, is_active, registration_number, color, year,
+      model:bike_models!inner(display_name, cc)
+    `)
+    .eq('vendor_id', vendor.id)
     .order('created_at', { ascending: false });
-  return data ?? [];
+
+  const { data: bookings } = await supabase
+    .from('bookings')
+    .select(`
+      id, booking_number, start_ts, end_ts, package_tier, status, payment_status,
+      total_amount, platform_commission, vendor_payout, base_price, created_at,
+      bike:bikes!inner(id, emoji, model:bike_models!inner(display_name)),
+      user:users!inner(first_name, last_name, phone, email)
+    `)
+    .in('bike_id', (bikes ?? []).map((b: { id: string }) => b.id))
+    .order('start_ts', { ascending: false });
+
+  return { vendor, bikes: bikes ?? [], bookings: bookings ?? [] };
 }
 
-export default async function VendorDashboard({
-  searchParams,
-}: {
-  searchParams: { as?: string };
-}) {
+export default async function VendorPortalPage() {
   const user = await getCurrentAppUser();
-  // Vendor portal is a PUBLIC entry point — signed-out visitors land on the
-  // signup landing page so they can become a vendor without an account first.
+
+  // Public entry — signed-out visitors land on signup.
   if (!user) redirect('/vendor/signup');
 
-  // ── Admin preview mode ──────────────────────────────────────────────────
-  // When the platform admin opens /vendor:
-  //   • /vendor?as=<vendor_id> → load that specific vendor's dashboard
-  //     (read-only preview of what THAT vendor sees in their portal).
-  //   • /vendor                → show a picker listing every vendor with
-  //     "Preview as this vendor" buttons.
-  //
-  // The `?as=` query param is HONORED ONLY when user.role === 'admin'. A
-  // vendor passing `?as=<some_other_id>` is silently ignored — they always
-  // fall through to the "load my own vendor row" path below.
-  const isAdmin = user.role === 'admin';
+  // Admins get a dedicated CRUD surface; this portal is for vendors only.
+  if (user.role === 'admin') redirect('/admin/vendors');
 
-  if (isAdmin && !isMockMode()) {
-    const targetVendorId = searchParams?.as;
-    if (!targetVendorId) {
-      // Picker — list all vendors with click-to-preview.
-      const allVendors = await fetchAllVendors();
-      return <AdminVendorPicker vendors={allVendors} />;
-    }
-    const data = await fetchVendorById(targetVendorId);
-    if (!data) {
-      return (
-        <div className="max-w-3xl mx-auto px-6 py-20 text-center">
-          <p className="text-muted mb-4">No vendor found with that ID.</p>
-          <Link href="/vendor" className="btn-accent inline-block">← Back to vendor picker</Link>
-        </div>
-      );
-    }
-    return renderDashboard(data, { isAdminPreview: true });
-  }
-
-  // ── Vendor's own dashboard (existing behavior) ──────────────────────────
   const data = await fetchVendorData(user.id);
+  // No vendor row yet → finish onboarding.
   if (!data) redirect('/vendor/signup');
+  // Pending / rejected / suspended → signup screen handles the state copy.
   if (data.vendor.status !== 'approved') redirect('/vendor/signup');
-  return renderDashboard(data, { isAdminPreview: false });
-}
 
-function AdminVendorPicker({ vendors }: { vendors: any[] }) {
-  return (
-    <div className="max-w-5xl mx-auto px-6 py-8">
-      <div className="rounded-xl border-2 border-accent/30 bg-accent/5 p-4 mb-6 flex items-start gap-3">
-        <span className="text-2xl">🛡</span>
-        <div>
-          <div className="font-display font-bold text-base">Admin · Vendor Portal Preview</div>
-          <p className="text-sm text-muted mt-0.5">
-            Pick a vendor below to see exactly what they see in their portal.
-            You are NOT acting as that vendor — this is a read-only preview.
-          </p>
-        </div>
-      </div>
-
-      <h2 className="font-display font-semibold text-lg mb-3">All vendors ({vendors.length})</h2>
-      {vendors.length === 0 ? (
-        <div className="card p-8 text-center text-muted">
-          <p className="text-sm">No vendors registered yet.</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {vendors.map(v => (
-            <Link
-              key={v.id}
-              href={`/vendor?as=${v.id}`}
-              className="card p-4 hover:border-accent hover:shadow-card-hover transition-all"
-            >
-              <div className="flex items-start justify-between gap-2 mb-1">
-                <div className="font-display font-semibold text-base truncate">{v.business_name}</div>
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0 ${
-                  v.status === 'approved' ? 'bg-success/15 text-success' :
-                  v.status === 'pending'  ? 'bg-warning/15 text-warning' :
-                                            'bg-danger/15 text-danger'
-                }`}>{v.status}</span>
-              </div>
-              <div className="text-xs text-muted">📍 {v.pickup_area ?? '—'}</div>
-              <div className="text-xs text-muted mt-1">{v.commission_pct}% commission</div>
-              <div className="mt-3 text-xs font-semibold text-accent">Preview portal →</div>
-            </Link>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function renderDashboard(
-  data: NonNullable<Awaited<ReturnType<typeof fetchVendorData>>>,
-  opts: { isAdminPreview: boolean },
-) {
-  const { vendor, bikes, bookings } = data;
-
-  // Earnings summary
-  const confirmedBookings = bookings.filter((b: any) => ['confirmed', 'ongoing', 'completed'].includes(b.status));
-  const totalGrossRevenue = confirmedBookings.reduce((sum: number, b: any) => sum + Number(b.total_amount ?? 0), 0);
-  const totalVendorPayout = confirmedBookings.reduce((sum: number, b: any) => sum + Number(b.vendor_payout ?? 0), 0);
-  const totalCommission = confirmedBookings.reduce((sum: number, b: any) => sum + Number(b.platform_commission ?? 0), 0);
-
-  // This month
-  const startOfMonth = new Date();
-  startOfMonth.setDate(1); startOfMonth.setHours(0, 0, 0, 0);
-  const thisMonthBookings = confirmedBookings.filter((b: any) => new Date(b.start_ts) >= startOfMonth);
-  const thisMonthPayout = thisMonthBookings.reduce((sum: number, b: any) => sum + Number(b.vendor_payout ?? 0), 0);
-
-  return (
-    <div className="max-w-6xl mx-auto px-6 py-8">
-      {/* Admin-preview banner — only shown when an admin is viewing this vendor
-          via /vendor?as=<vendor_id>. Makes it unmissable that you are NOT
-          acting as the vendor; this is a read-only preview. */}
-      {opts.isAdminPreview && (
-        <div className="rounded-xl border-2 border-accent/40 bg-accent/5 p-3 mb-5 flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2.5 text-sm">
-            <span className="text-lg">🛡</span>
-            <div>
-              <span className="font-bold">Admin preview</span>
-              <span className="text-muted"> · viewing as <strong className="text-primary">{vendor.business_name}</strong></span>
-            </div>
-          </div>
-          <Link href="/vendor" className="text-xs font-semibold text-accent hover:underline">
-            ← Pick another vendor
-          </Link>
-        </div>
-      )}
-
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-        <div>
-          <h1 className="font-display font-bold text-3xl tracking-tight">{vendor.business_name}</h1>
-          <p className="text-muted text-sm mt-1">📍 {vendor.pickup_area} · {bikes.length} bikes listed</p>
-        </div>
-        {!opts.isAdminPreview && (
-          <Link href="/vendor/bikes/new" className="btn-accent text-sm">+ List a bike</Link>
-        )}
-      </div>
-
-      {/* KPI cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
-        <Kpi label="This Month" value={formatINR(thisMonthPayout)} sub={`${thisMonthBookings.length} rides`} accent />
-        <Kpi label="Lifetime Earnings" value={formatINR(totalVendorPayout)} sub={`${confirmedBookings.length} rides total`} />
-        <Kpi label="Active Listings" value={bikes.filter((b: any) => b.is_active && b.listing_status === 'approved').length.toString()} sub={`${bikes.length} total`} />
-        <Kpi label="Commission Rate" value={`${vendor.commission_pct}%`} sub="Platform fee" />
-      </div>
-
-      {/* My Bikes */}
-      <section className="mb-8">
-        <h2 className="font-display font-semibold text-lg mb-3">My bikes</h2>
-        {bikes.length === 0 ? (
-          <div className="card p-8 text-center text-muted">
-            <div className="text-4xl mb-2">🏍️</div>
-            <p className="text-sm">No bikes listed yet.</p>
-            <Link href="/vendor/bikes/new" className="btn-accent inline-block mt-4 text-sm">
-              List your first bike
-            </Link>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {bikes.map((b: any) => <VendorBikeCard key={b.id} bike={b} />)}
-          </div>
-        )}
-      </section>
-
-      {/* Bookings */}
-      <section>
-        <h2 className="font-display font-semibold text-lg mb-3">Recent bookings</h2>
-        {bookings.length === 0 ? (
-          <div className="card p-8 text-center text-muted text-sm">
-            No bookings yet. Once customers book your bikes, they&apos;ll appear here.
-          </div>
-        ) : (
-          <div className="card overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-bg border-b border-border">
-                  <tr>
-                    <Th>Booking</Th>
-                    <Th>Customer</Th>
-                    <Th>Bike</Th>
-                    <Th>Period</Th>
-                    <Th>Gross</Th>
-                    <Th className="text-success">Your payout</Th>
-                    <Th>Status</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bookings.map((b: any) => (
-                    <tr key={b.id} className="border-b border-border last:border-0 hover:bg-bg/50">
-                      <Td>
-                        <div className="font-semibold">#{b.booking_number ?? b.id.slice(-6)}</div>
-                        <div className="text-[11px] text-muted">{TIER_LABELS[b.package_tier as keyof typeof TIER_LABELS]}</div>
-                      </Td>
-                      <Td>
-                        {b.user ? (
-                          <>
-                            <div className="font-semibold">
-                              {b.user.first_name} {b.user.last_name}
-                            </div>
-                            {b.payment_status === 'paid' && b.user.phone && (
-                              <a href={`tel:${b.user.phone}`} className="text-[11px] text-accent">
-                                {b.user.phone}
-                              </a>
-                            )}
-                          </>
-                        ) : (
-                          <span className="text-muted">—</span>
-                        )}
-                      </Td>
-                      <Td>
-                        <span className="text-lg mr-1">{b.bike?.emoji}</span>
-                        {b.bike?.model?.display_name}
-                      </Td>
-                      <Td className="text-xs">
-                        <div>{formatDateTime(b.start_ts)}</div>
-                        <div className="text-muted">→ {formatDateTime(b.end_ts)}</div>
-                      </Td>
-                      <Td>{formatINR(b.total_amount ?? 0)}</Td>
-                      <Td className="font-bold text-success">{formatINR(b.vendor_payout ?? 0)}</Td>
-                      <Td>
-                        <StatusPill status={b.status} />
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* Summary */}
-      {confirmedBookings.length > 0 && (
-        <div className="mt-6 p-4 bg-accent/5 border border-accent/20 rounded-card text-sm grid grid-cols-3 gap-4">
-          <div>
-            <div className="text-[10px] text-muted uppercase tracking-wide">Gross revenue</div>
-            <div className="font-display font-bold text-lg">{formatINR(totalGrossRevenue)}</div>
-          </div>
-          <div>
-            <div className="text-[10px] text-muted uppercase tracking-wide">Platform fee ({vendor.commission_pct}%)</div>
-            <div className="font-display font-bold text-lg text-muted">−{formatINR(totalCommission)}</div>
-          </div>
-          <div>
-            <div className="text-[10px] text-muted uppercase tracking-wide">Net to you</div>
-            <div className="font-display font-bold text-lg text-success">{formatINR(totalVendorPayout)}</div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Kpi({ label, value, sub, accent }: { label: string; value: string; sub: string; accent?: boolean }) {
-  return (
-    <div className="card p-4">
-      <div className="text-[10px] text-muted uppercase tracking-wide">{label}</div>
-      <div className={`font-display font-bold text-2xl mt-0.5 ${accent ? 'text-accent' : ''}`}>
-        {value}
-      </div>
-      <div className="text-[11px] text-muted mt-0.5">{sub}</div>
-    </div>
-  );
-}
-
-
-function StatusPill({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    pending_payment: 'bg-warning/15 text-warning',
-    confirmed: 'bg-success/15 text-success',
-    ongoing: 'bg-info/15 text-info',
-    completed: 'bg-border text-muted',
-    cancelled: 'bg-danger/10 text-danger',
-    payment_failed: 'bg-danger/10 text-danger',
-  };
-  return (
-    <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md ${styles[status] ?? 'bg-border'}`}>
-      {status.replace('_', ' ')}
-    </span>
-  );
-}
-
-function Th({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <th className={`text-left text-[10px] font-semibold text-muted uppercase tracking-wide px-4 py-3 ${className ?? ''}`}>
-      {children}
-    </th>
-  );
-}
-
-function Td({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <td className={`px-4 py-3 align-top ${className ?? ''}`}>{children}</td>;
+  return <VendorDashboard data={data} />;
 }

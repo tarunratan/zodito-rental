@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { formatIstDateTime } from '@/lib/datetime';
+import { ExtensionsSection, type ExtensionRow } from '@/components/booking/ExtensionsSection';
 
 type DetailBooking = {
   id: string;
@@ -287,16 +288,20 @@ export function OnlineBookingDetailModal({
     return () => { abort = true; };
   }, [booking, tab, activity, editMode]);
 
-  // Pull extension history once when the Trip tab opens — also small.
+  // Pull extension history when the Trip tab opens OR when the booking is
+  // saved (Order Confirmation view shows extensions there too). Single fetch
+  // covers both surfaces.
   useEffect(() => {
-    if (!booking || tab !== 'trip' || extensions !== null) return;
+    if (!booking || extensions !== null) return;
+    const inSummary = !!booking.handover_saved_at && !editMode;
+    if (tab !== 'trip' && !inSummary) return;
     let abort = false;
     fetch(`/api/bookings/${booking.id}/extensions`)
       .then(r => r.ok ? r.json() : { extensions: [] })
       .then(d => { if (!abort) setExtensions(d.extensions ?? []); })
       .catch(() => { if (!abort) setExtensions([]); });
     return () => { abort = true; };
-  }, [booking, tab, extensions]);
+  }, [booking, tab, extensions, editMode]);
 
   // Load KYC signed URLs eagerly whenever the booking is already saved (the
   // Order Confirmation view embeds them) OR when the admin lands on the KYC
@@ -614,6 +619,7 @@ export function OnlineBookingDetailModal({
               onCreateSettlement={createSettlement}
               onSendSettlementWhatsApp={sendSettlementWhatsApp}
               activity={activity}
+              extensions={extensions}
               copyToast={copyToast}
               actionLoading={actionLoading}
               canMarkPickup={canMarkPickup}
@@ -807,35 +813,14 @@ export function OnlineBookingDetailModal({
                 <button onClick={() => setTab('payment')} className="flex-1 py-2 text-sm text-accent border border-accent/30 rounded-lg hover:bg-accent/5 transition-colors">Next: Payment →</button>
               </div>
 
-              {/* Extension history — admin-visible audit of customer-initiated extensions */}
+              {/* Extension history — shared component, same shape as customer view. */}
               {extensions !== null && extensions.length > 0 && (
-                <div className="rounded-lg border border-border bg-white p-3 space-y-2 mt-2">
-                  <p className="text-[10px] text-muted uppercase tracking-wide font-semibold">Booking Extensions</p>
-                  <ul className="space-y-1.5">
-                    {extensions.map(e => (
-                      <li key={e.id} className="text-[11px] rounded-md border border-border p-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
-                            e.status === 'confirmed' ? 'bg-green-100 text-green-700'
-                            : e.status === 'failed' ? 'bg-red-100 text-red-700'
-                            : e.status === 'expired' ? 'bg-gray-100 text-gray-500'
-                            : 'bg-yellow-100 text-yellow-700'
-                          }`}>
-                            {e.status.replace('_', ' ')}
-                          </span>
-                          <span className="text-[10px] text-muted">{fmtDateTime(e.created_at)}</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 mt-1">
-                          <span className="text-muted">From → To</span>
-                          <span>{fmtDateTime(e.original_end_ts)} → {fmtDateTime(e.new_end_ts)}</span>
-                          <span className="text-muted">Extra KM / total</span>
-                          <span>+{e.extra_km} km · total {e.new_km_limit}</span>
-                          <span className="text-muted">Paid</span>
-                          <span>{rupee(e.total_delta)}{e.matched_tier ? ` · ${e.matched_tier}` : ''}</span>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
+                <div className="mt-2">
+                  <ExtensionsSection
+                    extensions={extensions as ExtensionRow[]}
+                    variant="inline"
+                    audience="admin"
+                  />
                 </div>
               )}
             </div>
@@ -1229,6 +1214,7 @@ function OrderConfirmationCard({
   pickupErrors,
   onAction,
   activity,
+  extensions,
 }: {
   booking: DetailBooking;
   edit: {
@@ -1255,6 +1241,7 @@ function OrderConfirmationCard({
   pickupErrors: string[];
   onAction: (action: string, reasonRequired: boolean, label: string) => void;
   activity: { events: ActivityEvent[]; overview: string } | null;
+  extensions: any[] | null;
 }) {
   const customer = customerName(booking);
   const phone    = booking.user?.phone ?? booking.customer_phone ?? '—';
@@ -1321,6 +1308,15 @@ function OrderConfirmationCard({
         <ConfRow label="Helmets Provided"   value={helmets} />
         <ConfRow label="Original DL taken"  value={dl} />
       </div>
+
+      {/* Extensions — only shown when there's history. The audit card explains
+          why end_ts moved (each paid extension is its own row). */}
+      {extensions && extensions.length > 0 && (
+        <ExtensionsSection
+          extensions={extensions as ExtensionRow[]}
+          audience="admin"
+        />
+      )}
 
       <div className="rounded-xl border border-border bg-bg/40 p-4 space-y-2 text-[12px] leading-relaxed">
         <p>

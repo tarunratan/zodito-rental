@@ -7,37 +7,60 @@ import { formatINR, formatDateTime } from '@/lib/utils';
 import { TIER_LABELS } from '@/lib/pricing';
 import type { PackageTier } from '@/lib/pricing';
 import { ExtendBookingPanel } from '@/components/booking/ExtendBookingPanel';
+import { ExtensionsSection, type ExtensionRow } from '@/components/booking/ExtensionsSection';
 
-async function fetchBooking(id: string, userId: string) {
+async function fetchBooking(id: string, _userId: string) {
   if (isMockMode()) {
     const b = mockBookingsStore.find(x => x.id === id);
     if (!b) return null;
-    return { ...b, bike: MOCK_BIKES.find(k => k.id === b.bike_id) };
+    return { booking: { ...b, bike: MOCK_BIKES.find(k => k.id === b.bike_id) }, extensions: [] as ExtensionRow[] };
   }
 
   const supabase = await createSupabaseServer();
-  const { data } = await supabase
-    .from('bookings')
-    .select(`
-      *,
-      bike:bikes!inner(
-        id, emoji, image_url, color, color_hex, owner_type, registration_number,
-        model:bike_models!inner(display_name, cc, excess_km_rate, late_hourly_penalty),
-        vendor:vendors(business_name, pickup_area, pickup_address, contact_phone)
-      )
-    `)
-    .eq('id', id)
-    .maybeSingle();
-  return data;
+  // Fetch booking + extension history in parallel. The extensions history
+  // explains why booking.end_ts moved from the original — without it the
+  // customer just sees the latest drop-off and forgets there was a paid
+  // extension behind the change.
+  const [{ data: booking }, { data: extensions }] = await Promise.all([
+    supabase
+      .from('bookings')
+      .select(`
+        *,
+        bike:bikes!inner(
+          id, emoji, image_url, color, color_hex, owner_type, registration_number,
+          model:bike_models!inner(display_name, cc, excess_km_rate, late_hourly_penalty),
+          vendor:vendors(business_name, pickup_area, pickup_address, contact_phone)
+        )
+      `)
+      .eq('id', id)
+      .maybeSingle(),
+    supabase
+      .from('booking_extensions')
+      .select('id, status, original_end_ts, new_end_ts, extra_hours, original_km_limit, extra_km, new_km_limit, base_delta, gst_delta, total_delta, matched_tier, paid_at, created_at')
+      .eq('booking_id', id)
+      .order('created_at', { ascending: false }),
+  ]);
+  if (!booking) return null;
+  return { booking, extensions: (extensions ?? []) as ExtensionRow[] };
 }
 
 export default async function BookingDetailPage({ params }: { params: { id: string } }) {
   const user = await getCurrentAppUser();
   if (!user) notFound();
-  const booking = await fetchBooking(params.id, user.id) as any;
-  if (!booking) notFound();
+  const result = await fetchBooking(params.id, user.id);
+  if (!result) notFound();
+  const { booking, extensions } = result as { booking: any; extensions: ExtensionRow[] };
 
   const bike = booking.bike;
+
+  // Derive the ORIGINAL booked drop-off from extension history — the very
+  // first extension's original_end_ts is the date the customer first booked.
+  // booking.end_ts has been mutated by every confirmed extension since.
+  const confirmedExtensions = extensions.filter(e => e.status === 'confirmed');
+  const originalEndTs = confirmedExtensions.length > 0
+    ? confirmedExtensions.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())[0].original_end_ts
+    : booking.end_ts;
+  const wasExtended = confirmedExtensions.length > 0 && originalEndTs !== booking.end_ts;
   const now = new Date();
   // "Ongoing past drop-off" — we don't mutate booking.status (admin closes
   // the ride explicitly via handover), but the UI shows it as Overdue so the
@@ -81,11 +104,22 @@ export default async function BookingDetailPage({ params }: { params: { id: stri
         <h2 className="font-display font-semibold text-lg mb-4">Rental period</h2>
         <div className="grid grid-cols-2 gap-4 text-sm">
           <Detail label="Pickup" value={formatDateTime(booking.start_ts)} />
-          <Detail label="Drop-off" value={formatDateTime(booking.end_ts)} />
+          <Detail
+            label="Drop-off"
+            value={formatDateTime(booking.end_ts)}
+            note={wasExtended ? `Originally ${formatDateTime(originalEndTs)} · extended ${confirmedExtensions.length}×` : undefined}
+          />
           <Detail label="Package" value={TIER_LABELS[booking.package_tier as PackageTier]} />
           <Detail label="KM limit" value={`${booking.km_limit} km`} />
         </div>
       </div>
+
+      {/* Extension history — only renders when there's anything to show. */}
+      {extensions.length > 0 && (
+        <div className="mb-4">
+          <ExtensionsSection extensions={extensions} audience="customer" />
+        </div>
+      )}
 
       <ExtendBookingPanel
         bookingId={booking.id}
@@ -191,11 +225,12 @@ export default async function BookingDetailPage({ params }: { params: { id: stri
   );
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
+function Detail({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
     <div>
       <div className="text-[10px] text-muted uppercase tracking-wide">{label}</div>
       <div className="font-semibold mt-0.5">{value}</div>
+      {note && <div className="text-[10px] text-accent mt-0.5">{note}</div>}
     </div>
   );
 }
