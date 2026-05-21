@@ -151,7 +151,9 @@ export default function SignUpPage() {
 
   async function verifySignupOtp(e?: React.FormEvent) {
     if (e) e.preventDefault();
-    if (otp.length < 6) { setOtpError('Enter the 6-digit code from your email'); return; }
+    // OTP length is governed by Supabase project settings (default 6, but
+    // configurable). Require at least 4 digits, accept anything reasonable.
+    if (otp.length < 4) { setOtpError('Enter the verification code from your email'); return; }
     setOtpVerifying(true);
     setOtpError('');
     try {
@@ -200,20 +202,20 @@ export default function SignUpPage() {
           <h1 className="font-display font-bold text-2xl tracking-tight mb-2">Check your inbox</h1>
           <p className="text-muted text-sm">
             We sent a confirmation email to <strong>{form.email}</strong>.<br />
-            Either click the link OR enter the 6-digit code below.
+            Either click the link OR enter the verification code below.
           </p>
         </div>
 
         <form onSubmit={verifySignupOtp} className="card p-6 flex flex-col gap-4">
           <div>
-            <label className="block text-sm font-medium mb-1">6-digit code from email</label>
+            <label className="block text-sm font-medium mb-1">Verification code from email</label>
             <input
               type="text" inputMode="numeric"
-              pattern="[0-9]*" maxLength={6}
+              pattern="[0-9]*" maxLength={10}
               value={otp}
-              onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              className="input w-full text-center text-2xl tracking-[0.5em] font-mono"
-              placeholder="••••••"
+              onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 10))}
+              className="input w-full text-center text-2xl tracking-[0.3em] font-mono"
+              placeholder="Enter the code from your email"
               autoComplete="one-time-code"
               autoFocus
             />
@@ -227,7 +229,7 @@ export default function SignUpPage() {
           </div>
           {otpInfo  && <p className="text-success text-sm bg-success/10 px-3 py-2 rounded-md">{otpInfo}</p>}
           {otpError && <p className="text-danger text-sm bg-danger/10 px-3 py-2 rounded-md">{otpError}</p>}
-          <button type="submit" disabled={otpVerifying || otp.length < 6} className="btn-accent w-full">
+          <button type="submit" disabled={otpVerifying || otp.length < 4} className="btn-accent w-full">
             {otpVerifying ? 'Verifying…' : 'Verify & sign in'}
           </button>
           <Link href="/sign-in" className="text-sm text-center text-muted hover:text-primary">

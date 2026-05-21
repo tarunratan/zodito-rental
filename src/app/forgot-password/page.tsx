@@ -127,7 +127,10 @@ function ForgotPasswordInner() {
 
   async function verifyCode(e?: React.FormEvent) {
     if (e) e.preventDefault();
-    if (otp.length < 6) { setError('Enter the 6-digit code from your email'); return; }
+    // OTP length is governed by Supabase project settings (Auth → Settings →
+    // Email OTP Length, default 6, configurable to 4/6/7/8). Don't hard-code
+    // a length here — just require at least 4 digits.
+    if (otp.length < 4) { setError('Enter the code from your email'); return; }
     setLoading(true);
     setError('');
     try {
@@ -185,7 +188,7 @@ function ForgotPasswordInner() {
         <>
           <h1 className="font-display font-bold text-3xl tracking-tight mb-1">Forgot password?</h1>
           <p className="text-muted text-sm mb-8">
-            Enter your email and we&apos;ll send you a 6-digit code.
+            Enter your email and we&apos;ll send you a verification code.
           </p>
           <form onSubmit={sendCode} className="card p-6 flex flex-col gap-4">
             <div>
@@ -208,7 +211,7 @@ function ForgotPasswordInner() {
               </div>
             )}
             <button type="submit" disabled={loading} className="btn-accent w-full">
-              {loading ? 'Sending…' : 'Send 6-digit code'}
+              {loading ? 'Sending…' : 'Send verification code'}
             </button>
           </form>
         </>
@@ -222,14 +225,14 @@ function ForgotPasswordInner() {
           </p>
           <form onSubmit={verifyCode} className="card p-6 flex flex-col gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1">6-digit code</label>
+              <label className="block text-sm font-medium mb-1">Verification code</label>
               <input
                 type="text" required inputMode="numeric"
-                pattern="[0-9]*" maxLength={6}
+                pattern="[0-9]*" maxLength={10}
                 value={otp}
-                onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                className="input w-full text-center text-2xl tracking-[0.5em] font-mono"
-                placeholder="••••••"
+                onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                className="input w-full text-center text-2xl tracking-[0.3em] font-mono"
+                placeholder="Enter the code from your email"
                 autoFocus
                 autoComplete="one-time-code"
               />
@@ -240,7 +243,7 @@ function ForgotPasswordInner() {
             </div>
             {info && <p className="text-success text-sm bg-success/10 px-3 py-2 rounded-md">{info}</p>}
             {error && <p className="text-danger text-sm bg-danger/10 px-3 py-2 rounded-md">{error}</p>}
-            <button type="submit" disabled={loading || otp.length < 6} className="btn-accent w-full">
+            <button type="submit" disabled={loading || otp.length < 4} className="btn-accent w-full">
               {loading ? 'Verifying…' : 'Verify & continue'}
             </button>
             <button
