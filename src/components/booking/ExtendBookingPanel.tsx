@@ -66,6 +66,8 @@ interface ExtensionEntry {
   new_km_limit: number;
   total_delta: number;
   matched_tier: string | null;
+  razorpay_order_id?: string | null;
+  expires_at?: string | null;
   paid_at: string | null;
   created_at: string;
 }
@@ -102,12 +104,13 @@ export function ExtendBookingPanel({
   supportPhone?: string;
 }) {
   // Deep-link support: ?extend=1 (sent by admin via WhatsApp) auto-opens the
-  // extend form so overdue customers land straight on payment. Read once on
-  // mount; safe to compute lazily because the URL doesn't change during the
-  // panel's life.
-  const initiallyOpen = (() => {
-    if (typeof window === 'undefined') return false;
-    return new URLSearchParams(window.location.search).get('extend') === '1';
+  // extend form. ?ext=<extension_id> additionally tells us an admin pre-built
+  // a settlement extension — the panel renders a one-tap Pay button against
+  // that exact Razorpay order. Read once on mount; the URL doesn't change.
+  const [initiallyOpen, deepLinkExtId] = (() => {
+    if (typeof window === 'undefined') return [false, null] as const;
+    const sp = new URLSearchParams(window.location.search);
+    return [sp.get('extend') === '1' || !!sp.get('ext'), sp.get('ext')] as const;
   })();
   const [open, setOpen]           = useState(initiallyOpen);
   // Drop-off as date + 12-hour-clock hour (no minutes). Combined to an ISO
@@ -146,6 +149,21 @@ export function ExtendBookingPanel({
       .catch(() => { if (!abort) setHistory([]); });
     return () => { abort = true; };
   }, [bookingId, success]);
+
+  // Pending settlement = a pending_payment extension that hasn't expired.
+  // When the customer landed via ?ext=<id>, pin to that exact row; otherwise
+  // pick the freshest pending row (history is created_at DESC). This is what
+  // drives the one-tap Pay UI for admin-set settlements.
+  const pendingSettlement: ExtensionEntry | null = (() => {
+    if (!history) return null;
+    const valid = history.filter(h =>
+      h.status === 'pending_payment' &&
+      h.razorpay_order_id &&
+      (!h.expires_at || new Date(h.expires_at).getTime() > nowMs)
+    );
+    if (deepLinkExtId) return valid.find(h => h.id === deepLinkExtId) ?? null;
+    return valid[0] ?? null;
+  })();
 
   if (status !== 'ongoing' && (!history || history.length === 0)) {
     // Hide entirely if booking can't be extended and there's nothing to show.
@@ -253,6 +271,65 @@ export function ExtendBookingPanel({
     }
   }
 
+  // One-tap pay for an admin-set settlement — reuses the existing Razorpay
+  // order created by /api/admin/bookings/settlement. We hit /extend/verify
+  // exactly the same way as the standard flow, so all the audit / booking
+  // update logic is shared.
+  async function paySettlement(ext: ExtensionEntry) {
+    if (!ext.razorpay_order_id) {
+      setError('This settlement is missing a payment order — ask the admin to regenerate the link.');
+      return;
+    }
+    setError(null);
+    setPhase('paying');
+    try {
+      if (typeof window.Razorpay === 'undefined') {
+        setError('Payment gateway not loaded — please refresh and try again.');
+        setPhase('idle');
+        return;
+      }
+      const rzp = new window.Razorpay({
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+        amount: Math.round(Number(ext.total_delta) * 100), // rupees → paise
+        currency: 'INR',
+        order_id: ext.razorpay_order_id,
+        name: 'Zodito Rentals',
+        description: `Settlement for booking ${bookingNumber}`,
+        theme: { color: '#f97316' },
+        handler: async (resp: any) => {
+          const verifyRes = await fetch(`/api/bookings/${bookingId}/extend/verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              extension_id: ext.id,
+              razorpay_order_id: resp.razorpay_order_id,
+              razorpay_payment_id: resp.razorpay_payment_id,
+              razorpay_signature: resp.razorpay_signature,
+            }),
+          });
+          const verifyData = await verifyRes.json();
+          if (!verifyRes.ok) {
+            setError(verifyData.error ?? 'Payment verification failed');
+            setPhase('failed');
+            return;
+          }
+          setSuccess({ end_ts: verifyData.new_end_ts, km_limit: verifyData.new_km_limit });
+          setPhase('success');
+          setOpen(false);
+        },
+        modal: { ondismiss: () => { setPhase('idle'); } },
+      });
+      rzp.on('payment.failed', (resp: any) => {
+        setError(resp.error?.description || 'Payment failed.');
+        setPhase('failed');
+      });
+      rzp.open();
+    } catch {
+      setError('Network error during payment setup.');
+      setPhase('idle');
+    }
+  }
+
   return (
     <>
       <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
@@ -322,7 +399,55 @@ export function ExtendBookingPanel({
           </div>
         )}
 
-        {open && status === 'ongoing' && (
+        {/* Admin-prepared settlement — when present, this replaces the
+            self-quote flow with a one-tap "Pay this exact amount" CTA. The
+            amount and new drop-off were negotiated by the operator and
+            committed to a Razorpay order before the link was shared. */}
+        {pendingSettlement && status === 'ongoing' && (
+          <div className="mt-3 rounded-xl border-2 border-orange-300 bg-orange-50 p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-base">📨</span>
+              <span className="font-semibold text-orange-900">Payment link from Zodito</span>
+              <span className="ml-auto text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-orange-600 text-white">
+                Action required
+              </span>
+            </div>
+            <p className="text-xs text-orange-900">
+              The team has set up your extension. Tap Pay below to confirm.
+            </p>
+            <div className="rounded-lg bg-white border border-orange-200 p-3 text-sm space-y-1">
+              <div className="flex justify-between">
+                <span className="text-muted">New drop-off</span>
+                <span className="font-semibold">{formatDateTime(pendingSettlement.new_end_ts)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted">Amount to pay</span>
+                <span className="font-display font-bold text-lg text-orange-700">
+                  {formatINR(Number(pendingSettlement.total_delta))}
+                </span>
+              </div>
+              {pendingSettlement.expires_at && (
+                <p className="text-[10px] text-muted pt-1">
+                  Link valid until {formatDateTime(pendingSettlement.expires_at)}
+                </p>
+              )}
+            </div>
+            <button
+              onClick={() => paySettlement(pendingSettlement)}
+              disabled={phase === 'paying'}
+              className="w-full py-2.5 text-sm font-semibold bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-60"
+            >
+              {phase === 'paying'
+                ? 'Opening payment…'
+                : `Pay ${formatINR(Number(pendingSettlement.total_delta))} & Extend`}
+            </button>
+            {error && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700">{error}</div>
+            )}
+          </div>
+        )}
+
+        {open && status === 'ongoing' && !pendingSettlement && (
           <div className="mt-4 space-y-3">
             <div>
               <label className="text-[11px] text-muted block mb-1">New drop-off date & time</label>

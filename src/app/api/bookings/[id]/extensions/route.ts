@@ -22,7 +22,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
   const { data, error } = await admin
     .from('booking_extensions')
-    .select('id, status, original_end_ts, new_end_ts, extra_hours, original_km_limit, extra_km, new_km_limit, total_delta, base_delta, gst_delta, matched_tier, razorpay_payment_id, created_at, paid_at')
+    .select('id, status, original_end_ts, new_end_ts, extra_hours, original_km_limit, extra_km, new_km_limit, total_delta, base_delta, gst_delta, matched_tier, razorpay_order_id, razorpay_payment_id, expires_at, created_at, paid_at')
     .eq('booking_id', params.id)
     .order('created_at', { ascending: false });
 

@@ -458,41 +458,48 @@ export function OnlineBookingDetailModal({
     window.open(target, '_blank', 'noopener,noreferrer');
   }
 
-  // Send the customer a WhatsApp message containing a deep-link to the
-  // customer-facing extend flow. The link uses ?extend=1 so the panel
-  // auto-opens; the customer signs in if needed, picks a new drop-off,
-  // and pays the extension + late penalty via Razorpay. Solves the
-  // "I'll pay later" ghosting pattern.
-  function sendExtendLink() {
+  // Helper used by the settlement composer to push the agreed amount + new
+  // drop-off to the server, which creates a pre-quoted booking_extensions
+  // row and a Razorpay order. Returns the extension_id so the WhatsApp
+  // message can carry `?ext=<id>` for one-tap pay on the customer side.
+  async function createSettlement(args: { amount: number; newEndIso: string; note?: string }) {
+    const res = await fetch('/api/admin/bookings/settlement', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        booking_id: booking!.id,
+        amount: args.amount,
+        new_end_ts: args.newEndIso,
+        note: args.note || undefined,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? 'Failed to create settlement');
+    return data as { extension_id: string; amount: number; new_end_ts: string; expires_at: string };
+  }
+
+  // Send the customer a WhatsApp message containing the settlement link.
+  // The message text adapts to whether a settlement was just created (amount
+  // baked in) or whether the admin just wants the customer to self-quote.
+  function sendSettlementWhatsApp(args: { amount: number; newEndIso: string; extensionId: string; note?: string }) {
     const raw = phone || edit.alternate_phone || booking!.alternate_phone || '';
     const digits = String(raw).replace(/\D+/g, '');
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const deepLink = `${origin}/my-bookings/${booking!.id}?extend=1`;
-
-    const nowMs = Date.now();
-    const endMs = new Date(booking!.end_ts).getTime();
-    const hoursOverdue = Math.max(0, Math.ceil((nowMs - endMs) / 3_600_000));
-    const ratePerHour = Number(booking!.bike?.late_penalty_hour ?? booking!.bike?.model?.late_hourly_penalty ?? 49);
-    const penaltySoFar = hoursOverdue * ratePerHour;
-
-    const lines = hoursOverdue > 0 ? [
+    const deepLink = `${origin}/my-bookings/${booking!.id}?ext=${args.extensionId}`;
+    const lines = [
       `Hi ${customer},`,
       ``,
-      `Your booking #${booking!.booking_number} (${booking!.bike?.model?.display_name ?? 'bike'}) is currently ${hoursOverdue} hour${hoursOverdue === 1 ? '' : 's'} past the drop-off time (${fmtDateTime12(booking!.end_ts)}).`,
+      `Your booking #${booking!.booking_number} (${booking!.bike?.model?.display_name ?? 'bike'}) is overdue.`,
       ``,
-      `Late penalty so far: ${rupee(penaltySoFar)} (at ₹${ratePerHour}/hr)`,
+      `As agreed, here is the payment link:`,
+      `Amount: ${rupee(args.amount)}`,
+      `New drop-off: ${fmtDateTime12(args.newEndIso)}`,
+      ...(args.note ? [`Note: ${args.note}`] : []),
       ``,
-      `To extend the booking and pay online, tap the link below:`,
+      `Tap to pay:`,
       deepLink,
       ``,
-      `The payment includes the extension price + the late penalty. Booking extends only after successful payment.`,
-      ``,
-      `- Zodito Rentals`,
-    ] : [
-      `Hi ${customer},`,
-      ``,
-      `To extend your booking #${booking!.booking_number} (${booking!.bike?.model?.display_name ?? 'bike'}), tap the link below to pick a new drop-off and pay online:`,
-      deepLink,
+      `Booking is extended automatically once payment succeeds.`,
       ``,
       `- Zodito Rentals`,
     ];
@@ -566,7 +573,8 @@ export function OnlineBookingDetailModal({
               onEdit={() => setEditMode(true)}
               onCopy={copySummary}
               onWhatsApp={openWhatsApp}
-              onSendExtendLink={sendExtendLink}
+              onCreateSettlement={createSettlement}
+              onSendSettlementWhatsApp={sendSettlementWhatsApp}
               copyToast={copyToast}
               actionLoading={actionLoading}
               canMarkPickup={canMarkPickup}
@@ -1195,7 +1203,8 @@ function OrderConfirmationCard({
   onEdit,
   onCopy,
   onWhatsApp,
-  onSendExtendLink,
+  onCreateSettlement,
+  onSendSettlementWhatsApp,
   copyToast,
   actionLoading,
   canMarkPickup,
@@ -1220,7 +1229,8 @@ function OrderConfirmationCard({
   onEdit: () => void;
   onCopy: () => void;
   onWhatsApp: () => void;
-  onSendExtendLink: () => void;
+  onCreateSettlement: (args: { amount: number; newEndIso: string; note?: string }) => Promise<{ extension_id: string; amount: number; new_end_ts: string; expires_at: string }>;
+  onSendSettlementWhatsApp: (args: { amount: number; newEndIso: string; extensionId: string; note?: string }) => void;
   copyToast: boolean;
   actionLoading: string | null;
   canMarkPickup: boolean;
@@ -1345,33 +1355,19 @@ function OrderConfirmationCard({
         )}
       </div>
 
-      {/* Overdue alert for admin — surfaces when status is still 'ongoing'
-          but the drop-off time has passed. Pairs with "Send Extend Payment
-          Link" to nudge the admin to pre-collect via Razorpay instead of
-          accepting phone promises. */}
+      {/* Overdue → SettlementComposer. Admin picks a real number (per-day
+          rate, hourly, or flat custom) plus a new drop-off, hits Generate,
+          gets a Razorpay-backed link, and ships it via WhatsApp. The customer
+          taps and pays exactly what was agreed — no more phone promises. */}
       {adminIsOverdue && (
-        <div className="rounded-xl border-2 border-red-200 bg-red-50 p-3 space-y-2">
-          <div className="flex items-center gap-2 text-sm text-red-900">
-            <span className="text-lg">⏰</span>
-            <span className="font-semibold">Booking overdue · {adminHoursOverdue} hr late</span>
-            <span className="ml-auto text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-red-600 text-white">
-              Action needed
-            </span>
-          </div>
-          <div className="text-xs text-red-800">
-            Late penalty so far: <strong>{rupee(adminPenaltySoFar)}</strong> (at ₹{latePenaltyRate}/hr · accruing)
-          </div>
-          <button
-            onClick={onSendExtendLink}
-            className="w-full py-2 text-xs font-semibold rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors"
-          >
-            📤 Send Extend Payment Link via WhatsApp
-          </button>
-          <p className="text-[10px] text-red-700 leading-relaxed">
-            Sends the customer a wa.me link to /my-bookings with the extend form pre-opened.
-            Razorpay collects the extension price + late penalty upfront.
-          </p>
-        </div>
+        <SettlementComposer
+          booking={booking}
+          hoursOverdue={adminHoursOverdue}
+          penaltySoFar={adminPenaltySoFar}
+          latePenaltyRate={latePenaltyRate}
+          onCreate={onCreateSettlement}
+          onShare={onSendSettlementWhatsApp}
+        />
       )}
 
       {/* Action toolbar: EDIT BOOKING / COPY SUMMARY / SEND TO WHATSAPP / START RIDE */}
@@ -1396,14 +1392,6 @@ function OrderConfirmationCard({
           >
             💬 Send to WhatsApp
           </button>
-          {!adminIsOverdue && booking.status === 'ongoing' && (
-            <button
-              onClick={onSendExtendLink}
-              className="py-2 text-xs font-semibold rounded-lg bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors"
-            >
-              📤 Send Extend Link
-            </button>
-          )}
           {booking.status === 'pending_payment' && (
             <button
               onClick={() => onAction('confirmed', false, 'Confirm Booking')}
@@ -1493,6 +1481,224 @@ function ConfRow({ label, value, accent }: { label: string; value: string; accen
     <div className="grid grid-cols-[140px_1fr] gap-2 text-[13px]">
       <span className="text-muted">{label} :</span>
       <span className={`font-semibold ${accent ? 'text-orange-600' : ''}`}>{value}</span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SettlementComposer — admin negotiates the actual amount to charge for an
+// overdue booking. Three calculation aids (per-day rate × N days, hourly ×
+// hours overdue, flat custom) all just populate the same `amount` field —
+// the only thing that's persisted. Admin then picks a new drop-off, hits
+// Generate, and the deep-link goes out via WhatsApp.
+// ─────────────────────────────────────────────────────────────────────────────
+function SettlementComposer({
+  booking,
+  hoursOverdue,
+  penaltySoFar,
+  latePenaltyRate,
+  onCreate,
+  onShare,
+}: {
+  booking: DetailBooking;
+  hoursOverdue: number;
+  penaltySoFar: number;
+  latePenaltyRate: number;
+  onCreate: (args: { amount: number; newEndIso: string; note?: string }) => Promise<{ extension_id: string; amount: number; new_end_ts: string; expires_at: string }>;
+  onShare: (args: { amount: number; newEndIso: string; extensionId: string; note?: string }) => void;
+}) {
+  // Default the new drop-off to today's date in the local IST window.
+  const todayIst = new Date();
+  const initialDate = todayIst.toISOString().slice(0, 10);
+
+  const [amount, setAmount] = useState('');
+  const [perDayRate, setPerDayRate] = useState('');
+  const [extraDays, setExtraDays]   = useState('1');
+  const [newDate, setNewDate]       = useState(initialDate);
+  const [newHour, setNewHour]       = useState<number>(20); // 8 PM default
+  const [note, setNote]             = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError]           = useState<string | null>(null);
+  const [created, setCreated]       = useState<{ extension_id: string; amount: number; new_end_ts: string; expires_at: string } | null>(null);
+
+  const newEndLocal = `${newDate}T${String(newHour).padStart(2, '0')}:00`;
+  const perDayCalc  = Math.round(Number(perDayRate || 0) * Number(extraDays || 0));
+  const hourlyCalc  = Math.round(hoursOverdue * latePenaltyRate);
+
+  async function generate() {
+    setError(null);
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      setError('Enter the settlement amount (₹)');
+      return;
+    }
+    if (!newDate) { setError('Pick a new drop-off date'); return; }
+    setSubmitting(true);
+    try {
+      const newEndIso = new Date(newEndLocal).toISOString();
+      const res = await onCreate({ amount: amt, newEndIso, note: note || undefined });
+      setCreated(res);
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to create settlement');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (created) {
+    return (
+      <div className="rounded-xl border-2 border-green-300 bg-green-50 p-3 space-y-2">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-base">✓</span>
+          <span className="font-semibold text-green-900">Settlement link ready</span>
+        </div>
+        <div className="rounded-lg bg-white border border-green-200 p-3 text-xs space-y-1">
+          <div className="flex justify-between"><span className="text-muted">Amount</span><span className="font-bold">{rupee(created.amount)}</span></div>
+          <div className="flex justify-between"><span className="text-muted">New drop-off</span><span>{fmtDateTime12(created.new_end_ts)}</span></div>
+          <div className="flex justify-between"><span className="text-muted">Link valid until</span><span>{fmtDateTime12(created.expires_at)}</span></div>
+        </div>
+        <button
+          onClick={() => onShare({
+            amount: created.amount,
+            newEndIso: created.new_end_ts,
+            extensionId: created.extension_id,
+            note: note || undefined,
+          })}
+          className="w-full py-2 text-xs font-semibold rounded-lg bg-green-600 text-white hover:bg-green-700"
+        >
+          📤 Send Payment Link via WhatsApp
+        </button>
+        <button
+          onClick={() => { setCreated(null); setAmount(''); }}
+          className="w-full py-1.5 text-[11px] text-muted hover:underline"
+        >
+          Create a different settlement
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border-2 border-red-200 bg-red-50 p-3 space-y-3">
+      <div className="flex items-center gap-2 text-sm text-red-900">
+        <span className="text-lg">⏰</span>
+        <span className="font-semibold">Booking overdue · {hoursOverdue} hr late</span>
+        <span className="ml-auto text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-red-600 text-white">
+          Negotiate & collect
+        </span>
+      </div>
+      <p className="text-[11px] text-red-800 leading-relaxed">
+        Auto-computed penalty <strong>{rupee(penaltySoFar)}</strong> (at ₹{latePenaltyRate}/hr × {hoursOverdue} hr) — set the actual amount you agreed with the customer below.
+      </p>
+
+      {/* Calculation aids — these just populate the amount field, nothing is
+          persisted server-side except the final amount + new drop-off. */}
+      <div className="rounded-lg bg-white border border-red-200 p-2.5 space-y-2 text-[11px]">
+        <p className="font-semibold text-red-900">Quick calculators</p>
+        <div className="grid grid-cols-2 gap-2 items-end">
+          <div>
+            <label className="text-[10px] text-muted block mb-0.5">Per-day rate (₹)</label>
+            <input
+              type="number" min={0} step={50}
+              value={perDayRate}
+              onChange={e => setPerDayRate(e.target.value)}
+              placeholder="500"
+              className="input-field w-full text-sm py-1.5 px-2"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-muted block mb-0.5">× days</label>
+            <input
+              type="number" min={1} step={1}
+              value={extraDays}
+              onChange={e => setExtraDays(e.target.value)}
+              className="input-field w-full text-sm py-1.5 px-2"
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <span className="text-muted">= {rupee(perDayCalc)}</span>
+          <button
+            type="button"
+            onClick={() => setAmount(String(perDayCalc))}
+            disabled={perDayCalc <= 0}
+            className="text-[10px] text-accent hover:underline disabled:text-muted disabled:no-underline font-semibold"
+          >
+            Use this →
+          </button>
+        </div>
+        <div className="flex items-center justify-between gap-2 pt-1 border-t border-red-100">
+          <span className="text-muted">Hourly snapshot: {rupee(hourlyCalc)}</span>
+          <button
+            type="button"
+            onClick={() => setAmount(String(hourlyCalc))}
+            className="text-[10px] text-accent hover:underline font-semibold"
+          >
+            Use this →
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <label className="text-[11px] text-muted block mb-1">Settlement amount (₹) <span className="text-red-600">*</span></label>
+        <input
+          type="number" min={1} step={1}
+          value={amount}
+          onChange={e => setAmount(e.target.value)}
+          placeholder="e.g. 1500"
+          className="input-field w-full text-sm"
+        />
+        <p className="text-[10px] text-muted mt-1">
+          This is the exact amount Razorpay will charge. Booking won&apos;t extend until the customer pays.
+        </p>
+      </div>
+
+      <div>
+        <label className="text-[11px] text-muted block mb-1">New drop-off date &amp; hour <span className="text-red-600">*</span></label>
+        <div className="flex gap-2">
+          <input
+            type="date"
+            value={newDate}
+            min={initialDate}
+            onChange={e => setNewDate(e.target.value)}
+            className="input-field flex-1 text-sm"
+          />
+          <select
+            value={newHour}
+            onChange={e => setNewHour(parseInt(e.target.value, 10))}
+            className="input-field text-sm w-28"
+          >
+            {Array.from({ length: 17 }, (_, i) => 6 + i).map(h => {
+              const label = h === 12 ? '12 PM' : h < 12 ? `${h} AM` : `${h - 12} PM`;
+              return <option key={h} value={h}>{label}</option>;
+            })}
+          </select>
+        </div>
+        <p className="text-[10px] text-muted mt-1">Drop-offs accepted 6 AM – 10 PM.</p>
+      </div>
+
+      <div>
+        <label className="text-[11px] text-muted block mb-1">Note (optional, sent in WhatsApp)</label>
+        <input
+          type="text"
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          placeholder="e.g. ₹500 × 3 days at agreed flat rate"
+          className="input-field w-full text-sm"
+        />
+      </div>
+
+      {error && (
+        <p className="text-xs text-red-700 bg-red-100 border border-red-200 rounded-lg px-3 py-2">{error}</p>
+      )}
+
+      <button
+        onClick={generate}
+        disabled={submitting || !amount || !newDate}
+        className="w-full py-2 text-xs font-semibold rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-60"
+      >
+        {submitting ? 'Creating payment link…' : `Generate Payment Link · ${amount ? rupee(Number(amount)) : '—'}`}
+      </button>
     </div>
   );
 }
