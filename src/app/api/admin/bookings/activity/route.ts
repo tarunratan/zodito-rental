@@ -160,14 +160,20 @@ export async function GET(req: NextRequest) {
 
   // ── Extension events — both successful and pending/failed for visibility. ──
   for (const ext of extRes.data ?? []) {
-    const dropOffMoved = `Drop-off → ${formatIstDateTime(ext.new_end_ts)}`;
+    const fromTo = `${formatIstDateTime(ext.original_end_ts)} → ${formatIstDateTime(ext.new_end_ts)}`;
     if (ext.status === 'confirmed') {
+      // matched_tier='admin' is the sentinel used by /api/admin/bookings/extend
+      // to mark admin-recorded extensions vs customer self-extends. Surface
+      // the distinction in the title so the activity log reads correctly.
+      const adminInitiated = ext.matched_tier === 'admin';
       events.push({
         id:    `ext-${ext.id}`,
         ts:    ext.paid_at ?? ext.created_at,
         kind:  'extended_paid',
-        title: `Booking extended · ${rupee(ext.total_delta)} paid`,
-        detail: `${dropOffMoved}${ext.matched_tier ? ` · ${ext.matched_tier} tier` : ''}`,
+        title: adminInitiated
+          ? `Admin extended booking · ${rupee(ext.total_delta)} collected`
+          : `Customer extended booking · ${rupee(ext.total_delta)} paid`,
+        detail: `${fromTo}${ext.matched_tier && ext.matched_tier !== 'admin' ? ` · ${ext.matched_tier} tier` : ''}`,
       });
     } else if (ext.status === 'pending_payment') {
       // Pending + razorpay_order_id set means an admin generated a settlement
@@ -179,7 +185,7 @@ export async function GET(req: NextRequest) {
         title: ext.razorpay_order_id
           ? `Settlement link sent · ${rupee(ext.total_delta)} pending`
           : `Extension quote pending · ${rupee(ext.total_delta)}`,
-        detail: dropOffMoved,
+        detail: fromTo,
       });
     } else if (ext.status === 'expired') {
       events.push({
@@ -187,7 +193,7 @@ export async function GET(req: NextRequest) {
         ts:    ext.created_at,
         kind:  'extension_expired',
         title: `Extension link expired · ${rupee(ext.total_delta)} unpaid`,
-        detail: dropOffMoved,
+        detail: fromTo,
       });
     } else if (ext.status === 'failed') {
       events.push({
@@ -195,7 +201,7 @@ export async function GET(req: NextRequest) {
         ts:    ext.created_at,
         kind:  'extension_failed',
         title: 'Extension payment failed',
-        detail: dropOffMoved,
+        detail: fromTo,
       });
     }
   }

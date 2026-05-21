@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdmin } from '@/lib/supabase/server';
 import { isWithinStoreHours } from '@/lib/pricing';
+import { writeHandoverLog } from '@/lib/handover-audit';
 
 export const runtime = 'nodejs';
 
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
 
   const { data: booking } = await supabase
     .from('bookings')
-    .select('id, end_ts, status, advance_paid, pending_amount, km_limit')
+    .select('id, end_ts, status, advance_paid, pending_amount, km_limit, user_id, booking_number')
     .eq('id', booking_id)
     .maybeSingle();
 
@@ -47,22 +48,75 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const updates: Record<string, unknown> = { end_ts: new_end_ts };
+  const collected     = amount_collected != null && amount_collected > 0 ? amount_collected : 0;
+  const extraKmAdded  = extra_km          != null && extra_km > 0         ? extra_km          : 0;
+  const originalEnd   = booking.end_ts as string;
+  const originalKmLim = Number(booking.km_limit ?? 0);
+  const newKmLim      = originalKmLim + extraKmAdded;
+  const extraHours    = (new Date(new_end_ts).getTime() - new Date(originalEnd).getTime()) / 3_600_000;
+  const nowIso        = new Date().toISOString();
 
-  if (amount_collected != null && amount_collected > 0) {
-    const newAdvance = Number(booking.advance_paid ?? 0) + amount_collected;
-    const newPending = Math.max(0, Number(booking.pending_amount ?? 0) - amount_collected);
-    updates.advance_paid    = newAdvance;
-    updates.pending_amount  = newPending;
+  // Insert a booking_extensions row BEFORE mutating bookings.end_ts. Marks
+  // the extension as confirmed + paid immediately since the admin already
+  // collected (or is recording a zero-amount extension). gst_delta=0 mirrors
+  // the GST-waived policy. matched_tier='admin' is a sentinel so the UI can
+  // label these rows as admin-recorded vs customer self-extends.
+  const { error: extInsertErr } = await supabase
+    .from('booking_extensions')
+    .insert({
+      booking_id:        booking.id,
+      user_id:           booking.user_id,
+      status:            'confirmed',
+      original_end_ts:   originalEnd,
+      new_end_ts:        new_end_ts,
+      extra_hours:       Number(extraHours.toFixed(2)),
+      original_km_limit: originalKmLim,
+      extra_km:          extraKmAdded,
+      new_km_limit:      newKmLim,
+      base_delta:        collected,
+      gst_delta:         0,
+      total_delta:       collected,
+      matched_tier:      'admin',
+      paid_at:           nowIso,
+    });
+  if (extInsertErr) {
+    // RLS / FK / constraint failures bubble up cleanly so the operator
+    // knows the audit row didn't land — better to abort than silently
+    // mutate end_ts and lose the trail.
+    return NextResponse.json({ error: 'Could not record extension: ' + extInsertErr.message }, { status: 500 });
+  }
+
+  // Then mutate the booking itself.
+  const updates: Record<string, unknown> = { end_ts: new_end_ts };
+  if (collected > 0) {
+    const newAdvance = Number(booking.advance_paid ?? 0) + collected;
+    const newPending = Math.max(0, Number(booking.pending_amount ?? 0) - collected);
+    updates.advance_paid   = newAdvance;
+    updates.pending_amount = newPending;
     if (newPending === 0) updates.payment_status = 'paid';
   }
-
-  if (extra_km != null && extra_km > 0) {
-    updates.km_limit = Number(booking.km_limit ?? 0) + extra_km;
-  }
+  if (extraKmAdded > 0) updates.km_limit = newKmLim;
 
   const { error } = await supabase.from('bookings').update(updates).eq('id', booking_id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Handover-log entry so the activity timeline picks it up too. The
+  // /activity endpoint reads from booking_extensions for the rich card,
+  // and from booking_handover_logs for the inline timeline event — write
+  // to both so neither surface comes up empty.
+  await writeHandoverLog(supabase, {
+    booking_id,
+    admin,
+    kind: 'save',
+    payload: {
+      action: 'admin_extend',
+      from: originalEnd,
+      to: new_end_ts,
+      extra_hours: Number(extraHours.toFixed(2)),
+      extra_km: extraKmAdded,
+      amount_collected: collected,
+    },
+  });
 
   return NextResponse.json({ ok: true, updates });
 }
