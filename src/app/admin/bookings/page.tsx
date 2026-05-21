@@ -6,7 +6,6 @@ export const dynamic = 'force-dynamic';
 
 export default async function AdminBookingsPage() {
   let bookings: any[] = [];
-  let allBikes: any[] = [];
 
   if (!isMockMode()) {
     const supabase = createSupabaseAdmin();
@@ -58,12 +57,7 @@ export default async function AdminBookingsPage() {
       bike: bikeMap[b.bike_id] ?? null,
       user: userMap[b.user_id] ?? null,
     }));
-
-    // Dropdown: only active+approved bikes with model names
-    allBikes = allBikesData
-      .filter((b: any) => b.is_active && b.listing_status === 'approved')
-      .map((b: any) => ({ ...b, model: modelMap[b.model_id] ?? null }));
   }
 
-  return <BookingsManager initialBookings={bookings} allBikes={allBikes} />;
+  return <BookingsManager initialBookings={bookings} />;
 }

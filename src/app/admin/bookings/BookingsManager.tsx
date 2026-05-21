@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { OnlineBookingDetailModal } from './OnlineBookingDetailModal';
 import { istLocalToUtcIso, utcToIstLocal, formatIstDateTime } from '@/lib/datetime';
 
@@ -227,41 +228,14 @@ function BookingLocation({ booking }: { booking: Booking }) {
   );
 }
 
-type BikeOption = { id: string; emoji: string; registration_number: string | null; model: { display_name: string } | null };
-
-type ManualTab = 'customer' | 'kyc' | 'trip' | 'payment' | 'handover';
-
-const MANUAL_TABS: { key: ManualTab; label: string; icon: string }[] = [
-  { key: 'customer', label: 'Customer',  icon: '👤' },
-  { key: 'kyc',      label: 'KYC Docs',  icon: '🪪' },
-  { key: 'trip',     label: 'Trip',      icon: '🏍️' },
-  { key: 'payment',  label: 'Payment',   icon: '💰' },
-  { key: 'handover', label: 'Handover',  icon: '✅' },
-];
-
-const EMPTY_MANUAL = {
-  bike_id: '', customer_name: '', customer_phone: '', customer_email: '',
-  alternate_phone: '',
-  start_ts: '', end_ts: '',
-  total_amount: '', advance_paid: '', security_deposit: '', km_limit: '',
-  odometer_reading: '',
-  payment_method_detail: '' as '' | 'cash' | 'upi' | 'online' | 'partial_online',
-  payment_proof_url: '',
-  helmets_provided: '0',
-  original_dl_taken: false,
-  notes: '',
-  kyc_dl_front_url:      '',
-  kyc_dl_back_url:       '',
-  kyc_aadhaar_front_url: '',
-  kyc_aadhaar_back_url:  '',
-  kyc_selfie_url:        '',
-};
-
-export function BookingsManager({ initialBookings, allBikes = [] }: { initialBookings: Booking[]; allBikes?: BikeOption[] }) {
+export function BookingsManager({ initialBookings }: { initialBookings: Booking[] }) {
   const [bookings, setBookings] = useState<Booking[]>(initialBookings);
-  const [filter, setFilter] = useState('all');
+  // Sub-tab view filter — replaces the old chunky status-chip strip.
+  const [view, setView] = useState<'active' | 'overdue' | 'upcoming' | 'past'>('active');
+  // Source filter, orthogonal to view — admins frequently want to scope to
+  // walk-in (manual) bookings only when reconciling cash.
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'online' | 'offline'>('all');
   const [search, setSearch] = useState('');
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [actionModal, setActionModal] = useState<{ id: string; action: string } | null>(null);
   const [actionNotes, setActionNotes] = useState('');
   const [loading, setLoading] = useState<string | null>(null);
@@ -271,60 +245,6 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Handover inline editing (works for all booking types)
-  const [handoverEdit, setHandoverEdit] = useState<Record<string, any>>({});
-  const [handoverSaving, setHandoverSaving] = useState<string | null>(null);
-  const [handoverSaved, setHandoverSaved] = useState<string | null>(null);
-
-  function initHandover(b: Booking) {
-    setHandoverEdit(prev => ({
-      ...prev,
-      [b.id]: {
-        alternate_phone: b.alternate_phone ?? '',
-        odometer_reading: b.odometer_reading ?? '',
-        helmets_provided: b.helmets_provided ?? 0,
-        original_dl_taken: b.original_dl_taken ?? false,
-        notes: b.notes ?? '',
-        pending_amount: b.pending_amount ?? 0,
-      },
-    }));
-  }
-
-  async function saveHandover(bookingId: string) {
-    const h = handoverEdit[bookingId];
-    if (!h) return;
-    setHandoverSaving(bookingId);
-    try {
-      const res = await fetch('/api/admin/bookings/handover', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          booking_id: bookingId,
-          alternate_phone: h.alternate_phone || null,
-          odometer_reading: h.odometer_reading !== '' ? Number(h.odometer_reading) : null,
-          helmets_provided: Number(h.helmets_provided) || 0,
-          original_dl_taken: !!h.original_dl_taken,
-          notes: h.notes || null,
-          pending_amount: Number(h.pending_amount) || 0,
-        }),
-      });
-      if (res.ok) {
-        setBookings(prev => prev.map(b => b.id !== bookingId ? b : {
-          ...b,
-          alternate_phone: h.alternate_phone || null,
-          odometer_reading: h.odometer_reading !== '' ? Number(h.odometer_reading) : null,
-          helmets_provided: Number(h.helmets_provided) || 0,
-          original_dl_taken: !!h.original_dl_taken,
-          notes: h.notes || null,
-          pending_amount: Number(h.pending_amount) || 0,
-        }));
-        setHandoverSaved(bookingId);
-        setTimeout(() => setHandoverSaved(null), 2500);
-      }
-    } finally {
-      setHandoverSaving(null);
-    }
-  }
 
   async function deleteBooking(booking_id: string) {
     setDeleteLoading(true);
@@ -408,71 +328,42 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
     }
   }
 
-  const [showManual, setShowManual] = useState(false);
-  const [manualForm, setManualForm] = useState({ ...EMPTY_MANUAL });
-  const [manualLoading, setManualLoading] = useState(false);
-  const [manualError, setManualError] = useState<string | null>(null);
-  const [manualTab, setManualTab] = useState<ManualTab>('customer');
-  const [kycUploading, setKycUploading] = useState<Record<string, boolean>>({});
-
-  // Detail modal for online bookings
+  // Detail modal for ALL bookings (online + offline)
   const [detailBooking, setDetailBooking] = useState<Booking | null>(null);
-
-  async function uploadKycDoc(file: File, docType: string) {
-    setKycUploading(p => ({ ...p, [docType]: true }));
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('doc_type', docType);
-    try {
-      const res = await fetch('/api/admin/bookings/kyc-upload', { method: 'POST', body: fd });
-      const data = await res.json();
-      if (res.ok && data.path) {
-        setManualForm(f => ({ ...f, [`kyc_${docType}_url`]: data.path }));
-      } else {
-        setManualError(data.error ?? 'Upload failed');
-      }
-    } catch {
-      setManualError('Network error during upload');
-    } finally {
-      setKycUploading(p => ({ ...p, [docType]: false }));
-    }
-  }
-
-  // KYC docs count for tab badge
-  const kycCount = ['kyc_dl_front_url','kyc_dl_back_url','kyc_aadhaar_front_url','kyc_aadhaar_back_url','kyc_selfie_url']
-    .filter(k => (manualForm as any)[k]).length;
-
-  const allStatuses = ['all', 'awaiting_pickup', 'confirmed', 'ongoing', 'pending_payment', 'completed', 'cancelled', 'payment_failed'];
 
   const now = new Date();
 
-  const counts = allStatuses.reduce<Record<string, number>>((acc, s) => {
-    if (s === 'all') { acc[s] = bookings.length; return acc; }
-    if (s === 'awaiting_pickup') {
-      acc[s] = bookings.filter(b => b.status === 'confirmed' && new Date(b.start_ts) <= now).length;
-      return acc;
-    }
-    if (s === 'confirmed') {
-      acc[s] = bookings.filter(b => b.status === 'confirmed' && new Date(b.start_ts) > now).length;
-      return acc;
-    }
-    acc[s] = bookings.filter(b => b.status === s).length;
-    return acc;
-  }, {});
-
-  function isOverdue(b: Booking) {
+  // Sub-tab semantics — what each view holds:
+  //   active   : ongoing and still inside the rental window (return imminent)
+  //   overdue  : ongoing past end_ts (needs settlement) OR confirmed past start_ts (no-show / awaiting pickup)
+  //   upcoming : confirmed-future + pending_payment (not yet started)
+  //   past     : completed + cancelled + payment_failed (history)
+  function isPickupOverdue(b: Booking) {
     return b.status === 'confirmed' && new Date(b.start_ts) <= now;
   }
-
-  function matchesFilter(b: Booking) {
-    if (filter === 'all') return true;
-    if (filter === 'awaiting_pickup') return isOverdue(b);
-    if (filter === 'confirmed') return b.status === 'confirmed' && !isOverdue(b);
-    return b.status === filter;
+  function isReturnOverdue(b: Booking) {
+    return b.status === 'ongoing' && new Date(b.end_ts) < now;
+  }
+  function bucketOf(b: Booking): 'active' | 'overdue' | 'upcoming' | 'past' {
+    if (b.status === 'ongoing')   return isReturnOverdue(b) ? 'overdue' : 'active';
+    if (b.status === 'confirmed') return isPickupOverdue(b) ? 'overdue' : 'upcoming';
+    if (b.status === 'pending_payment') return 'upcoming';
+    return 'past'; // completed / cancelled / payment_failed
   }
 
+  const counts = bookings.reduce<Record<string, number>>((acc, b) => {
+    const k = bucketOf(b);
+    acc[k] = (acc[k] ?? 0) + 1;
+    if (sourceFilter === 'all' || (sourceFilter === 'offline' ? b.source === 'manual' : b.source !== 'manual')) {
+      acc[`${k}_visible`] = (acc[`${k}_visible`] ?? 0) + 1;
+    }
+    return acc;
+  }, { active: 0, overdue: 0, upcoming: 0, past: 0 });
+
   const filtered = bookings.filter(b => {
-    if (!matchesFilter(b)) return false;
+    if (bucketOf(b) !== view) return false;
+    if (sourceFilter === 'online'  && b.source === 'manual') return false;
+    if (sourceFilter === 'offline' && b.source !== 'manual') return false;
     if (search) {
       const q = search.toLowerCase();
       const c = customerInfo(b);
@@ -524,91 +415,78 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
     }
   }
 
-  async function createManualBooking() {
-    setManualError(null);
-    if (!manualForm.bike_id || !manualForm.customer_name.trim() || !manualForm.customer_phone.trim() || !manualForm.start_ts || !manualForm.end_ts) {
-      setManualError('Bike, customer name, phone, and dates are all required');
-      return;
-    }
-    const totalAmt   = manualForm.total_amount   ? parseFloat(manualForm.total_amount)   : 0;
-    const advanceAmt = manualForm.advance_paid    ? parseFloat(manualForm.advance_paid)   : 0;
-    if (advanceAmt > totalAmt) {
-      setManualError('Advance paid cannot exceed total amount');
-      return;
-    }
-    setManualLoading(true);
-    const res = await fetch('/api/admin/bookings/manual', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        bike_id: manualForm.bike_id,
-        customer_name: manualForm.customer_name.trim(),
-        customer_phone: manualForm.customer_phone.trim(),
-        customer_email: manualForm.customer_email.trim() || undefined,
-        alternate_phone: manualForm.alternate_phone.trim() || undefined,
-        start_ts: istLocalToUtcIso(manualForm.start_ts),
-        end_ts: istLocalToUtcIso(manualForm.end_ts),
-        total_amount: totalAmt,
-        advance_paid: advanceAmt,
-        security_deposit: manualForm.security_deposit ? parseFloat(manualForm.security_deposit) : 0,
-        km_limit: manualForm.km_limit ? parseInt(manualForm.km_limit) : 0,
-        odometer_reading: manualForm.odometer_reading ? parseInt(manualForm.odometer_reading) : undefined,
-        helmets_provided: parseInt(manualForm.helmets_provided) || 0,
-        original_dl_taken: manualForm.original_dl_taken,
-        payment_method_detail: manualForm.payment_method_detail || undefined,
-        payment_proof_url: manualForm.payment_proof_url.trim() || undefined,
-        kyc_dl_front_url:      manualForm.kyc_dl_front_url      || undefined,
-        kyc_dl_back_url:       manualForm.kyc_dl_back_url       || undefined,
-        kyc_aadhaar_front_url: manualForm.kyc_aadhaar_front_url || undefined,
-        kyc_aadhaar_back_url:  manualForm.kyc_aadhaar_back_url  || undefined,
-        kyc_selfie_url:        manualForm.kyc_selfie_url        || undefined,
-        notes: manualForm.notes || undefined,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setManualError(data.error ?? 'Failed to create booking');
-    } else {
-      setShowManual(false);
-      setManualForm({ ...EMPTY_MANUAL });
-      window.location.reload();
-    }
-    setManualLoading(false);
-  }
+
+  // Visible bucket counts factor in the source filter so the tab badges
+  // match what the user is actually filtering to.
+  const visibleCounts = {
+    active:   counts.active_visible   ?? counts.active   ?? 0,
+    overdue:  counts.overdue_visible  ?? counts.overdue  ?? 0,
+    upcoming: counts.upcoming_visible ?? counts.upcoming ?? 0,
+    past:     counts.past_visible     ?? counts.past     ?? 0,
+  };
+  const VIEWS = [
+    { key: 'active'   as const, label: 'Active',   badge: visibleCounts.active   },
+    { key: 'overdue'  as const, label: 'Overdue',  badge: visibleCounts.overdue,  urgent: visibleCounts.overdue > 0 },
+    { key: 'upcoming' as const, label: 'Upcoming', badge: visibleCounts.upcoming },
+    { key: 'past'     as const, label: 'Past',     badge: visibleCounts.past     },
+  ];
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="font-semibold text-lg">All Bookings</h2>
-        <button onClick={() => { setShowManual(true); setManualForm({ ...EMPTY_MANUAL }); setManualError(null); setManualTab('customer'); }}
-          className="text-sm px-3 py-1.5 bg-accent text-white rounded-lg hover:bg-accent/90 font-medium">
-          + Manual Booking
-        </button>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <h2 className="font-semibold text-lg">Bookings</h2>
+        <div className="flex items-center gap-2">
+          {visibleCounts.overdue > 0 && (
+            <Link href="/admin/bookings/overdue" className="text-xs px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 font-semibold inline-flex items-center gap-1.5">
+              ⏰ {visibleCounts.overdue} overdue · Settle →
+            </Link>
+          )}
+          <Link href="/admin/bookings/new" className="text-sm px-3 py-1.5 bg-accent text-white rounded-lg hover:bg-accent/90 font-medium">
+            + Manual Booking
+          </Link>
+        </div>
       </div>
 
+      {/* Sub-tabs — replaces the old status-chip row. Active/Overdue/Upcoming/Past
+          group the same statuses but by what an admin actually does with them. */}
       <div className="flex flex-wrap gap-2 mb-3">
-        {allStatuses.filter(s => s !== 'payment_failed').map(s => {
-          const label = s === 'awaiting_pickup' ? 'Awaiting Pickup' : s.replace(/_/g, ' ');
-          const isUrgent = s === 'awaiting_pickup' && counts[s] > 0;
+        {VIEWS.map(v => {
+          const isActive = view === v.key;
+          const urgent = (v as any).urgent;
           return (
             <button
-              key={s}
-              onClick={() => setFilter(s)}
+              key={v.key}
+              onClick={() => setView(v.key)}
               className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-colors flex items-center gap-1 ${
-                filter === s
-                  ? isUrgent ? 'bg-orange-500 text-white' : 'bg-accent text-white'
-                  : isUrgent ? 'bg-orange-100 text-orange-700 hover:bg-orange-200' : 'bg-border/60 text-muted hover:bg-border'
+                isActive
+                  ? urgent ? 'bg-red-600 text-white' : 'bg-accent text-white'
+                  : urgent ? 'bg-red-50 text-red-700 hover:bg-red-100 border border-red-200' : 'bg-border/60 text-muted hover:bg-border'
               }`}
             >
-              {isUrgent && '⚠ '}{label}
-              {counts[s] > 0 && (
-                <span className={`font-bold px-1.5 py-0.5 rounded-full text-[10px] ${filter === s ? 'bg-white/20' : 'bg-muted/20'}`}>
-                  {counts[s]}
+              {urgent && '⚠ '}{v.label}
+              {v.badge > 0 && (
+                <span className={`font-bold px-1.5 py-0.5 rounded-full text-[10px] ${isActive ? 'bg-white/20' : 'bg-muted/20'}`}>
+                  {v.badge}
                 </span>
               )}
             </button>
           );
         })}
+        {/* Source filter — orthogonal to view, lets admin focus on cash/walk-in
+            books (offline) vs. Razorpay (online). */}
+        <div className="ml-auto inline-flex rounded-lg overflow-hidden border border-border text-[10px] font-bold">
+          {(['all', 'online', 'offline'] as const).map(s => (
+            <button
+              key={s}
+              onClick={() => setSourceFilter(s)}
+              className={`px-3 py-1.5 uppercase tracking-wide transition-colors ${
+                sourceFilter === s ? 'bg-primary text-white' : 'bg-bg text-muted hover:bg-border/60'
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="mb-4">
@@ -640,17 +518,10 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
               </thead>
               <tbody>
                 {filtered.map(b => (
-                  <>
                     <tr
                       key={b.id}
-                      className={`border-b border-border hover:bg-bg/40 cursor-pointer transition-colors ${expanded === b.id ? 'bg-bg/60' : ''}`}
-                      onClick={() => {
-                        // Both online and offline now open the same Detail modal —
-                        // offline bookings already have handover_saved_at set at
-                        // creation, so they land directly on the Order Confirmation
-                        // view (per spec, identical flow for both sources).
-                        setDetailBooking(b);
-                      }}
+                      className="border-b border-border hover:bg-bg/40 cursor-pointer transition-colors"
+                      onClick={() => setDetailBooking(b)}
                     >
                       <td className="px-4 py-3">
                         <div className="font-mono text-xs font-semibold text-accent">{b.booking_number}</div>
@@ -707,7 +578,7 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        {isOverdue(b) ? (
+                        {isPickupOverdue(b) ? (
                           <div className="space-y-0.5">
                             <span className="block text-[11px] font-semibold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">
                               Awaiting Pickup
@@ -726,237 +597,39 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-1.5" onClick={e => e.stopPropagation()}>
-                          {b.status === 'confirmed' && (
-                            <button onClick={() => { setActionModal({ id: b.id, action: 'ongoing' }); setActionError(null); }} disabled={loading === b.id}
-                              className="text-xs px-2 py-1 bg-orange-50 text-orange-600 rounded hover:bg-orange-100 transition-colors disabled:opacity-50">
-                              Mark Pickup
-                            </button>
-                          )}
-                          {['confirmed', 'ongoing'].includes(b.status) && (
-                            <button
-                              onClick={() => {
-                                // Prefill the date with the current drop-off day in IST, and
-                                // start the hour-picker at the closest in-window hour after it
-                                // (clamped to store window 6 AM – 10 PM).
-                                const istLocal = utcToIstLocal(b.end_ts); // "YYYY-MM-DDTHH:mm" in IST
-                                const date = istLocal.slice(0, 10);
-                                const curHour = parseInt(istLocal.slice(11, 13), 10) || 10;
-                                const startHour = Math.min(22, Math.max(6, curHour));
-                                setExtendModal({ id: b.id, number: b.booking_number, currentEnd: b.end_ts, pendingAmount: b.pending_amount ?? 0, kmLimit: b.km_limit });
-                                setExtendNewDate(date);
-                                setExtendNewHour(startHour);
-                                setExtendAmtCollected('');
-                                setExtendExtraKm('');
-                                setExtendError(null);
-                              }}
-                              disabled={loading === b.id}
-                              className="text-xs px-2 py-1 bg-purple-50 text-purple-600 rounded hover:bg-purple-100 transition-colors disabled:opacity-50"
-                            >
-                              Extend
-                            </button>
-                          )}
-                          {(isOverdue(b) || b.status === 'ongoing') && (
-                            <button
-                              onClick={() => {
-                                setActionModal({ id: b.id, action: 'no_show' });
-                                setActionNotes(b.status === 'ongoing' ? 'Force cancelled by admin' : 'Customer no-show — bike released');
-                                setActionError(null);
-                              }}
-                              disabled={loading === b.id}
-                              className="text-xs px-2 py-1 bg-red-50 text-red-500 rounded hover:bg-red-100 transition-colors disabled:opacity-50"
-                            >
-                              No-show
-                            </button>
-                          )}
-                          {b.status === 'ongoing' && (
-                            <button onClick={() => { setActionModal({ id: b.id, action: 'completed' }); setActionError(null); }} disabled={loading === b.id}
-                              className="text-xs px-2 py-1 bg-green-50 text-green-600 rounded hover:bg-green-100 transition-colors disabled:opacity-50">
-                              Mark Return
-                            </button>
-                          )}
-                          {['confirmed', 'pending_payment'].includes(b.status) && (
-                            <button onClick={() => { setActionModal({ id: b.id, action: 'cancelled' }); setActionNotes(''); setActionError(null); }}
-                              className="text-xs px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 transition-colors">
-                              Cancel
-                            </button>
-                          )}
-                          {b.status === 'cancelled' && b.payment_status === 'paid' && (
-                            <button onClick={() => { setActionModal({ id: b.id, action: 'refunded' }); setActionError(null); }}
-                              className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors">
-                              Refund
-                            </button>
-                          )}
-                          {['cancelled', 'payment_failed'].includes(b.status) && (
-                            <button
-                              onClick={() => { setDeleteModal({ id: b.id, number: b.booking_number }); setDeleteError(null); }}
-                              className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded hover:bg-red-50 hover:text-red-600 transition-colors"
-                            >
-                              Delete
-                            </button>
-                          )}
-                          <button
-                            onClick={() => setDetailBooking(b)}
-                            className="text-xs px-2 py-1 bg-border text-primary rounded hover:bg-border/70 transition-colors"
-                          >
-                            Details
-                          </button>
-                        </div>
+                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                        <RowActions
+                          booking={b}
+                          loading={loading === b.id}
+                          isPickupOverdue={isPickupOverdue(b)}
+                          isReturnOverdue={isReturnOverdue(b)}
+                          onPrimary={(action) => {
+                            if (action === 'details')  { setDetailBooking(b); return; }
+                            if (action === 'delete')   { setDeleteModal({ id: b.id, number: b.booking_number }); setDeleteError(null); return; }
+                            if (action === 'settle')   { setDetailBooking(b); return; } // SettlementComposer surfaces inside the modal
+                            if (action === 'extend')   {
+                              const istLocal = utcToIstLocal(b.end_ts);
+                              const date = istLocal.slice(0, 10);
+                              const curHour = parseInt(istLocal.slice(11, 13), 10) || 10;
+                              setExtendModal({ id: b.id, number: b.booking_number, currentEnd: b.end_ts, pendingAmount: b.pending_amount ?? 0, kmLimit: b.km_limit });
+                              setExtendNewDate(date);
+                              setExtendNewHour(Math.min(22, Math.max(6, curHour)));
+                              setExtendAmtCollected('');
+                              setExtendExtraKm('');
+                              setExtendError(null);
+                              return;
+                            }
+                            // Status-transition actions all route through the same confirm modal.
+                            const presetNotes = action === 'no_show'
+                              ? (b.status === 'ongoing' ? 'Force cancelled by admin' : 'Customer no-show — bike released')
+                              : '';
+                            setActionModal({ id: b.id, action });
+                            setActionNotes(presetNotes);
+                            setActionError(null);
+                          }}
+                        />
                       </td>
                     </tr>
-                    {expanded === b.id && (
-                      <tr key={`${b.id}-exp`} className="border-b border-border bg-bg/30">
-                        <td colSpan={7} className="px-4 py-4">
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
-                            <div>
-                              <p className="text-xs font-semibold text-muted uppercase mb-1">Pricing</p>
-                              <p>Base: {rupee(b.base_price)}</p>
-                              {b.gst_amount > 0 && <p>GST: {rupee(b.gst_amount)}</p>}
-                              <p>Deposit: {rupee(b.security_deposit)}</p>
-                              {b.excess_km_charge > 0 && <p>Excess KM: {rupee(b.excess_km_charge)}</p>}
-                              {b.damage_charge > 0 && <p>Damage: {rupee(b.damage_charge)}</p>}
-                              <p className="font-semibold mt-1">Total: {rupee(b.total_amount)}</p>
-                              {(b.advance_paid ?? 0) > 0 && (
-                                <p className="text-green-700 text-xs">Paid: {rupee(b.advance_paid ?? 0)}</p>
-                              )}
-                              {(b.pending_amount ?? 0) > 0 && (
-                                <p className="text-orange-600 font-semibold text-xs">Pending: {rupee(b.pending_amount ?? 0)}</p>
-                              )}
-                              {b.payment_method_detail && (
-                                <p className="text-xs text-muted capitalize mt-0.5">via {b.payment_method_detail.replace(/_/g, ' ')}</p>
-                              )}
-                            </div>
-                            <div>
-                              <p className="text-xs font-semibold text-muted uppercase mb-1">Timeline</p>
-                              {b.picked_up_at && <p className="text-xs">Picked up: {fmt(b.picked_up_at)}</p>}
-                              {b.returned_at && <p className="text-xs">Returned: {fmt(b.returned_at)}</p>}
-                              {b.cancelled_at && <p className="text-xs text-red-500">Cancelled: {fmt(b.cancelled_at)}</p>}
-                              {b.final_km_used != null && <p className="text-xs">KM used: {b.final_km_used}</p>}
-                              {b.odometer_reading != null && <p className="text-xs">Odometer: {b.odometer_reading} km</p>}
-                              {b.km_limit > 0 && <p className="text-xs">KM limit: {b.km_limit} km</p>}
-                            </div>
-                            <div>
-                              <p className="text-xs font-semibold text-muted uppercase mb-1">Handover</p>
-                              {b.razorpay_payment_id && <p className="text-xs font-mono text-muted">{b.razorpay_payment_id}</p>}
-                              <p className="text-xs capitalize">{b.payment_status.replace(/_/g, ' ')}</p>
-                              {(b.helmets_provided ?? 0) > 0 && <p className="text-xs">Helmets: {b.helmets_provided}</p>}
-                              <p className="text-xs">{b.original_dl_taken ? '✅ DL taken' : '— DL not taken'}</p>
-                              {b.alternate_phone && <p className="text-xs text-muted">Alt ph: {b.alternate_phone}</p>}
-                            </div>
-                            <div>
-                              {(b.notes || b.cancellation_reason) && (
-                                <>
-                                  <p className="text-xs font-semibold text-muted uppercase mb-1">Notes</p>
-                                  <p className="text-xs text-muted">{b.notes || b.cancellation_reason}</p>
-                                </>
-                              )}
-                              {b.payment_proof_url && (
-                                <div className="mt-2">
-                                  <p className="text-xs font-semibold text-muted uppercase mb-1">Payment Proof</p>
-                                  <a
-                                    href={b.payment_proof_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-xs text-accent underline"
-                                  >
-                                    View proof →
-                                  </a>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* ── KYC Documents — show for manual (booking-level docs) and online (user profile docs) ── */}
-                          {(b.kyc_dl_front_url || b.kyc_dl_back_url || b.kyc_aadhaar_front_url || b.kyc_aadhaar_back_url || b.kyc_selfie_url || b.user?.id) && (
-                            <BookingKycDocs booking={b} />
-                          )}
-
-                          {/* ── Editable Handover ── */}
-                          {handoverEdit[b.id] && (
-                            <div className="rounded-xl border-2 border-green-200 overflow-hidden mt-4">
-                              <div className="px-4 py-2 bg-green-50 flex items-center justify-between">
-                                <span className="text-xs font-bold uppercase tracking-wide text-green-700">✅ Handover Details</span>
-                                {handoverSaved === b.id && (
-                                  <span className="text-[11px] text-green-600 font-semibold">Saved ✓</span>
-                                )}
-                              </div>
-                              <div className="p-4 bg-white space-y-3">
-                                <div className="grid grid-cols-2 gap-3">
-                                  <div>
-                                    <label className="text-[10px] text-muted uppercase tracking-wide block mb-0.5">Alternate Phone</label>
-                                    <input
-                                      type="tel"
-                                      value={handoverEdit[b.id].alternate_phone}
-                                      onChange={e => setHandoverEdit(p => ({ ...p, [b.id]: { ...p[b.id], alternate_phone: e.target.value } }))}
-                                      className="input-field w-full text-sm"
-                                      placeholder="+91 98765 43210"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="text-[10px] text-muted uppercase tracking-wide block mb-0.5">Odometer at Pickup (km)</label>
-                                    <input
-                                      type="number" min={0}
-                                      value={handoverEdit[b.id].odometer_reading}
-                                      onChange={e => setHandoverEdit(p => ({ ...p, [b.id]: { ...p[b.id], odometer_reading: e.target.value } }))}
-                                      className="input-field w-full text-sm"
-                                      placeholder="e.g. 12540"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="text-[10px] text-muted uppercase tracking-wide block mb-0.5">Helmets Provided</label>
-                                    <input
-                                      type="number" min={0} max={5}
-                                      value={handoverEdit[b.id].helmets_provided}
-                                      onChange={e => setHandoverEdit(p => ({ ...p, [b.id]: { ...p[b.id], helmets_provided: e.target.value } }))}
-                                      className="input-field w-full text-sm"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="text-[10px] text-muted uppercase tracking-wide block mb-0.5">Amount Pending (₹)</label>
-                                    <input
-                                      type="number" min={0} step={1}
-                                      value={handoverEdit[b.id].pending_amount}
-                                      onChange={e => setHandoverEdit(p => ({ ...p, [b.id]: { ...p[b.id], pending_amount: e.target.value } }))}
-                                      className="input-field w-full text-sm"
-                                    />
-                                  </div>
-                                </div>
-                                <label className="flex items-center gap-2 cursor-pointer select-none">
-                                  <input
-                                    type="checkbox"
-                                    checked={!!handoverEdit[b.id].original_dl_taken}
-                                    onChange={e => setHandoverEdit(p => ({ ...p, [b.id]: { ...p[b.id], original_dl_taken: e.target.checked } }))}
-                                    className="w-4 h-4 accent-accent"
-                                  />
-                                  <span className="text-sm font-medium">Original DL taken</span>
-                                </label>
-                                <div>
-                                  <label className="text-[10px] text-muted uppercase tracking-wide block mb-0.5">Remarks / Notes</label>
-                                  <textarea
-                                    value={handoverEdit[b.id].notes}
-                                    onChange={e => setHandoverEdit(p => ({ ...p, [b.id]: { ...p[b.id], notes: e.target.value } }))}
-                                    className="input-field w-full h-16 resize-none text-sm"
-                                    placeholder="Any notes…"
-                                  />
-                                </div>
-                                <button
-                                  onClick={() => saveHandover(b.id)}
-                                  disabled={handoverSaving === b.id}
-                                  className="btn-accent text-sm py-2 w-full disabled:opacity-60"
-                                >
-                                  {handoverSaving === b.id ? 'Saving…' : 'Save Handover Details'}
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* ── Booking Location ── */}
-                          <BookingLocation booking={b} />
-                        </td>
-                      </tr>
-                    )}
-                  </>
                 ))}
               </tbody>
             </table>
@@ -1119,309 +792,6 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
           </div>
         </div>
       )}
-
-      {/* Manual booking modal — tabbed */}
-      {showManual && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white dark:bg-primary rounded-xl shadow-2xl w-full max-w-xl my-4 overflow-hidden flex flex-col max-h-[92vh]">
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
-              <h3 className="font-semibold text-lg">Manual / Offline Booking</h3>
-              <button onClick={() => setShowManual(false)} className="text-muted hover:text-primary text-xl leading-none">✕</button>
-            </div>
-
-            {/* Tab bar */}
-            <div className="flex border-b border-border shrink-0 overflow-x-auto">
-              {MANUAL_TABS.map(tab => {
-                const isKyc = tab.key === 'kyc';
-                const active = manualTab === tab.key;
-                return (
-                  <button
-                    key={tab.key}
-                    onClick={() => setManualTab(tab.key)}
-                    className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
-                      active
-                        ? 'border-accent text-accent'
-                        : 'border-transparent text-muted hover:text-primary hover:border-border'
-                    }`}
-                  >
-                    <span>{tab.icon}</span>
-                    {tab.label}
-                    {isKyc && kycCount > 0 && (
-                      <span className="ml-0.5 text-[9px] bg-green-500 text-white rounded-full px-1.5 py-0.5 font-bold">{kycCount}/5</span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Tab content */}
-            <div className="px-5 py-4 space-y-3 overflow-y-auto flex-1">
-
-              {/* ── Customer tab ── */}
-              {manualTab === 'customer' && (
-                <div className="space-y-3">
-                  <p className="text-[10px] text-muted uppercase tracking-widest font-semibold">Customer Details</p>
-                  <input value={manualForm.customer_name} onChange={e => setManualForm(f => ({ ...f, customer_name: e.target.value }))}
-                    className="input-field w-full" placeholder="Full name *" />
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[11px] text-muted block mb-0.5">Primary phone *</label>
-                      <input value={manualForm.customer_phone} onChange={e => setManualForm(f => ({ ...f, customer_phone: e.target.value }))}
-                        className="input-field w-full" placeholder="+91 98765 43210" type="tel" />
-                    </div>
-                    <div>
-                      <label className="text-[11px] text-muted block mb-0.5">Alternate phone</label>
-                      <input value={manualForm.alternate_phone} onChange={e => setManualForm(f => ({ ...f, alternate_phone: e.target.value }))}
-                        className="input-field w-full" placeholder="Optional" type="tel" />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-muted block mb-0.5">Email</label>
-                    <input value={manualForm.customer_email} onChange={e => setManualForm(f => ({ ...f, customer_email: e.target.value }))}
-                      className="input-field w-full" placeholder="Optional" type="email" />
-                  </div>
-                  <button onClick={() => setManualTab('kyc')}
-                    className="w-full mt-2 py-2 text-sm text-accent border border-accent/30 rounded-lg hover:bg-accent/5 transition-colors">
-                    Next: KYC Docs →
-                  </button>
-                </div>
-              )}
-
-              {/* ── KYC Docs tab ── */}
-              {manualTab === 'kyc' && (
-                <div className="space-y-4">
-                  <p className="text-[10px] text-muted uppercase tracking-widest font-semibold">KYC Documents</p>
-                  <p className="text-xs text-muted -mt-1">All fields optional — upload what you have. Files go directly to secure storage.</p>
-
-                  {/* DL */}
-                  <div>
-                    <p className="text-xs font-semibold text-primary mb-2">Driving Licence</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <DocSlot
-                        label="Front"
-                        docType="dl_front"
-                        value={manualForm.kyc_dl_front_url}
-                        uploading={!!kycUploading['dl_front']}
-                        onUpload={f => uploadKycDoc(f, 'dl_front')}
-                        onClear={() => setManualForm(p => ({ ...p, kyc_dl_front_url: '' }))}
-                      />
-                      <DocSlot
-                        label="Back"
-                        docType="dl_back"
-                        value={manualForm.kyc_dl_back_url}
-                        uploading={!!kycUploading['dl_back']}
-                        onUpload={f => uploadKycDoc(f, 'dl_back')}
-                        onClear={() => setManualForm(p => ({ ...p, kyc_dl_back_url: '' }))}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Aadhaar */}
-                  <div>
-                    <p className="text-xs font-semibold text-primary mb-2">Aadhaar Card</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <DocSlot
-                        label="Front"
-                        docType="aadhaar_front"
-                        value={manualForm.kyc_aadhaar_front_url}
-                        uploading={!!kycUploading['aadhaar_front']}
-                        onUpload={f => uploadKycDoc(f, 'aadhaar_front')}
-                        onClear={() => setManualForm(p => ({ ...p, kyc_aadhaar_front_url: '' }))}
-                      />
-                      <DocSlot
-                        label="Back"
-                        docType="aadhaar_back"
-                        value={manualForm.kyc_aadhaar_back_url}
-                        uploading={!!kycUploading['aadhaar_back']}
-                        onUpload={f => uploadKycDoc(f, 'aadhaar_back')}
-                        onClear={() => setManualForm(p => ({ ...p, kyc_aadhaar_back_url: '' }))}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Selfie */}
-                  <div>
-                    <p className="text-xs font-semibold text-primary mb-2">Selfie with Document</p>
-                    <div className="max-w-[50%]">
-                      <DocSlot
-                        label="Selfie"
-                        docType="selfie"
-                        value={manualForm.kyc_selfie_url}
-                        uploading={!!kycUploading['selfie']}
-                        onUpload={f => uploadKycDoc(f, 'selfie')}
-                        onClear={() => setManualForm(p => ({ ...p, kyc_selfie_url: '' }))}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex gap-2 mt-2">
-                    <button onClick={() => setManualTab('customer')} className="flex-1 py-2 text-sm text-muted border border-border rounded-lg hover:bg-border/50 transition-colors">← Back</button>
-                    <button onClick={() => setManualTab('trip')} className="flex-1 py-2 text-sm text-accent border border-accent/30 rounded-lg hover:bg-accent/5 transition-colors">Next: Trip →</button>
-                  </div>
-                </div>
-              )}
-
-              {/* ── Trip tab ── */}
-              {manualTab === 'trip' && (
-                <div className="space-y-3">
-                  <p className="text-[10px] text-muted uppercase tracking-widest font-semibold">Trip Details</p>
-                  <div>
-                    <label className="text-[11px] text-muted block mb-0.5">Bike *</label>
-                    <select value={manualForm.bike_id} onChange={e => setManualForm(f => ({ ...f, bike_id: e.target.value }))} className="input-field w-full">
-                      <option value="">Select a bike…</option>
-                      {allBikes.map(b => (
-                        <option key={b.id} value={b.id}>
-                          {b.emoji} {b.model?.display_name ?? 'Unknown'}{b.registration_number ? ` · ${b.registration_number}` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[11px] text-muted block mb-0.5">Pickup date & time *</label>
-                      <input type="datetime-local" value={manualForm.start_ts} onChange={e => setManualForm(f => ({ ...f, start_ts: e.target.value }))}
-                        className="input-field w-full text-sm" />
-                    </div>
-                    <div>
-                      <label className="text-[11px] text-muted block mb-0.5">Drop-off date & time *</label>
-                      <input type="datetime-local" value={manualForm.end_ts} min={manualForm.start_ts} onChange={e => setManualForm(f => ({ ...f, end_ts: e.target.value }))}
-                        className="input-field w-full text-sm" />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[11px] text-muted block mb-0.5">KM limit</label>
-                      <input value={manualForm.km_limit} onChange={e => setManualForm(f => ({ ...f, km_limit: e.target.value }))}
-                        className="input-field w-full" placeholder="e.g. 200" type="number" min="0" />
-                    </div>
-                    <div>
-                      <label className="text-[11px] text-muted block mb-0.5">Odometer at pickup (km)</label>
-                      <input value={manualForm.odometer_reading} onChange={e => setManualForm(f => ({ ...f, odometer_reading: e.target.value }))}
-                        className="input-field w-full" placeholder="e.g. 12540" type="number" min="0" />
-                    </div>
-                  </div>
-                  <div className="flex gap-2 mt-2">
-                    <button onClick={() => setManualTab('kyc')} className="flex-1 py-2 text-sm text-muted border border-border rounded-lg hover:bg-border/50 transition-colors">← Back</button>
-                    <button onClick={() => setManualTab('payment')} className="flex-1 py-2 text-sm text-accent border border-accent/30 rounded-lg hover:bg-accent/5 transition-colors">Next: Payment →</button>
-                  </div>
-                </div>
-              )}
-
-              {/* ── Payment tab ── */}
-              {manualTab === 'payment' && (
-                <div className="space-y-3">
-                  <p className="text-[10px] text-muted uppercase tracking-widest font-semibold">Financials</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[11px] text-muted block mb-0.5">Total Amount (₹)</label>
-                      <input value={manualForm.total_amount} onChange={e => setManualForm(f => ({ ...f, total_amount: e.target.value }))}
-                        className="input-field w-full" placeholder="0" type="number" min="0" step="1" />
-                    </div>
-                    <div>
-                      <label className="text-[11px] text-muted block mb-0.5">Advance Paid (₹)</label>
-                      <input value={manualForm.advance_paid} onChange={e => setManualForm(f => ({ ...f, advance_paid: e.target.value }))}
-                        className="input-field w-full" placeholder="0" type="number" min="0" step="1" />
-                      <p className="text-[10px] text-muted mt-0.5">0 if not yet collected</p>
-                    </div>
-                  </div>
-                  {manualForm.total_amount && manualForm.advance_paid && (
-                    <div className="p-2.5 rounded-lg bg-orange-50 border border-orange-200 text-xs text-orange-700">
-                      Pending at pickup: <span className="font-bold">₹{Math.max(0, parseFloat(manualForm.total_amount || '0') - parseFloat(manualForm.advance_paid || '0')).toLocaleString('en-IN')}</span>
-                    </div>
-                  )}
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[11px] text-muted block mb-0.5">Security Deposit (₹)</label>
-                      <input value={manualForm.security_deposit} onChange={e => setManualForm(f => ({ ...f, security_deposit: e.target.value }))}
-                        className="input-field w-full" placeholder="500" type="number" min="0" step="1" />
-                    </div>
-                    <div>
-                      <label className="text-[11px] text-muted block mb-0.5">Payment Method</label>
-                      <select value={manualForm.payment_method_detail} onChange={e => setManualForm(f => ({ ...f, payment_method_detail: e.target.value as any }))}
-                        className="input-field w-full text-sm">
-                        <option value="">— select —</option>
-                        <option value="cash">Cash</option>
-                        <option value="upi">UPI</option>
-                        <option value="online">Online (Razorpay)</option>
-                        <option value="partial_online">Partial (online + cash)</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-muted block mb-0.5">Payment Proof URL</label>
-                    <input value={manualForm.payment_proof_url} onChange={e => setManualForm(f => ({ ...f, payment_proof_url: e.target.value }))}
-                      className="input-field w-full" placeholder="https://…" type="url" />
-                    <p className="text-[10px] text-muted mt-0.5">Paste a link to a screenshot or receipt</p>
-                  </div>
-                  <div className="flex gap-2 mt-2">
-                    <button onClick={() => setManualTab('trip')} className="flex-1 py-2 text-sm text-muted border border-border rounded-lg hover:bg-border/50 transition-colors">← Back</button>
-                    <button onClick={() => setManualTab('handover')} className="flex-1 py-2 text-sm text-accent border border-accent/30 rounded-lg hover:bg-accent/5 transition-colors">Next: Handover →</button>
-                  </div>
-                </div>
-              )}
-
-              {/* ── Handover tab ── */}
-              {manualTab === 'handover' && (
-                <div className="space-y-3">
-                  <p className="text-[10px] text-muted uppercase tracking-widest font-semibold">Handover Checklist</p>
-                  <div className="grid grid-cols-2 gap-2 items-end">
-                    <div>
-                      <label className="text-[11px] text-muted block mb-0.5">Helmets Provided</label>
-                      <input value={manualForm.helmets_provided} onChange={e => setManualForm(f => ({ ...f, helmets_provided: e.target.value }))}
-                        className="input-field w-full" placeholder="0" type="number" min="0" max="5" />
-                    </div>
-                    <label className="flex items-center gap-2 cursor-pointer select-none pb-1">
-                      <input type="checkbox" checked={manualForm.original_dl_taken}
-                        onChange={e => setManualForm(f => ({ ...f, original_dl_taken: e.target.checked }))}
-                        className="w-4 h-4 accent-accent" />
-                      <span className="text-sm font-medium">Original DL taken</span>
-                    </label>
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-muted block mb-0.5">Remarks / Notes</label>
-                    <textarea value={manualForm.notes} onChange={e => setManualForm(f => ({ ...f, notes: e.target.value }))}
-                      className="input-field w-full h-20 resize-none" placeholder="Any internal notes about this booking…" />
-                  </div>
-
-                  {/* Summary strip */}
-                  <div className="rounded-lg border border-border bg-bg p-3 space-y-1 text-xs">
-                    <p className="font-semibold text-[11px] uppercase tracking-wide text-muted mb-2">Booking Summary</p>
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                      <span className="text-muted">Customer</span>
-                      <span className="font-medium">{manualForm.customer_name || '—'}</span>
-                      <span className="text-muted">Phone</span>
-                      <span className="font-medium">{manualForm.customer_phone || '—'}</span>
-                      <span className="text-muted">Pickup</span>
-                      <span className="font-medium">{manualForm.start_ts ? formatIstDateTime(istLocalToUtcIso(manualForm.start_ts)) : '—'}</span>
-                      <span className="text-muted">Drop-off</span>
-                      <span className="font-medium">{manualForm.end_ts ? formatIstDateTime(istLocalToUtcIso(manualForm.end_ts)) : '—'}</span>
-                      <span className="text-muted">Total</span>
-                      <span className="font-medium">₹{parseFloat(manualForm.total_amount||'0').toLocaleString('en-IN')}</span>
-                      <span className="text-muted">KYC docs</span>
-                      <span className={`font-medium ${kycCount > 0 ? 'text-green-600' : 'text-orange-500'}`}>{kycCount}/5 uploaded</span>
-                    </div>
-                  </div>
-
-                  <button onClick={() => setManualTab('payment')} className="w-full py-2 text-sm text-muted border border-border rounded-lg hover:bg-border/50 transition-colors">← Back</button>
-                </div>
-              )}
-
-              {manualError && <p className="text-xs text-danger bg-danger/10 px-3 py-2 rounded-lg">{manualError}</p>}
-            </div>
-
-            {/* Footer */}
-            <div className="flex justify-end gap-3 px-5 py-4 border-t border-border shrink-0">
-              <button onClick={() => setShowManual(false)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-border/50">Cancel</button>
-              <button onClick={createManualBooking} disabled={manualLoading}
-                className="px-4 py-2 text-sm bg-accent text-white rounded-lg hover:bg-accent/90 disabled:opacity-50">
-                {manualLoading ? 'Creating…' : 'Create Booking'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Online booking detail modal */}
       <OnlineBookingDetailModal
         booking={detailBooking}
@@ -1449,44 +819,107 @@ export function BookingsManager({ initialBookings, allBikes = [] }: { initialBoo
   );
 }
 
-// ── DocSlot: file upload slot for KYC docs in manual booking form ─────────────
-function DocSlot({
-  label, value, uploading, onUpload, onClear,
+// ─────────────────────────────────────────────────────────────────────────────
+// RowActions — one state-appropriate primary action + a kebab menu of
+// everything else. The primary picks itself based on what an admin most
+// likely wants to do next given the booking's current state; the kebab
+// keeps everything reachable without crowding the table.
+// ─────────────────────────────────────────────────────────────────────────────
+type RowAction =
+  | 'details' | 'ongoing' | 'completed' | 'cancelled' | 'no_show'
+  | 'refunded' | 'extend' | 'settle' | 'delete';
+
+function RowActions({
+  booking,
+  loading,
+  isPickupOverdue,
+  isReturnOverdue,
+  onPrimary,
 }: {
-  label: string;
-  docType: string;
-  value: string;
-  uploading: boolean;
-  onUpload: (f: File) => void;
-  onClear: () => void;
+  booking: Booking;
+  loading: boolean;
+  isPickupOverdue: boolean;
+  isReturnOverdue: boolean;
+  onPrimary: (action: RowAction) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Click-outside to close — needed since the dropdown isn't a real <select>.
+  useEffect(() => {
+    if (!open) return;
+    function handle(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [open]);
+
+  // Decide the primary action — one per state, picked for "what comes next."
+  // Settle wins over Mark Return when the ride is past its drop-off, because
+  // the money question takes priority over the operational one.
+  let primary: { action: RowAction; label: string; className: string } | null = null;
+  if (booking.status === 'ongoing' && isReturnOverdue) {
+    primary = { action: 'settle', label: '💸 Settle', className: 'bg-red-600 text-white hover:bg-red-700' };
+  } else if (booking.status === 'ongoing') {
+    primary = { action: 'completed', label: '✓ Mark Return', className: 'bg-green-600 text-white hover:bg-green-700' };
+  } else if (booking.status === 'confirmed' && isPickupOverdue) {
+    primary = { action: 'ongoing', label: '🏁 Mark Pickup', className: 'bg-orange-500 text-white hover:bg-orange-600' };
+  } else if (booking.status === 'confirmed' || booking.status === 'pending_payment') {
+    primary = { action: 'details', label: 'View', className: 'bg-accent/10 text-accent hover:bg-accent/20' };
+  } else if (booking.status === 'cancelled' && booking.payment_status === 'paid') {
+    primary = { action: 'refunded', label: '↩ Refund', className: 'bg-blue-50 text-blue-700 hover:bg-blue-100' };
+  } else {
+    primary = { action: 'details', label: 'View', className: 'bg-border text-primary hover:bg-border/70' };
+  }
+
+  // Build the secondary actions menu. Order matches the operator's mental
+  // model: details first (always-on), then state-conditional ops, finally
+  // destructive at the bottom.
+  const items: { action: RowAction; label: string; danger?: boolean }[] = [];
+  if (primary.action !== 'details') items.push({ action: 'details', label: 'Open details' });
+  if (['confirmed', 'ongoing'].includes(booking.status)) items.push({ action: 'extend', label: 'Extend (admin)' });
+  if (booking.status === 'ongoing' && isReturnOverdue) items.push({ action: 'completed', label: 'Mark return' });
+  if (booking.status === 'ongoing' || isPickupOverdue) items.push({ action: 'no_show', label: 'Mark no-show', danger: true });
+  if (['confirmed', 'pending_payment'].includes(booking.status)) items.push({ action: 'cancelled', label: 'Cancel booking', danger: true });
+  if (booking.status === 'cancelled' && booking.payment_status === 'paid' && primary.action !== 'refunded') {
+    items.push({ action: 'refunded', label: 'Mark refunded' });
+  }
+  if (['cancelled', 'payment_failed'].includes(booking.status)) items.push({ action: 'delete', label: 'Delete booking', danger: true });
+
   return (
-    <div className="rounded-lg border-2 border-dashed border-border bg-bg/50 p-3 flex flex-col items-center gap-2 text-center min-h-[96px] justify-center transition-colors hover:border-accent/40">
-      {uploading ? (
-        <div className="space-y-1">
-          <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-[10px] text-muted">Uploading…</p>
+    <div className="flex items-center justify-end gap-1.5">
+      <button
+        onClick={() => onPrimary(primary!.action)}
+        disabled={loading}
+        className={`text-xs px-2.5 py-1 rounded font-semibold disabled:opacity-50 transition-colors ${primary.className}`}
+      >
+        {primary.label}
+      </button>
+      {items.length > 0 && (
+        <div ref={ref} className="relative">
+          <button
+            onClick={() => setOpen(o => !o)}
+            disabled={loading}
+            aria-label="More actions"
+            className="text-base px-1.5 py-0.5 rounded hover:bg-border/60 leading-none"
+          >
+            ⋮
+          </button>
+          {open && (
+            <div className="absolute right-0 mt-1 min-w-[160px] bg-white border border-border rounded-lg shadow-lg overflow-hidden z-20 text-xs">
+              {items.map(it => (
+                <button
+                  key={it.action}
+                  onClick={() => { setOpen(false); onPrimary(it.action); }}
+                  className={`w-full text-left px-3 py-2 hover:bg-bg/60 ${it.danger ? 'text-red-600' : 'text-primary'}`}
+                >
+                  {it.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-      ) : value ? (
-        <div className="space-y-1.5 w-full">
-          <div className="text-green-500 text-xl leading-none">✓</div>
-          <p className="text-[10px] font-semibold text-green-700">{label} — saved</p>
-          <button type="button" onClick={onClear} className="text-[10px] text-red-400 hover:text-red-600 underline">Remove</button>
-        </div>
-      ) : (
-        <label className="cursor-pointer w-full block">
-          <input
-            type="file"
-            accept="image/*,application/pdf"
-            className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) onUpload(f); e.target.value = ''; }}
-          />
-          <div className="space-y-1 pointer-events-none">
-            <div className="text-2xl">📷</div>
-            <p className="text-[10px] font-semibold text-muted">{label}</p>
-            <p className="text-[10px] text-accent">Tap to upload</p>
-          </div>
-        </label>
       )}
     </div>
   );
