@@ -24,6 +24,10 @@ export default function SignUpPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+  // Inline "this email is already registered" hint surfaced on blur — saves
+  // the user from filling the whole form before discovering the conflict.
+  const [emailTaken, setEmailTaken] = useState(false);
+  const [emailChecking, setEmailChecking] = useState(false);
 
   // OTP fallback state — the "Check your inbox" screen below offers a
   // 6-digit code input so users whose Supabase confirmation email got
@@ -35,13 +39,57 @@ export default function SignUpPage() {
   const [resending, setResending]     = useState(false);
 
   function field(key: keyof typeof form) {
-    return (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [key]: e.target.value }));
+    return (e: React.ChangeEvent<HTMLInputElement>) => {
+      setForm(f => ({ ...f, [key]: e.target.value }));
+      if (key === 'email') setEmailTaken(false); // clear hint while typing
+    };
+  }
+
+  // Pre-flight email check on blur — surfaces "already registered" before
+  // the user fills the full form. Failures here are non-fatal (we still let
+  // them submit and rely on Supabase's signUp to return the canonical error).
+  async function checkEmailOnBlur() {
+    const email = form.email.trim();
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return;
+    setEmailChecking(true);
+    try {
+      const res = await fetch('/api/auth/check-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json().catch(() => ({}));
+      setEmailTaken(!!data.exists);
+    } catch {
+      // Network failures shouldn't block signup — fall back to server-side.
+    } finally {
+      setEmailChecking(false);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError('');
+
+    // Re-check at submit time in case the user edited the email after blur
+    // or skipped blur entirely (autofill, paste-and-submit).
+    try {
+      const res = await fetch('/api/auth/check-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: form.email.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.exists) {
+        setEmailTaken(true);
+        setError('An account with this email already exists. Try signing in instead.');
+        setLoading(false);
+        return;
+      }
+    } catch {
+      // Non-fatal — let Supabase handle it server-side.
+    }
 
     const supabase = createSupabaseBrowser();
     const { data, error } = await supabase.auth.signUp({
@@ -60,7 +108,14 @@ export default function SignUpPage() {
     });
 
     if (error) {
-      setError(error.message);
+      // Supabase says "User already registered" — translate to user-friendly.
+      const m = String(error.message ?? '').toLowerCase();
+      if (m.includes('already') && m.includes('registered')) {
+        setEmailTaken(true);
+        setError('An account with this email already exists. Try signing in instead.');
+      } else {
+        setError(error.message);
+      }
       setLoading(false);
       return;
     }
@@ -182,7 +237,21 @@ export default function SignUpPage() {
         </div>
         <div>
           <label className="block text-sm font-medium mb-1">Email</label>
-          <input type="email" required value={form.email} onChange={field('email')} className="input w-full" placeholder="you@example.com" />
+          <input
+            type="email" required
+            value={form.email} onChange={field('email')} onBlur={checkEmailOnBlur}
+            className={`input w-full ${emailTaken ? 'border-danger' : ''}`}
+            placeholder="you@example.com"
+          />
+          {emailChecking && (
+            <p className="text-[11px] text-muted mt-1">Checking…</p>
+          )}
+          {emailTaken && (
+            <p className="text-[11px] text-danger mt-1">
+              Already registered — <Link href="/sign-in" className="font-semibold underline hover:no-underline">sign in instead</Link>
+              {' '}or <Link href="/forgot-password" className="font-semibold underline hover:no-underline">reset your password</Link>.
+            </p>
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium mb-1">Phone <span className="text-muted font-normal">(optional)</span></label>

@@ -91,6 +91,23 @@ function ForgotPasswordInner() {
     setError('');
     setInfo('');
     try {
+      // Pre-flight: confirm an account exists before triggering Supabase.
+      // Supabase silently no-ops resetPasswordForEmail for unknown emails
+      // (anti-enumeration), which leaves users waiting for a code that
+      // never arrives. We trade that protection for a clear "no account
+      // found — sign up instead" message.
+      const check = await fetch('/api/auth/check-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      const checkData = await check.json().catch(() => ({}));
+      if (check.ok && checkData.exists === false) {
+        setError('No account found with this email. Need to create one instead?');
+        setLoading(false);
+        return;
+      }
+
       const supabase = createSupabaseBrowser();
       // resetPasswordForEmail sends the recovery email. The redirectTo target
       // is now /auth/callback so the link path still works; the OTP token in
@@ -180,7 +197,16 @@ function ForgotPasswordInner() {
                 autoFocus
               />
             </div>
-            {error && <p className="text-danger text-sm bg-danger/10 px-3 py-2 rounded-md">{error}</p>}
+            {error && (
+              <div className="text-danger text-sm bg-danger/10 px-3 py-2 rounded-md">
+                <p>{error}</p>
+                {error.toLowerCase().includes('no account found') && (
+                  <Link href="/sign-up" className="inline-block mt-1 font-semibold underline hover:no-underline">
+                    Create an account →
+                  </Link>
+                )}
+              </div>
+            )}
             <button type="submit" disabled={loading} className="btn-accent w-full">
               {loading ? 'Sending…' : 'Send 6-digit code'}
             </button>
