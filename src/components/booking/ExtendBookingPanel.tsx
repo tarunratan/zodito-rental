@@ -123,7 +123,6 @@ export function ExtendBookingPanel({
   const [error, setError]         = useState<string | null>(null);
   const [success, setSuccess]     = useState<{ end_ts: string; km_limit: number } | null>(null);
   const [history, setHistory]     = useState<ExtensionEntry[] | null>(null);
-  const [showDebug, setShowDebug] = useState(false);
   // Live "now" — recomputed on each render. Drives the overdue gate and the
   // ticking late-fee estimate; refreshed every minute below.
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
@@ -391,36 +390,6 @@ export function ExtendBookingPanel({
                     ? 'Includes late penalty for hours already overrun. No GST on extensions.'
                     : 'No GST on extensions. Booking is only extended after successful payment.'}
                 </p>
-
-                {/* Debug breakdown — surfaces the exact tier/package the backend
-                    matched, so the operator can validate pricing in support cases. */}
-                <button
-                  type="button"
-                  onClick={() => setShowDebug(s => !s)}
-                  className="text-[10px] text-accent hover:underline font-semibold mt-2"
-                >
-                  {showDebug ? '▾ Hide pricing details' : '▸ Show pricing details (debug)'}
-                </button>
-                {showDebug && (
-                  <div className="rounded-md border border-dashed border-border bg-white p-2 mt-1 space-y-0.5 text-[11px] font-mono">
-                    <div className="flex justify-between"><span className="text-muted">Booking #</span><span>{bookingNumber}</span></div>
-                    <div className="flex justify-between"><span className="text-muted">Original drop-off</span><span>{formatDateTime(endTs)}</span></div>
-                    <div className="flex justify-between"><span className="text-muted">Requested drop-off</span><span>{formatDateTime(newEnd)}</span></div>
-                    <div className="flex justify-between"><span className="text-muted">Extra hours (raw)</span><span>{quote.extraHours.toFixed(2)}</span></div>
-                    <div className="flex justify-between">
-                      <span className="text-muted">Extra days (ceil)</span>
-                      <span>{Math.ceil(quote.extraHours / 24)}</span>
-                    </div>
-                    <div className="flex justify-between"><span className="text-muted">Matched tier / pkg</span><span>{quote.matchedLabel || quote.matchedTier || '—'}</span></div>
-                    <div className="flex justify-between"><span className="text-muted">Tier code</span><span>{quote.matchedTier ?? 'custom'}</span></div>
-                    <div className="flex justify-between"><span className="text-muted">Original KM limit</span><span>{quote.originalKmLimit}</span></div>
-                    <div className="flex justify-between"><span className="text-muted">New KM limit</span><span>{quote.newKmLimit}</span></div>
-                    <div className="flex justify-between"><span className="text-muted">Base delta (incl. penalty)</span><span>₹{quote.baseDelta}</span></div>
-                    <div className="flex justify-between"><span className="text-muted">Late penalty</span><span>₹{quote.latePenalty ?? 0} ({quote.hoursOverdue ?? 0} hr × ₹{quote.latePenaltyRate ?? lateRate})</span></div>
-                    <div className="flex justify-between"><span className="text-muted">GST delta</span><span>₹{quote.gstDelta} (waived)</span></div>
-                    <div className="flex justify-between"><span className="text-muted">Total delta</span><span>₹{quote.totalDelta}</span></div>
-                  </div>
-                )}
               </div>
             )}
 

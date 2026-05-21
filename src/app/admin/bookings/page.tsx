@@ -11,6 +11,12 @@ export default async function AdminBookingsPage() {
   if (!isMockMode()) {
     const supabase = createSupabaseAdmin();
 
+    // Opportunistic cleanup — flip stale pending_payment rows past their
+    // deadline to payment_failed before reading. expire_unpaid_bookings()
+    // is the canonical helper; nothing was calling it on read paths, which
+    // is why 10-day-old "Awaiting Payment" rows were lingering on the UI.
+    try { await supabase.rpc('expire_unpaid_bookings'); } catch {}
+
     // Batch 1 (parallel): bookings + ALL bikes (one shot covers both mapping and dropdown)
     const [rawBookingsRes, allBikesRes] = await Promise.all([
       supabase

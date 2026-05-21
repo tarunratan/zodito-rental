@@ -20,6 +20,14 @@ async function fetchBookings() {
   const supabase = await createSupabaseServer();
   const currentUser = await getCurrentAppUser();
   if (!currentUser) return [];
+
+  // Opportunistic cleanup: flip stale pending_payment rows (payment_deadline
+  // in the past) to payment_failed before the SELECT. The DB function exists
+  // for cron but nothing was calling it, which left 10-day-old bookings
+  // displaying as "Awaiting Payment" indefinitely. Awaited so the row state
+  // is fresh by the time we read; errors are swallowed (RLS may scope the
+  // update to the caller's own rows, which is exactly what we want here).
+  try { await supabase.rpc('expire_unpaid_bookings'); } catch {}
   const { data, error } = await supabase
     .from('bookings')
     .select(`
