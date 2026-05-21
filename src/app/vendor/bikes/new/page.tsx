@@ -13,7 +13,7 @@ async function fetchBikeModels() {
     return [
       { id: 'm-activa6g', name: 'activa_6g', display_name: 'Honda Activa 6G / Dio / Fascino / Jupiter', category: 'scooter', cc: 110 },
       { id: 'm-activa5g', name: 'activa_5g_4g', display_name: 'Honda Activa 5G / 4G', category: 'scooter', cc: 110 },
-      { id: 'm-shine', name: 'shine_glamour', display_name: 'Honda Shine / Glamour / HF Deluxe', category: 'scooter', cc: 125 },
+      { id: 'm-shine', name: 'shine_glamour', display_name: 'Honda Shine / Glamour / HF Deluxe', category: 'bike_sub150', cc: 125 },
       { id: 'm-pulsar', name: 'pulsar_150', display_name: 'Bajaj Pulsar 150', category: 'bike_sub150', cc: 150 },
       { id: 'm-r15v3', name: 'r15v3', display_name: 'Yamaha R15 V3', category: 'bike_plus150', cc: 155 },
       { id: 'm-r15v4', name: 'r15v4', display_name: 'Yamaha R15 V4', category: 'bike_plus150', cc: 155 },

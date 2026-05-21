@@ -12,6 +12,11 @@ const schema = z.object({
   booking_id: z.string(),
   status: z.enum(['confirmed', 'ongoing', 'completed', 'cancelled', 'refunded']),
   reason: z.string().nullish(),
+  // Sent only when status === 'completed' — the admin's end-of-ride form.
+  // Server recomputes final_km_used / excess_km_charge / late_charge from
+  // these so the client can't fudge the totals.
+  end_odometer_reading: z.number().int().nonnegative().nullish(),
+  damage_charge: z.number().nonnegative().nullish(),
 });
 
 const STATUS_TO_LOG: Record<string, HandoverLogKind> = {
@@ -28,7 +33,7 @@ export async function POST(req: NextRequest) {
 
     const parse = schema.safeParse(await req.json());
     if (!parse.success) return NextResponse.json({ error: 'Bad request' }, { status: 400 });
-    const { booking_id, status, reason } = parse.data;
+    const { booking_id, status, reason, end_odometer_reading, damage_charge } = parse.data;
 
     if (isMockMode()) {
       const idx = mockBookingsStore.findIndex(b => b.id === booking_id);
@@ -75,10 +80,76 @@ export async function POST(req: NextRequest) {
         updates.status = 'ongoing';
         updates.picked_up_at = now;
         break;
-      case 'completed':
+      case 'completed': {
         updates.status = 'completed';
         updates.returned_at = now;
+
+        // Pull the booking + bike + model so we can recompute penalties
+        // server-side. The admin form sends the end-odometer reading; we
+        // do the maths here so the client can't tamper with totals.
+        const { data: b } = await supabase
+          .from('bookings')
+          .select(`
+            id, status, odometer_reading, km_limit, end_ts,
+            bike:bikes(extra_km_rate, late_penalty_hour,
+              model:bike_models(excess_km_rate, late_hourly_penalty)
+            )
+          `)
+          .eq('id', booking_id)
+          .maybeSingle();
+        if (!b) return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+        if (b.status !== 'ongoing') {
+          return NextResponse.json(
+            { error: `Cannot complete from status "${b.status}" — ride must be ongoing.` },
+            { status: 400 },
+          );
+        }
+        if (end_odometer_reading == null) {
+          return NextResponse.json(
+            { error: 'End odometer reading is required to complete the ride.' },
+            { status: 400 },
+          );
+        }
+        if (b.odometer_reading == null) {
+          return NextResponse.json(
+            { error: 'Pickup odometer not recorded — cannot compute kilometres used.' },
+            { status: 400 },
+          );
+        }
+        if (end_odometer_reading < (b.odometer_reading as number)) {
+          return NextResponse.json(
+            { error: `End odometer (${end_odometer_reading}) is less than pickup odometer (${b.odometer_reading}).` },
+            { status: 400 },
+          );
+        }
+
+        // Excess km — bike override wins over model default; ₹3 final fallback.
+        const bikeRow: any  = Array.isArray(b.bike)  ? b.bike[0]  : b.bike;
+        const modelRow: any = bikeRow?.model ? (Array.isArray(bikeRow.model) ? bikeRow.model[0] : bikeRow.model) : null;
+        const extraKmRate    = Number(bikeRow?.extra_km_rate    ?? modelRow?.excess_km_rate     ?? 3);
+        const latePerHourRate = Number(bikeRow?.late_penalty_hour ?? modelRow?.late_hourly_penalty ?? 49);
+
+        const kmUsed   = end_odometer_reading - (b.odometer_reading as number);
+        const kmLimit  = Number(b.km_limit ?? 0);
+        const excessKm = kmUsed > kmLimit ? (kmUsed - kmLimit) : 0;
+        const excessKmCharge = Math.round(excessKm * extraKmRate);
+
+        // Late penalty — anything past end_ts. Partial hour rounds up so
+        // a 70-minute overage costs 2 hours, matching the admin's policy
+        // notice on the order confirmation card.
+        const endMs    = new Date(b.end_ts as string).getTime();
+        const lateMs   = Date.now() - endMs;
+        const lateHrs  = lateMs > 0 ? Math.ceil(lateMs / 3_600_000) : 0;
+        const lateCharge = Math.round(lateHrs * latePerHourRate);
+
+        updates.end_odometer_reading = end_odometer_reading;
+        updates.final_km_used        = kmUsed;
+        updates.excess_km_charge     = excessKmCharge;
+        updates.late_hours           = lateHrs;
+        updates.late_charge          = lateCharge;
+        if (damage_charge != null) updates.damage_charge = Math.round(damage_charge);
         break;
+      }
       case 'cancelled':
         updates.status = 'cancelled';
         updates.cancelled_at = now;

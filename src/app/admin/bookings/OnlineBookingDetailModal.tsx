@@ -226,6 +226,13 @@ export function OnlineBookingDetailModal({
   const [confirmAction, setConfirmAction] = useState<{ action: string; reasonRequired: boolean; label: string } | null>(null);
   const [reasonText, setReasonText] = useState('');
 
+  // End-of-ride form state. Only meaningful when confirmAction.action === 'completed'.
+  // Server recomputes the final totals from end_odo + start_odo + km_limit +
+  // bike's extra-km / late-penalty rates — these are display-only here so the
+  // admin sees the same numbers the server is about to write.
+  const [endOdoInput, setEndOdoInput] = useState<string>('');
+  const [damageInput, setDamageInput] = useState<string>('');
+
   // Top-level view/edit toggle. Whenever the booking has already been saved
   // (handover_saved_at is set — either by an admin save on online bookings
   // or auto-stamped at manual-booking creation), reopening goes straight to
@@ -386,10 +393,24 @@ export function OnlineBookingDetailModal({
     setActionLoading(action);
     setActionError(null);
     try {
+      const body: any = { booking_id: booking.id, status, reason: notes || undefined };
+      if (status === 'completed') {
+        const endOdoNum = endOdoInput === '' ? null : Number(endOdoInput);
+        if (endOdoNum == null || !Number.isFinite(endOdoNum)) {
+          setActionError('End odometer reading is required.');
+          setActionLoading(null);
+          return;
+        }
+        body.end_odometer_reading = Math.trunc(endOdoNum);
+        if (damageInput !== '') {
+          const d = Number(damageInput);
+          if (Number.isFinite(d) && d >= 0) body.damage_charge = Math.round(d);
+        }
+      }
       const res = await fetch('/api/admin/bookings/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ booking_id: booking.id, status, reason: notes || undefined }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -404,6 +425,8 @@ export function OnlineBookingDetailModal({
       onActioned(next);
       setConfirmAction(null);
       setReasonText('');
+      setEndOdoInput('');
+      setDamageInput('');
       setActivity(null); // force log refresh on next open
     } catch {
       setActionError('Network error — please try again');
@@ -1184,6 +1207,101 @@ export function OnlineBookingDetailModal({
                 <p className="pt-1 text-orange-800">After starting, the ride status becomes <strong>Ongoing</strong>.</p>
               </div>
             )}
+            {confirmAction.action === 'completed' && (() => {
+              // Mirror the server-side calculation so the admin sees the
+              // breakdown they're about to confirm. The server recomputes
+              // these from the booking row + bike rates and is authoritative.
+              const startOdo = booking.odometer_reading != null ? Number(booking.odometer_reading) : null;
+              const endOdoNum = endOdoInput === '' ? null : Number(endOdoInput);
+              const extraKmRate     = Number(booking.bike?.extra_km_rate   ?? booking.bike?.model?.excess_km_rate     ?? 3);
+              const latePerHourRate = Number(booking.bike?.late_penalty_hour ?? booking.bike?.model?.late_hourly_penalty ?? 49);
+              const kmUsed   = startOdo != null && endOdoNum != null && endOdoNum >= startOdo ? endOdoNum - startOdo : null;
+              const kmLimit  = Number(booking.km_limit ?? 0);
+              const overKm   = kmUsed != null && kmUsed > kmLimit ? kmUsed - kmLimit : 0;
+              const overChg  = Math.round(overKm * extraKmRate);
+              const lateMs   = Date.now() - new Date(booking.end_ts).getTime();
+              const lateHrs  = lateMs > 0 ? Math.ceil(lateMs / 3_600_000) : 0;
+              const lateChg  = Math.round(lateHrs * latePerHourRate);
+              const damage   = damageInput === '' ? 0 : Math.max(0, Math.round(Number(damageInput) || 0));
+              const total    = overChg + lateChg + damage;
+              const odoBad   = endOdoNum != null && startOdo != null && endOdoNum < startOdo;
+
+              return (
+                <div className="space-y-3">
+                  <div className="rounded-lg bg-green-50 border border-green-200 p-2.5 text-[11px] text-green-900 space-y-0.5">
+                    <p className="font-semibold">Pickup odometer: <span className="font-mono">{startOdo ?? '—'} km</span></p>
+                    <p>Drop-off scheduled: <span className="font-mono">{fmtDateTime(booking.end_ts)}</span></p>
+                    <p>KM limit: <span className="font-mono">{kmLimit} km</span></p>
+                    <p>Rates: ₹{extraKmRate}/extra km · ₹{latePerHourRate}/late hour</p>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-muted block">End odometer reading (km) *</label>
+                    <input
+                      type="number"
+                      min={startOdo ?? 0}
+                      value={endOdoInput}
+                      onChange={e => setEndOdoInput(e.target.value)}
+                      autoFocus
+                      placeholder={startOdo != null ? `≥ ${startOdo}` : 'e.g. 12640'}
+                      className={`input-field w-full ${odoBad ? 'border-red-400 focus:ring-red-400' : ''}`}
+                    />
+                    {odoBad && (
+                      <p className="text-[11px] text-red-600">End odometer must be ≥ pickup ({startOdo}).</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-muted block">Damage charge (₹) — optional</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={damageInput}
+                      onChange={e => setDamageInput(e.target.value)}
+                      placeholder="0"
+                      className="input-field w-full"
+                    />
+                  </div>
+
+                  <div className="rounded-lg border border-border bg-bg/40 p-2.5 text-xs space-y-1">
+                    <p className="font-semibold text-[11px] uppercase tracking-wide text-muted">Penalty breakdown</p>
+                    <div className="flex justify-between">
+                      <span>KM used</span>
+                      <span className="font-mono">{kmUsed ?? '—'} / {kmLimit} km</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Excess km</span>
+                      <span className="font-mono">{overKm > 0 ? `${overKm} km × ₹${extraKmRate}` : '—'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted">Excess km charge</span>
+                      <span className="font-semibold">{rupee(overChg)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Late by</span>
+                      <span className="font-mono">{lateHrs > 0 ? `${lateHrs} hr × ₹${latePerHourRate}` : '—'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted">Late charge</span>
+                      <span className="font-semibold">{rupee(lateChg)}</span>
+                    </div>
+                    {damage > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-muted">Damage</span>
+                        <span className="font-semibold">{rupee(damage)}</span>
+                      </div>
+                    )}
+                    <div className="border-t border-border pt-1 flex justify-between font-bold">
+                      <span>Penalty total</span>
+                      <span className={total > 0 ? 'text-orange-600' : ''}>{rupee(total)}</span>
+                    </div>
+                    {total > 0 && (
+                      <p className="text-[10px] text-muted pt-1">Deduct from security deposit ({rupee(booking.security_deposit)}) at refund time.</p>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
             {confirmAction.action === 'cancelled' && (
               <p className="text-xs text-muted">This will free the bike and notify any side-effects on the bookings table.</p>
             )}
@@ -1200,15 +1318,22 @@ export function OnlineBookingDetailModal({
             )}
             <div className="flex justify-end gap-3">
               <button
-                onClick={() => { setConfirmAction(null); setActionError(null); setReasonText(''); }}
+                onClick={() => { setConfirmAction(null); setActionError(null); setReasonText(''); setEndOdoInput(''); setDamageInput(''); }}
                 className="border border-border rounded-lg hover:bg-border/40 text-sm px-4 py-2"
               >
                 Cancel
               </button>
               <button
                 onClick={() => runStatusAction(confirmAction.action, reasonText)}
-                disabled={actionLoading === confirmAction.action}
-                className={`px-4 py-2 text-sm text-white rounded-lg disabled:opacity-60 ${confirmAction.action === 'cancelled' ? 'bg-red-500 hover:bg-red-600' : 'bg-accent hover:bg-accent/90'}`}
+                disabled={
+                  actionLoading === confirmAction.action
+                  || (confirmAction.action === 'completed' && (
+                       endOdoInput === ''
+                       || !Number.isFinite(Number(endOdoInput))
+                       || (booking.odometer_reading != null && Number(endOdoInput) < Number(booking.odometer_reading))
+                     ))
+                }
+                className={`px-4 py-2 text-sm text-white rounded-lg disabled:opacity-60 disabled:cursor-not-allowed ${confirmAction.action === 'cancelled' ? 'bg-red-500 hover:bg-red-600' : 'bg-accent hover:bg-accent/90'}`}
               >
                 {actionLoading === confirmAction.action ? 'Working…' : 'Confirm'}
               </button>

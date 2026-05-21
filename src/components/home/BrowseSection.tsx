@@ -340,8 +340,21 @@ export function BrowseSection({ bikes: initialBikes }: { bikes: BikeRow[] }) {
         b.color?.toLowerCase().includes(q)
       );
     }
-    const priceOf = (b: BikeRow) => b.model?.packages?.find((p: any) => p.tier === '24hr')?.price ?? Infinity;
-    if (sort === 'price_asc')  list.sort((a: BikeRow, b: BikeRow) => priceOf(a) - priceOf(b));
+    // Sort by the same "Starts at" minimum the card shows — that's the
+    // minimum positive price across standard packages + active custom
+    // packages. Using 24hr alone causes bikes without a 24hr tier (or
+    // bikes whose cheapest option is a custom package or 12hr tier) to
+    // sort wrong relative to what the user actually sees on each card.
+    const priceOf = (b: BikeRow) => {
+      const std: any[]    = b.model?.packages ?? [];
+      const custom: any[] = (b.custom_packages ?? []).filter((c: any) => c.is_active !== false);
+      const prices = [
+        ...std.map((p: any) => Number(p.price)),
+        ...custom.map((p: any) => Number(p.price)),
+      ].filter(v => Number.isFinite(v) && v > 0);
+      return prices.length > 0 ? Math.min(...prices) : Infinity;
+    };
+    if (sort === 'price_asc')       list.sort((a: BikeRow, b: BikeRow) => priceOf(a) - priceOf(b));
     else if (sort === 'price_desc') list.sort((a: BikeRow, b: BikeRow) => priceOf(b) - priceOf(a));
     return list;
   }, [bikes, vehicleType, ccFilter, sort, query, ownerFilter]);
