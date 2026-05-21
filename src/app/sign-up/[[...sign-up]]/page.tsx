@@ -45,6 +45,24 @@ export default function SignUpPage() {
     };
   }
 
+  // Translate raw SDK / network errors into copy a user can act on.
+  function humanError(err: any): string {
+    const msg = String(err?.message ?? err ?? '').toLowerCase();
+    if (msg.includes('failed to fetch') || msg.includes('network')) {
+      return 'Network hiccup — check your connection and try again. If it keeps happening, the Supabase project may be paused (free tier sleeps after inactivity).';
+    }
+    if (msg.includes('rate') || msg.includes('too many')) {
+      return 'Too many attempts. Wait a minute, then try again.';
+    }
+    if (msg.includes('already') && msg.includes('registered')) {
+      return 'An account with this email already exists. Try signing in instead.';
+    }
+    if (msg.includes('password') && msg.includes('weak')) {
+      return 'Please choose a stronger password (8+ characters, mix of letters/numbers).';
+    }
+    return err?.message ?? 'Something went wrong. Please try again.';
+  }
+
   // Pre-flight email check on blur — surfaces "already registered" before
   // the user fills the full form. Failures here are non-fatal (we still let
   // them submit and rely on Supabase's signUp to return the canonical error).
@@ -73,7 +91,8 @@ export default function SignUpPage() {
     setError('');
 
     // Re-check at submit time in case the user edited the email after blur
-    // or skipped blur entirely (autofill, paste-and-submit).
+    // or skipped blur entirely (autofill, paste-and-submit). Failures here
+    // are non-fatal — we still let Supabase handle it server-side.
     try {
       const res = await fetch('/api/auth/check-email', {
         method: 'POST',
@@ -88,46 +107,46 @@ export default function SignUpPage() {
         return;
       }
     } catch {
-      // Non-fatal — let Supabase handle it server-side.
+      // Network blip on our endpoint — silently continue to Supabase.
     }
 
-    const supabase = createSupabaseBrowser();
-    const { data, error } = await supabase.auth.signUp({
-      email: form.email,
-      password: form.password,
-      options: {
-        data: {
-          first_name: form.first_name,
-          last_name: form.last_name,
-          phone: form.phone || null,
+    try {
+      const supabase = createSupabaseBrowser();
+      const { data, error } = await supabase.auth.signUp({
+        email: form.email,
+        password: form.password,
+        options: {
+          data: {
+            first_name: form.first_name,
+            last_name: form.last_name,
+            phone: form.phone || null,
+          },
+          // Existing email-link flow still goes through this callback. If the
+          // user can't click the link they fall back to OTP below.
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=/`,
         },
-        // Existing email-link flow still goes through this callback. If the
-        // user can't click the link they fall back to OTP below.
-        emailRedirectTo: `${window.location.origin}/auth/callback?next=/`,
-      },
-    });
+      });
 
-    if (error) {
-      // Supabase says "User already registered" — translate to user-friendly.
-      const m = String(error.message ?? '').toLowerCase();
-      if (m.includes('already') && m.includes('registered')) {
-        setEmailTaken(true);
-        setError('An account with this email already exists. Try signing in instead.');
-      } else {
-        setError(error.message);
+      if (error) {
+        setError(humanError(error));
+        if (humanError(error).includes('already exists')) setEmailTaken(true);
+        setLoading(false);
+        return;
       }
+
+      if (data.session) {
+        router.push('/');
+        router.refresh();
+        return;
+      }
+
+      setEmailSent(true);
+    } catch (e: any) {
+      // Catches network errors thrown by the SDK ("Failed to fetch" etc).
+      setError(humanError(e));
+    } finally {
       setLoading(false);
-      return;
     }
-
-    if (data.session) {
-      router.push('/');
-      router.refresh();
-      return;
-    }
-
-    setEmailSent(true);
-    setLoading(false);
   }
 
   async function verifySignupOtp(e?: React.FormEvent) {
@@ -147,7 +166,7 @@ export default function SignUpPage() {
       router.push('/');
       router.refresh();
     } catch (e: any) {
-      setOtpError(e?.message ?? 'Invalid or expired code');
+      setOtpError(humanError(e));
     } finally {
       setOtpVerifying(false);
     }
@@ -167,7 +186,7 @@ export default function SignUpPage() {
       if (error) throw error;
       setOtpInfo(`New code sent to ${form.email}. Check spam if it doesn't arrive in a minute.`);
     } catch (e: any) {
-      setOtpError(e?.message ?? 'Could not resend');
+      setOtpError(humanError(e));
     } finally {
       setResending(false);
     }

@@ -23,42 +23,42 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const parse = schema.safeParse(await req.json().catch(() => null));
-  if (!parse.success) {
-    return NextResponse.json({ error: 'Valid email required' }, { status: 400 });
-  }
-  const email = parse.data.email.trim().toLowerCase();
-
-  const supabase = createSupabaseAdmin();
-
-  // Primary check: public.users mirrors confirmed accounts (created on first
-  // signed-in request). Fast index lookup, covers the common case.
-  const { data: publicRow } = await supabase
-    .from('users')
-    .select('id')
-    .ilike('email', email)
-    .limit(1)
-    .maybeSingle();
-
-  if (publicRow) {
-    return NextResponse.json({ exists: true, source: 'public' });
-  }
-
-  // Fallback: auth.users may have an unconfirmed signup row that hasn't
-  // mirrored over yet. `listUsers` with a per-page filter is the SDK's
-  // narrowest call — we pull page 1 (max 1000) and scan locally. For a
-  // small/medium tenant this is fine; at scale, replace with a Postgres
-  // function that does `select 1 from auth.users where lower(email)=$1`.
+  // Belt-and-braces: this endpoint MUST NEVER throw / crash because both the
+  // signup form and forgot-password do a pre-flight call here. A 500 with no
+  // body surfaces in the browser as "Failed to fetch" and tanks the whole
+  // flow. Always return JSON 200 with a sensible default.
   try {
-    const { data, error } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    const body = await req.json().catch(() => null);
+    const parse = schema.safeParse(body);
+    if (!parse.success) {
+      return NextResponse.json({ exists: false, source: 'invalid' });
+    }
+    const email = parse.data.email.trim().toLowerCase();
+    if (!email) return NextResponse.json({ exists: false, source: 'empty' });
+
+    const supabase = createSupabaseAdmin();
+
+    // Only check public.users — it mirrors confirmed accounts (created on
+    // first signed-in request). Fast indexed lookup, no admin SDK calls.
+    // False-negatives (unconfirmed Supabase auth rows that haven't mirrored
+    // over yet) fall through to Supabase's own signUp / resetPassword which
+    // handle the duplicate case server-side. The trade-off keeps this
+    // endpoint snappy and crash-proof, which matters more than catching
+    // every edge case.
+    const { data: row, error } = await supabase
+      .from('users')
+      .select('id')
+      .ilike('email', email)
+      .limit(1)
+      .maybeSingle();
+
     if (error) {
-      // Don't surface admin errors to the client — degrade to "unknown" so
-      // the user's flow can still proceed.
+      // Don't propagate DB errors to the client — degrade to "unknown" so
+      // the user's flow can still proceed via Supabase's server-side checks.
       return NextResponse.json({ exists: false, source: 'unknown' });
     }
-    const hit = (data?.users ?? []).some((u: any) => (u.email ?? '').toLowerCase() === email);
-    return NextResponse.json({ exists: hit, source: 'auth' });
+    return NextResponse.json({ exists: !!row, source: row ? 'public' : 'public-miss' });
   } catch {
-    return NextResponse.json({ exists: false, source: 'unknown' });
+    return NextResponse.json({ exists: false, source: 'error' });
   }
 }
